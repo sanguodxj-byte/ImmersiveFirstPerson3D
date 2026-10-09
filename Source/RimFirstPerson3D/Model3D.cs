@@ -1,3 +1,4 @@
+// AI生成
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -411,20 +412,30 @@ namespace RimFirstPerson3D
                     new Vector3(r, h, -rz), new Vector3(-r, h, -rz));
                 int center = verts.Count;
                 Vert(new Vector3(0f, h, 0f), Vector3.up, new Vector2((tr.x + tr.z) * 0.5f, (tr.y + tr.w) * 0.5f), m);
+                // 顶盖 UV 必须按**该点的 XZ 在取样区里的位置**铺（和盒体顶面同一口径）。
+                // 之前沿 i/seg 在对角线上插值 -> 圆面被摊成扇形黑白相间。
+                float mx = Mathf.Max(0.0001f, uv.modelXZ.x), mz = Mathf.Max(0.0001f, uv.modelXZ.y);
                 for (int i = 0; i < seg; i++)
                 {
                     float a0 = i / (float)seg * Mathf.PI * 2f;
                     float a1 = (i + 1) / (float)seg * Mathf.PI * 2f;
-                    Vert(new Vector3(Mathf.Cos(a0) * r, h, Mathf.Sin(a0) * rz), Vector3.up,
-                        new Vector2(Mathf.Lerp(tr.x, tr.z, i / (float)seg), Mathf.Lerp(tr.y, tr.w, i / (float)seg)), m);
-                    Vert(new Vector3(Mathf.Cos(a1) * r, h, Mathf.Sin(a1) * rz), Vector3.up,
-                        new Vector2(Mathf.Lerp(tr.x, tr.z, (i + 1) / (float)seg), Mathf.Lerp(tr.y, tr.w, (i + 1) / (float)seg)), m);
+                    Vert(new Vector3(Mathf.Cos(a0) * r, h, Mathf.Sin(a0) * rz), Vector3.up, CapUV(a0, r, rz, tr, mx, mz), m);
+                    Vert(new Vector3(Mathf.Cos(a1) * r, h, Mathf.Sin(a1) * rz), Vector3.up, CapUV(a1, r, rz, tr, mx, mz), m);
                     Tri(center, center + 1 + i * 2, center + 2 + i * 2);
                     hullVerts.Add(m.MultiplyPoint3x4(new Vector3(0f, h, 0f)));
                     hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a0) * r, h, Mathf.Sin(a0) * rz)));
                     hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a1) * r, h, Mathf.Sin(a1) * rz)));
                 }
             }
+        }
+
+        /// <summary>圆柱顶盖某角度的 UV：把 rim 点按模型 XZ 包围盒映射进取样区。</summary>
+        private static Vector2 CapUV(float a, float r, float rz, Vector4 tr, float mx, float mz)
+        {
+            float x = Mathf.Cos(a) * r, z = Mathf.Sin(a) * rz;
+            return new Vector2(
+                Mathf.Lerp(tr.x, tr.z, Mathf.Clamp01((x + mx * 0.5f) / mx)),
+                Mathf.Lerp(tr.y, tr.w, Mathf.Clamp01((z + mz * 0.5f) / mz)));
         }
 
         private void AddSphere(Matrix4x4 m, Vector3 s, Part p)

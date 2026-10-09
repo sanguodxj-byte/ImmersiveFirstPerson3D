@@ -139,9 +139,10 @@ function cyl(g, uv, cx,cz,y0,h,r,seg=12){
     for(let i=0;i<seg;i++){
       const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
       const P=(a)=>[cx+Math.cos(a)*r, y0+h, cz+Math.sin(a)*r];
-      const UV=(a)=>{const p=[cx+Math.cos(a)*r, cz+Math.sin(a)*r];
-        return [uv.top[0]+(uv.top[2]-uv.top[0])*((p[0]+mx/2)/mx),
-                uv.top[1]+(uv.top[3]-uv.top[1])*((p[1]+mz/2)/mz)];};
+      // 顶盖按 rim 点的 XZ 位置映射进取样区（与盒体顶面同口径），不是沿对角线铺
+    const UV=(a)=>{const p=[cx+Math.cos(a)*r, cz+Math.sin(a)*r];
+        const u=Math.min(1,Math.max(0,(p[0]+mx/2)/mx)), v=Math.min(1,Math.max(0,(p[1]+mz/2)/mz));
+        return [uv.top[0]+(uv.top[2]-uv.top[0])*u, uv.top[1]+(uv.top[3]-uv.top[1])*v];};
       quad(g, [cx,y0+h,cz],[cx,y0+h,cz],P(a1),P(a0), UV(a0),UV(a0),UV(a1),UV(a0));
     }
   }
