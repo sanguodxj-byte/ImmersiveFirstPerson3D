@@ -17,6 +17,7 @@
     docs/furniture/uv/<item>_<view>.png     放大图上画绿框 = 该图被取样的区域
 """
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -27,6 +28,11 @@ MOD = r"D:\rim mod\FirstPerson3D"
 ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "FurnitureAtlas.png")
 CS_OUT = os.path.join(MOD, "Source", "RimFirstPerson3D", "FurnitureUVGen.cs")
 UV_OUT = os.path.join(MOD, "docs", "furniture", "uv")
+# 检查器页面（viewer/ 是 http://127.0.0.1:8899 的根）共用的产物：
+# 图集副本 + UV 表 JSON。页面只读这两样，不再自建第二份口径。
+VIEW_DIR = os.path.join(MOD, "viewer")
+VIEW_TEX = os.path.join(VIEW_DIR, "furn_atlas.png")
+VIEW_JSON = os.path.join(VIEW_DIR, "furn_uv.json")
 
 F = "Core/textures/things/building/furniture"
 FB = F + "/bed"
@@ -46,11 +52,11 @@ SPEC = {
     # 交界线 = 目视判读的"俯视段/立面段"分界（见 docs/furniture/uv/*.png 绿框）。
     "bed": {
         "south": {"path": f"{FB}/bed_south.png",
-                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 128)},
+                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125)},
         "north": {"path": f"{FB}/bed_north.png",
-                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 128)},
+                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125)},
         "east": {"path": f"{FB}/bed_east.png",
-                 "top": (0, 28, 128, 88), "front": (0, 88, 128, 95)},
+                 "top": (10, 28, 120, 88), "front": (10, 88, 120, 95)},
     },
     "stool": {
         "north": {"path": f"{F}/stool_north.png",
@@ -61,9 +67,15 @@ SPEC = {
     },
     "endtable": {
         "south": {"path": f"{F}/endtable_south.png",
-                  "top": (10, 5, 53, 28), "front": (10, 28, 53, 64)},
+                  "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
+                  "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
+                              (10, 33, 20, 39), (36, 33, 53, 40),
+                              (10, 40, 53, 64)]},
         "north": {"path": f"{F}/endtable_north.png",
-                  "top": (10, 5, 53, 28), "front": (10, 28, 53, 64)},
+                  "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
+                  "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
+                              (10, 33, 20, 39), (36, 33, 53, 40),
+                              (10, 40, 53, 64)]},
         # 东视图的下半带是"腿+轮廓"线稿带（笔画占 37%），不配当材质：
         # 整带声明丢弃，侧立面改取南视图的 front（同为该柜体的木面）。
         "east": {"path": f"{F}/endtable_east.png",
@@ -79,11 +91,14 @@ SPEC = {
     },
     "shelf": {
         "south": {"path": f"{F}/shelf_south.png",
-                  "top": (43, 28, 213, 78), "front": (43, 78, 213, 99)},
+                  "top": (43, 28, 213, 78), "front": (43, 78, 213, 93),
+                  "discard": [(43, 93, 213, 99)]},
         "north": {"path": f"{F}/shelf_north.png",
-                  "top": (43, 28, 213, 78), "front": (43, 78, 213, 99)},
+                  "top": (43, 34, 213, 78), "front": (43, 78, 213, 93),
+                  "discard": [(43, 28, 213, 34), (43, 93, 213, 99)]},
         "east": {"path": f"{F}/shelf_east.png",
-                 "top": (33, 37, 95, 205), "front": (33, 205, 95, 218)},
+                 "top": (33, 37, 88, 205), "front": (33, 205, 88, 218),
+                 "discard": [(88, 37, 95, 218)]},
     },
 }
 
@@ -201,10 +216,16 @@ def pack(items):
     stats = []
     for key, path, (x0, y0, x1, y1), (ax, ay, aw, ah) in placed:
         src = load(path)
-        sub = src[y0:y1, x0:x1]
-        mask = black_mask(src)[y0:y1, x0:x1]
+        sub = src[y0:y1, x0:x1].copy()
+        # 透明像素也要补实：模型的面是一整块，留 alpha=0 会在 Cutout 下穿洞、
+        # 在不透明材质下直接渲成黑。取值仍来自本区原图像素。
+        holes = sub[:, :, 3] < 128
+        if holes.any():
+            sub = strip_stroke(sub, holes)
+        mask = black_mask(src)[y0:y1, x0:x1] | holes
         n_stroke = int(mask.sum())
         core = strip_stroke(sub, mask) if n_stroke else sub
+        core[:, :, 3] = 255
         stats.append((key, x1 - x0, y1 - y0, n_stroke))
         # 边缘复制（clamp）而不是留透明，否则双线性会采到邻块
         big = np.zeros((ah, aw, 4), np.uint8)
@@ -292,12 +313,27 @@ def overlay(items, placed):
     return done
 
 
+def emit_viewer(placed, atlas, atlas_size):
+    """导出 viewer 用的图集副本 + UV 表（Unity 口径 v=1-y/H，页面自己翻）。"""
+    import json
+    shutil.copyfile(ATLAS_OUT, VIEW_TEX)
+    W, H = atlas_size
+    d = {}
+    for key, path, (x0, y0, x1, y1), (ax, ay, aw, ah) in placed:
+        d[key] = [round((ax + PAD) / W, 5), round(1.0 - (ay + ah - PAD) / H, 5),
+                  round((ax + aw - PAD) / W, 5), round(1.0 - (ay + PAD) / H, 5),
+                  x1 - x0, y1 - y0]
+    with open(VIEW_JSON, "w", encoding="utf-8") as f:
+        json.dump({"uv": d, "size": [W, H]}, f, ensure_ascii=False, indent=1)
+
+
 def main():
     items = sys.argv[1:] or list(SPEC.keys())
     atlas, placed, size, stats = pack(items)
     os.makedirs(os.path.dirname(ATLAS_OUT), exist_ok=True)
     Image.fromarray(atlas, "RGBA").save(ATLAS_OUT)
     emit_cs(placed, size, CS_OUT)
+    emit_viewer(placed, atlas, size)
     tot = sum(s[1] * s[2] for s in stats)
     stp = sum(s[3] for s in stats)
     print("atlas:", ATLAS_OUT, size, "blocks:", len(placed),

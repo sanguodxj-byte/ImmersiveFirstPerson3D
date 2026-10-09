@@ -88,6 +88,15 @@ def check_item(item, spec=None):
                 errs.append(("stroke", f"{key}: 描边占比 {n_stroke}/{area}"
                                        f"（行 {rows[0]}..{rows[-1]} 列 {cols[0]}..{cols[-1]}）",
                              "这块基本压在轮廓上，重切"))
+            n_hole = int((src[sub][:, :, 3] < ALPHA_MIN).sum())
+            if n_hole > area * 0.02:
+                hm = src[sub][:, :, 3] < ALPHA_MIN
+                hr = np.where(hm.any(axis=1))[0]; hc = np.where(hm.any(axis=0))[0]
+                errs.append(("hole", f"{key}: 含 {n_hole}/{area} 个透明像素"
+                                      "（面会穿洞/发黑）",
+                             f"透明占行 {hr[0]+y0}..{hr[-1]+y0} 列 {hc[0]+x0}..{hc[-1]+x0}"
+                             f" -> 实心内区约 ({int(hc[0]+x0)},{int(hr[0]+y0)},"
+                             f"{int(hc[-1]+x0+1)},{int(hr[-1]+y0+1)}) 之外"))
             if cover[sub].any():
                 errs.append(("overlap", f"{key}: 与同图其它取样区重叠", "拆开或合并"))
             cover[sub] = True
@@ -161,6 +170,7 @@ def check_code_alignment():
 #   64x64 透明底；x=8..56,y=8..56 填中灰；1px 纯黑轮廓（=描边）；
 #   y=32, x=16..48 一条内部黑线（=线稿，允许取样）。
 FX = os.path.join(FA.MOD, "docs", "furniture", "_fx_box.png")
+FXH = os.path.join(FA.MOD, "docs", "furniture", "_fx_hole.png")   # 带透明缺口的版本
 
 
 def make_fixture_png():
@@ -173,6 +183,9 @@ def make_fixture_png():
     a[32, 16:49] = (10, 10, 10, 255)
     os.makedirs(os.path.dirname(FX), exist_ok=True)
     Image.fromarray(a, "RGBA").save(FX)
+    b = a.copy()
+    b[44:56, 40:56] = (0, 0, 0, 0)          # 12x16 透明缺口 -> 触发 hole
+    Image.fromarray(b, "RGBA").save(FXH)
 
 
 def fixtures():
@@ -195,6 +208,9 @@ def fixtures():
                                   "b": (9, 40, 56, 56)}}, {"overlap"}),
         ("fx-cover", {"south": {"path": P, "top": (20, 20, 40, 30)}}, {"cover"}),
         ("fx-missing", {"south": {"path": "zz_none.png", "top": (1, 1, 2, 2)}}, {"missing"}),
+        # 带缺口的图：两块取样区无重叠且覆盖全部"材质像素"，只该报 hole
+        ("fx-hole", {"south": {"path": os.path.basename(FXH), "top": (9, 9, 56, 40),
+                               "front": (9, 40, 56, 56)}}, {"hole"}),
     ]
     out = []
     try:

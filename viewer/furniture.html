@@ -1,0 +1,287 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>家具三视图重构检查</title>
+<style>
+  html,body{margin:0;height:100%;background:#1c1e26;font-family:Consolas,monospace}
+  #app{position:fixed;inset:0}
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.6;
+       background:rgba(0,0,0,.5);padding:9px 11px;border-radius:4px;z-index:9}
+  #hud b{color:#7fd1ff}
+  #items,#views{position:fixed;right:10px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;
+       justify-content:flex-end;max-width:62vw}
+  #items{top:44px} #views{top:8px}
+  button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
+         padding:5px 9px;font-size:12px;cursor:pointer}
+  button:hover{background:#3d465c}
+  button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
+</style>
+</head>
+<body>
+<div id="app"></div><div id="hud"></div><div id="views"></div><div id="items"></div>
+<script>
+// 任何模块内异常都写进 HUD，截图就能直接看到报错，不用另开控制台。
+addEventListener('error', function(e){
+  document.getElementById('hud').textContent =
+    'ERR ' + e.message + ' @' + String(e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+// ===========================================================================
+// 家具三视图重构检查页
+//
+// 几何与 Source/RimFirstPerson3D/Furniture3D.cs 一一对应（同一批基本体、
+// 同一批 Metrics3D 尺寸）。UV **只从 furn_uv.json 读**——那张表由
+// scripts/furn_atlas.py 从取样 SPEC 生成，与运行时用的 FurnitureUVGen.cs
+// 同源，所以这里不存在第二份取样口径。
+//
+// 顶面 <- 当前朝向那张图的俯视段；四个立面各取自己那张图的立面段。
+// ===========================================================================
+const VER = '1791581401';
+const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
+  bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
+  seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
+};
+const ITEMS = {
+  bed:      {arch:'bed',   w:1, d:2},
+  stool:    {arch:'stool', w:1, d:1},
+  endtable: {arch:'endtable', w:1, d:1},
+  dresser:  {arch:'dresser',  w:2, d:1},
+  shelf:    {arch:'shelf',    w:2, d:1},
+};
+
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1);
+renderer.setClearColor(0x1c1e26, 1);
+app.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1c1e26);
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.05, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+const d1 = new THREE.DirectionalLight(0xffffff, 0.72); d1.position.set(3,6,4); scene.add(d1);
+const d2 = new THREE.DirectionalLight(0xffffff, 0.28); d2.position.set(-4,3,-3); scene.add(d2);
+
+const uvJson = await (await fetch('./furn_uv.json?'+VER)).json();
+const tex = new THREE.TextureLoader().load('./furn_atlas.png?'+VER);
+tex.colorSpace = THREE.SRGBColorSpace;
+tex.magFilter = tex.minFilter = THREE.NearestFilter;
+tex.generateMipmaps = false;
+tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+tex.flipY = false;      // v 按"从图像顶部算"，所以要把 JSON 的 Unity 口径翻回来
+const mat = new THREE.MeshLambertMaterial({map:tex, side:THREE.FrontSide});
+const matHull = new THREE.MeshBasicMaterial({color:0x0a0910, side:THREE.BackSide});
+
+// JSON 里是 Unity 口径 [u0,v0,u1,v1]（v=1-y/H）；flipY=false 下页面要 v'=1-v
+function R(key){
+  const a = uvJson.uv[key];
+  if(!a) return null;
+  return [a[0], 1-a[3], a[2], 1-a[1]];     // -> [u0, v'top, u1, v'bottom] 归一化自洽即可
+}
+function Region(arch, want, region){
+  let r = R(`${arch}.${want}.${region}`);
+  if(r) return r;
+  for(const v of ['south','north','east']){
+    if(v===want) continue;
+    r = R(`${arch}.${v}.${region}`); if(r) return r;
+  }
+  return null;
+}
+const viewOf = r => r==='south'?'south': r==='north'?'north':'east';
+const opp = v => v==='south'?'north': v==='north'?'south':'west';
+function faceUv(arch, rot, xz){
+  const v = viewOf(rot);
+  const cross = (v==='east') ? 'south' : 'east';
+  return { top: Region(arch, v, 'top'),
+           s4: [Region(arch, opp(v), 'front'), Region(arch, v, 'front'),
+                Region(arch, cross, 'front'), Region(arch, cross, 'front')],
+           xz };
+}
+
+// ---------------------------------------------------------------- 网格拼装
+// dir: 0北(-Z) 1南(+Z) 2东(+X) 3西(-X)
+function G(){ return {pos:[],uvs:[],idx:[]}; }
+function quad(g,a,b,c,d,ua,ub,uc,ud){
+  const P=g.pos,U=g.uvs,I=g.idx;
+  const push=(p,uv)=>{P.push(p[0],p[1],p[2]);U.push(uv[0],uv[1]);return P.length/3-1;};
+  const i0=push(a,ua),i1=push(b,ub),i2=push(c,uc),i3=push(d,ud);
+  I.push(i0,i1,i2,i0,i2,i3);
+}
+function box(g, uv, cx,cy,cz, w,h,d){
+  const x0=cx-w/2,x1=cx+w/2, z0=cz-d/2,z1=cz+d/2, y0=cy,y1=cy+h;
+  const mx=Math.max(0.001,uv.xz[0]), mz=Math.max(0.001,uv.xz[1]);
+  const U=x=>uv.top[0]+(uv.top[2]-uv.top[0])*((x+mx/2)/mx);
+  const V=z=>uv.top[1]+(uv.top[3]-uv.top[1])*((z+mz/2)/mz);
+  if(uv.top) quad(g,[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0],
+     [U(x0),V(z1)],[U(x1),V(z1)],[U(x1),V(z0)],[U(x0),V(z0)]);
+  const s=i=>uv.s4[i]||uv.top;
+  let r=s(0); quad(g,[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
+  r=s(1);      quad(g,[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
+  r=s(3);      quad(g,[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
+  r=s(2);      quad(g,[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
+}
+function cyl(g, uv, cx,cz,y0,h,r,seg=12){
+  const s = uv.s4[1]||uv.top;
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
+    const p=(a,y)=>[cx+Math.cos(a)*r, y, cz+Math.sin(a)*r];
+    quad(g, p(a0,y0),p(a1,y0),p(a1,y0+h),p(a0,y0+h),
+      [s[0]+(s[2]-s[0])*i/seg, s[1]], [s[0]+(s[2]-s[0])*(i+1)/seg, s[1]],
+      [s[0]+(s[2]-s[0])*(i+1)/seg, s[3]], [s[0]+(s[2]-s[0])*i/seg, s[3]]);
+  }
+  if(uv.top){
+    const mx=Math.max(0.001,uv.xz[0]), mz=Math.max(0.001,uv.xz[1]);
+    for(let i=0;i<seg;i++){
+      const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
+      const P=(a)=>[cx+Math.cos(a)*r, y0+h, cz+Math.sin(a)*r];
+      const UV=(a)=>{const p=[cx+Math.cos(a)*r, cz+Math.sin(a)*r];
+        return [uv.top[0]+(uv.top[2]-uv.top[0])*((p[0]+mx/2)/mx),
+                uv.top[1]+(uv.top[3]-uv.top[1])*((p[1]+mz/2)/mz)];};
+      quad(g, [cx,y0+h,cz],[cx,y0+h,cz],P(a1),P(a0), UV(a0),UV(a0),UV(a1),UV(a0));
+    }
+  }
+}
+function legs(g,uv,off,topY,r){
+  for(const sx of [-1,1]) for(const sz of [-1,1]) cyl(g,uv,sx*off,sz*off,0,topY,r);
+}
+function endPanel(g,uv,longZ,thick,sign,len,y0,h){
+  if(h<=0.01) return;
+  const t=M.headThk;
+  if(longZ) box(g,uv,0,y0,sign*(len/2-t/2), thick*0.96,h,t);
+  else      box(g,uv,sign*(len/2-t/2),y0,0, t,h,thick*0.96);
+}
+
+function build(item, rot){
+  const it = ITEMS[item], uv0 = faceUv(it.arch, rot, [it.w, it.d]);
+  const g = G();
+  const w = it.w, d = it.d;
+  const longZ = (rot==='north'||rot==='south');
+  const len = longZ?d:w, thick = longZ?w:d;
+  const headSign = rot==='north'?1: rot==='south'?-1: rot==='east'?-1:1;
+  if(it.arch==='bed'){
+    box(g,uv0,0,0,0, w-0.06,M.bedFrame,d-0.06);
+    box(g,uv0,0,M.bedFrame,0, w-0.20,M.mattress,d-0.18);
+    const uvb = faceUv(it.arch, rot, [w,d]);
+    endPanel(g,uvb,longZ,thick,headSign,len,M.bedFrame,M.headboard-M.bedFrame);
+    endPanel(g,uvb,longZ,thick,-headSign,len,M.bedFrame,M.footboard-M.bedFrame);
+    const uvq = faceUv(it.arch, rot, [w,d]);
+    const r = M.leg*1.1;
+    for(const sx of [-1,1]) for(const sz of [-1,1])
+      cyl(g,uvq,sx*(w/2-r),sz*(d/2-r),0,M.headboard,r*2);
+  } else if(it.arch==='stool'){
+    const sw = Math.min(0.44, w*0.6);
+    cyl(g, faceUv(it.arch,rot,[sw,sw]), 0,0, M.seat, M.slab, sw);
+    legs(g, faceUv(it.arch,rot,[w,d]), sw*0.34, M.seat, M.leg);
+  } else if(it.arch==='endtable'){
+    const h = M.nightstand - M.slab;
+    box(g, faceUv(it.arch,rot,[w*0.92,d*0.92]), 0,h,0, w*0.92,M.slab,d*0.92);
+    box(g, faceUv(it.arch,rot,[w,d]), 0,M.baseboard,0, w*0.78,h-M.baseboard,d*0.72);
+    legs(g, faceUv(it.arch,rot,[w,d]), w*0.36, M.baseboard+0.02, M.leg);
+  } else {
+    const sh = it.arch==='shelf';
+    const h = sh?0.85:M.counter;
+    box(g, faceUv(it.arch,rot,[w*0.96,d*0.96]), 0,h,0, w*0.96,M.slab,d*0.96);
+    const u = faceUv(it.arch,rot,[w,d]);
+    if(sh){
+      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.9,M.slab,d*0.8);
+      box(g,u,-w*0.45,h*0.5,0, M.slab,h,d*0.8);
+      box(g,u, w*0.45,h*0.5,0, M.slab,h,d*0.8);
+    } else box(g,u,0,0,0, w*0.9,h,d*0.8);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uvs,2));
+  geo.setIndex(g.idx); geo.computeVertexNormals();
+  return geo;
+}
+
+let ITEM='bed', ROT='south';
+const root = new THREE.Group(); scene.add(root);
+const grid = new THREE.GridHelper(12,24,0x4a5568,0x2e3446); grid.position.y=-0.003; scene.add(grid);
+function rebuild(){
+  while(root.children.length) root.remove(root.children[0]);
+  const geo = build(ITEM, ROT);
+  root.add(new THREE.Mesh(geo, mat));
+  // 描边：运行时用**沿平均法线外扩的反绕壳**（ModelBuilder.ToHull）。
+  // 这里不能用整组 scale —— 那会把细件（立柱）按离原点的距离整体撑歪。
+  // 检查页只需要看棱线是否落在正确的面上，故用 EdgesGeometry。
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo, 45),
+    new THREE.LineBasicMaterial({color:0x0a0910}));
+  root.add(edges);
+  hud();
+}
+
+const VIEWS = {
+  '45°':     {p:[2.6,2.2,-2.6], t:[0,0.55,0]},
+  '俯视':    {p:[0.02,6.0,0.02],t:[0,0,0]},
+  '主视·南': {p:[0,0.9,-6.0],    t:[0,0.6,0]},
+  '侧视·东': {p:[6.0,0.9,0],     t:[0,0.6,0]},
+  '低角度':  {p:[2.2,0.45,-2.2], t:[0,0.5,0]},
+  '贴脸':    {p:[0.2,0.75,-1.15],t:[0,0.5,0]},
+};
+let cur='45°';
+function setView(k){
+  cur=k; const v=VIEWS[k];
+  camera.position.set(...v.p); controls.target.set(...v.t); controls.update();
+  [...document.getElementById('views').children].forEach(b=>b.classList.toggle('on',b.dataset.k===k));
+}
+Object.keys(VIEWS).forEach(k=>{
+  const b=document.createElement('button'); b.textContent=k; b.dataset.k=k;
+  b.onclick=()=>setView(k); document.getElementById('views').appendChild(b);
+});
+const bar=document.getElementById('items');
+Object.keys(ITEMS).forEach(k=>{
+  const b=document.createElement('button'); b.textContent=k; b.dataset.i=k;
+  b.onclick=()=>{ITEM=k; [...bar.children].forEach(x=>x.classList.toggle('on',x.dataset.i===k)); rebuild();};
+  bar.appendChild(b);
+});
+const rots=['south','north','east','west'];
+function addRotBar(){
+  const r=document.createElement('div'); r.style.cssText='position:fixed;right:10px;top:78px;z-index:9;display:flex;gap:6px';
+  rots.forEach(k=>{
+    const b=document.createElement('button'); b.textContent='朝向'+k; b.dataset.r=k;
+    b.onclick=()=>{ROT=k; [...r.children].forEach(x=>x.classList.toggle('on',x.dataset.r===k)); rebuild();};
+    r.appendChild(b);
+  });
+  document.body.appendChild(r);
+  [...r.children][0].classList.add('on');
+}
+addRotBar();
+function hud(){
+  const f=faceUv(ITEMS[ITEM].arch, ROT, [ITEMS[ITEM].w, ITEMS[ITEM].d]);
+  const fmt=r=>r?`[${r.map(x=>x.toFixed(3)).join(',')}]`:'null';
+  document.getElementById('hud').innerHTML =
+    `<b>${ITEM}</b> 朝向 <b>${ROT}</b> · 视图 ${cur}<br>`+
+    `顶面 <- ${ITEMS[ITEM].arch}.${viewOf(ROT)}.top<br>&nbsp;&nbsp;${fmt(f.top)}<br>`+
+    `立面 北 <- ${opp(viewOf(ROT))}: ${fmt(f.s4[0])}<br>`+
+    `立面 南 <- ${viewOf(ROT)}: ${fmt(f.s4[1])}<br>`+
+    `立面 东/西 <- ${(viewOf(ROT)==='east'?'south':'east')}: ${fmt(f.s4[2])}<br>`+
+    `图集 ${uvJson.size[0]}x${uvJson.size[1]} · 黑笔画已补绘，描边=反绕壳<br>`+
+    `拖拽旋转 · 滚轮缩放 · ←→ 切视角`;
+}
+addEventListener('keydown',e=>{
+  const ks=Object.keys(VIEWS), i=ks.indexOf(cur);
+  if(e.key==='ArrowRight') setView(ks[(i+1)%ks.length]);
+  if(e.key==='ArrowLeft')  setView(ks[(i-1+ks.length)%ks.length]);
+});
+const q=new URLSearchParams(location.search);
+setView(VIEWS[q.get('view')] ? q.get('view') : '45°');
+if(ITEMS[q.get('item')]){ ITEM=q.get('item'); [...bar.children].forEach(x=>x.classList.toggle('on',x.dataset.i===ITEM)); }
+if(rots.includes(q.get('rot'))){ ROT=q.get('rot'); }
+rebuild();
+function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); }
+loop();
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+window.__set = (item,rot,view)=>{ if(ITEMS[item])ITEM=item; if(rots.includes(rot))ROT=rot; rebuild(); if(VIEWS[view])setView(view); };
+</script>
+</body>
+</html>
