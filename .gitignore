@@ -1,0 +1,3 @@
+Source/**/obj/
+scripts/__pycache__/
+*.user
