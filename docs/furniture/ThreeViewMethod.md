@@ -68,6 +68,9 @@ scripts/furn_atlas.py     SPEC（逐图目视标定的取样表）+ 打包 + UV 
    ↓                      → Source/.../FurnitureUVGen.cs（生成，勿手改）
    ↓                      → docs/furniture/uv/<item>_<view>.png（绿框=取样，红框=丢弃带）
 scripts/furn_uv_check.py  双向校验器（自带合成夹具，夹具不过则拒绝给存量背书）
+scripts/furn_color_check.py 颜色保真：材质像素必须与原版逐字节相同（补绘只许发生在笔画/洞上），
+                          并汇总每件色感，回答"太白/发灰是美术还是管线"
+scripts/furn_shape_check.py 单格形状探针（差分遮罩 + 按行分段），判"部件悬空/被剔除"
 Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按朝向配立面
 ```
 
