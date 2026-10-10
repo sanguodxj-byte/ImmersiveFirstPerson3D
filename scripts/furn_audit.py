@@ -26,7 +26,8 @@ WORKERS = int(os.environ.get("FURN_AUDIT_WORKERS", "2"))
 SHOT_TIMEOUT_MS = 90000
 
 ITEMS = ["bed", "stool", "endtable", "dresser", "shelf", "armchair",
-         "table1x2", "table2x2", "table2x4", "table3x3"]
+         "table1x2", "table2x2", "table2x4", "table3x3",
+         "bookcase", "bookcasesmall", "shelfsmall"]
 ROTS = ["south", "north", "east", "west"]
 VIEWS = ["45°", "俯视", "主视·南", "侧视·东", "低角度", "贴脸"]
 CELL = (620, 500)

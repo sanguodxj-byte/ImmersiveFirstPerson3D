@@ -101,7 +101,10 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 已落地（`furn_uv_check` 0 缺陷、`furn_color_check` 材质像素零改写、240 格审核无剪影断裂、
 编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`（含 `wood` 干净木面区 +
 圆柱/薄边配区）、`armchair`（线稿型分带首例）、`table1x2` `table2x2` `table2x4` `table3x3`
-（台面 top / 台面边 edge / 画出来的腿条 front / 腿的圆盖 wood）。
+（台面 top / 台面边 edge / 画出来的腿条 front / 腿的圆盖 wood）、
+`bookcase` `bookcasesmall`（共用 `Arch.Cabinet`：正面就是厚框 + 亮内腔，读作一块大面板）、
+`shelfsmall`（共用 `Arch.ShelfUnit`）。这三件只声明 south/east —— north 是素背板，
+交给 south→north→east 回退；试算时落在纯透明行上的带一律缩回，不靠 discard 藏（abuse 会响）。
 
 原型归类改成**配方表**：`Recipes[]` 一行 = defName 关键字 → (几何配方, 取样件名)。
 一个配方可服务多件（四张桌共用 `Arch.Table`），所以件名与配方必须分开；取样件在图集里
@@ -111,7 +114,8 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 待办，按优先级：
 1. **couch**：横带 ~96%，纵带 99.4%（`_furn_fit.py pack` 已给坐标），但扶手在两侧形成
    独立小块，要与 armchair 的扶手配区一起定。
-2. **bookcase / bookcasesmall / shelfsmall**：分带试算已 100%，可直接接。
+2. **床的变体** doublebed / royalbed / hospitalbed / bedroll / bedrolldouble /
+   sleepspot / doublesleepspot：分带 90~97%，枕头、床尾架、输液杆要单独配区。
 3. **diningchair**：圈背 + 椭圆坐垫 + 四条腿，白面被黑框切成互不相邻的小块，
    横带/纵带都只能覆盖 ~97%（分带器对纯透明行直接判废），需要按连通块切区的工具。
 4. royalbed、hospitalbed、bedroll、sleepspot、doublebed 等床的变体（分带 90~97%，

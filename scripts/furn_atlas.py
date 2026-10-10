@@ -130,6 +130,36 @@ SPEC = {
                   "edge": (65, 64, 255, 72), "top": (65, 72, 255, 256),
                   "front": (74, 256, 83, 271), "wood": (100, 110, 220, 240)},
     },
+    # ---- 书柜家族（正面 = 厚框 + 亮内腔，读作一块大面板；只声明 south/east，
+    # north 是素背板，交给 south->north->east 回退）----
+    "bookcase": {
+        "south": {"path": f"{BK}/bookcase_south.png",
+                  "top": (34, 26, 158, 40), "front": (34, 40, 158, 96),
+                  "wood": (60, 50, 130, 90),
+                  "discard": [(34, 96, 158, 104)]},
+        "east": {"path": f"{BK}/bookcase_east.png",
+                 "top": (32, 32, 96, 56), "front": (32, 56, 90, 169),
+                 "wood": (44, 70, 80, 130)},
+    },
+    "bookcasesmall": {
+        "south": {"path": f"{BK}/bookcasesmall_south.png",
+                  "top": (31, 26, 96, 40), "front": (31, 40, 97, 96),
+                  "wood": (45, 50, 85, 90),
+                  "discard": [(31, 96, 97, 104)]},
+        "east": {"path": f"{BK}/bookcasesmall_east.png",
+                 "top": (32, 26, 95, 56), "front": (31, 56, 89, 108),
+                 "wood": (45, 60, 75, 78)},
+    },
+    "shelfsmall": {
+        "south": {"path": f"{F}/shelfsmall_south.png",
+                  "top": (31, 26, 97, 56), "front": (31, 56, 97, 88),
+                  "wood": (45, 62, 85, 84),
+                  "discard": [(31, 88, 97, 104)]},
+        "east": {"path": f"{F}/shelfsmall_east.png",
+                 "top": (31, 27, 97, 48), "front": (31, 48, 89, 88),
+                 "wood": (45, 55, 75, 82),
+                 "discard": [(31, 88, 97, 109)]},
+    },
     "armchair": {
         "south": {"path": f"{F}/armchair_south.png",
                   "top": (96, 81, 161, 110), "back": (91, 110, 166, 136),
