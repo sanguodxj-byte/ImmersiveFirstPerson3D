@@ -333,7 +333,7 @@ namespace RimFirstPerson3D
                     uvs.Add(EndPanelUv(key, rot, xz, longZ));   // 2 = 尾板
                     AddEndPanel(m, 2, longZ, thick, -headSign, len, Metrics3D.BedFrameHeight, fbH);
                     uvs.Add(WoodUv(key, rot, xz));             // 3 = 立柱（圆柱，三视图没画它）
-                    AddPosts(m, 3, w, d, Metrics3D.BedHeadboardHeight);
+                    AddPosts(m, 3, w, d, rot, Metrics3D.BedHeadboardHeight, Metrics3D.FootboardHeight);
                     break;
                 }
                 case Arch.Stool:
@@ -387,6 +387,7 @@ namespace RimFirstPerson3D
                         });
                     uvs.Add(PanelUv(key, rot, xz, "arml"));              // 3 = 扶手 A
                     uvs.Add(PanelUv(key, rot, xz, "armr"));              // 4 = 扶手 B
+                    // 扶手往后伸进靠背（0.88 半长 0.88 > 靠背内面 0.84），否则两者之间留缝
                     for (int i = 0; i < 2; i++)
                     {
                         float sgn = i == 0 ? -1f : 1f;
@@ -395,13 +396,13 @@ namespace RimFirstPerson3D
                             {
                                 kind = Prim.Box, uv = 3 + i,
                                 pos = new Vector3(sgn * (w * 0.5f - t * 0.5f), 0f, 0f),
-                                size = new Vector3(t, Metrics3D.ArmchairArmHeight, d * 0.8f)
+                                size = new Vector3(t, Metrics3D.ArmchairArmHeight, d * 0.88f)
                             }
                             : new Part
                             {
                                 kind = Prim.Box, uv = 3 + i,
                                 pos = new Vector3(0f, 0f, sgn * (d * 0.5f - t * 0.5f)),
-                                size = new Vector3(w * 0.8f, Metrics3D.ArmchairArmHeight, t)
+                                size = new Vector3(w * 0.88f, Metrics3D.ArmchairArmHeight, t)
                             });
                     }
                     break;
@@ -447,7 +448,9 @@ namespace RimFirstPerson3D
                     uvs.Add(shelf ? SlabUv(key, rot, xz) : FaceUv(key, rot, xz));   // 2 = 箱体 / 层板·侧板
                     if (shelf)
                     {
-                        // 侧板 + 层板：俯视段给层板顶面，立边与侧板各面用木面
+                        // 侧板 + 层板：俯视段给层板顶面，立边与侧板各面用木面。
+                        // 层板比侧板内空再小一点（0.84/0.78 vs 侧板的 0.85/0.8）：
+                        // 严格共面的两个面会互相闪面（z-fighting）。
                         for (int i = 0; i < 3; i++)
                         {
                             float y = h * (0.12f + i * 0.34f);
@@ -455,7 +458,7 @@ namespace RimFirstPerson3D
                             {
                                 kind = Prim.Box,
                                 pos = new Vector3(0f, y, 0f),
-                                size = new Vector3(w * 0.85f, Metrics3D.SlabThickness, d * 0.8f),
+                                size = new Vector3(w * 0.84f, Metrics3D.SlabThickness, d * 0.78f),
                                 uv = 2
                             });
                         }
@@ -509,18 +512,30 @@ namespace RimFirstPerson3D
             m.parts.Add(new Part { kind = Prim.Box, pos = pos, size = size, uv = uvIdx });
         }
 
-        private static void AddPosts(Model3D m, int uvIdx, float w, float d, float h)
+        /// <summary>四角立柱：床头那两端高（床头板高），床尾那两端矮（床尾板高）。</summary>
+        private static void AddPosts(Model3D m, int uvIdx, float w, float d, Rot4 rot,
+            float headH, float footH)
         {
             float r = Metrics3D.LegThickness * 1.1f;
-            for (int sx = -1; sx <= 1; sx += 2)
-                for (int sz = -1; sz <= 1; sz += 2)
+            bool longZ = rot == Rot4.North || rot == Rot4.South;
+            float bs = BackSign(rot);
+            for (int sa = -1; sa <= 1; sa += 2)
+            {
+                float h = sa * bs > 0f ? headH : footH;
+                for (int sl = -1; sl <= 1; sl += 2)
+                {
+                    var pos = longZ
+                        ? new Vector3(sl * (w * 0.5f - r), 0f, sa * (d * 0.5f - r))
+                        : new Vector3(sa * (w * 0.5f - r), 0f, sl * (d * 0.5f - r));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
-                        pos = new Vector3(sx * (w * 0.5f - r), 0f, sz * (d * 0.5f - r)),
+                        pos = pos,
                         size = new Vector3(r * 2f, h, r * 2f),
                         uv = uvIdx
                     });
+                }
+            }
         }
 
         /// <summary>四只腿，中心外偏 off，脚底在 y0。</summary>

@@ -41,7 +41,7 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 //
 // 顶面 <- 当前朝向那张图的俯视段；四个立面各取自己那张图的立面段。
 // ===========================================================================
-const VER = 'armchair1';
+const VER = 'cylfix1';
 const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
   bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
   seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
@@ -156,7 +156,10 @@ function box(g, uv, cx,cy,cz, w,h,d){
   r=s(3);      quad(g,[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
   r=s(2);      quad(g,[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
 }
-function cyl(g, uv, cx,cz,y0,h,r,seg=12){
+// 第 7 个参数 = **直径**，与 C# Part.size.x（Cylinder 用直径）同口径。
+// 之前按半径用，凳面/腿/床柱在检查页里全比游戏内粗一倍。
+function cyl(g, uv, cx,cz,y0,h,dia,seg=12){
+  const r = dia/2;
   const s = uv.s4[1]||uv.top;
   for(let i=0;i<seg;i++){
     const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
@@ -202,9 +205,14 @@ function build(item, rot){
     endPanel(g,uvb,longZ,thick,headSign,len,M.bedFrame,M.headboard-M.bedFrame);
     endPanel(g,uvb,longZ,thick,-headSign,len,M.bedFrame,M.footboard-M.bedFrame);
     const uvq = woodUv(it.arch, rot, [w,d]);
-    const r = M.leg*1.1;
-    for(const sx of [-1,1]) for(const sz of [-1,1])
-      cyl(g,uvq,sx*(w/2-r),sz*(d/2-r),0,M.headboard,r*2);
+    const r = M.leg*1.1, bs2 = backSign(rot);
+    for(const sa of [-1,1]){
+      const h = sa*bs2 > 0 ? M.headboard : M.footboard;   // 床头端高柱、床尾端矮柱
+      for(const sl of [-1,1]){
+        if(longZ) cyl(g,uvq, sl*(w/2-r), sa*(d/2-r), 0, h, r*2);
+        else      cyl(g,uvq, sa*(w/2-r), sl*(d/2-r), 0, h, r*2);
+      }
+    }
   } else if(it.arch==='stool'){
     const sw = Math.min(0.44, w*0.6);
     const seat = faceUv(it.arch,rot,[sw,sw]);          // 顶盖 = 座面，侧壁（座沿一圈）= 木面
@@ -224,8 +232,8 @@ function build(item, rot){
     else      box(g,ub,bs*(w/2-t/2),sh,0, t,M.armBack-sh,d*0.98);
     for(let i=0;i<2;i++){
       const sgn = i? 1 : -1, ua = panelUv(it.arch,rot,[w,d], i?'armr':'arml', longZ);
-      if(longZ) box(g,ua,sgn*(w/2-t/2),0,0, t,M.armArm,d*0.8);
-      else      box(g,ua,0,0,sgn*(d/2-t/2), w*0.8,M.armArm,t);
+      if(longZ) box(g,ua,sgn*(w/2-t/2),0,0, t,M.armArm,d*0.88);
+      else      box(g,ua,0,0,sgn*(d/2-t/2), w*0.88,M.armArm,t);
     }
   } else {
     const sh = it.arch==='shelf';
@@ -233,7 +241,7 @@ function build(item, rot){
     box(g, slabUv(it.arch,rot,[w,d]), 0,h,0, w*0.96,M.slab,d*0.96);
     const u = sh ? slabUv(it.arch,rot,[w,d]) : faceUv(it.arch,rot,[w,d]);
     if(sh){
-      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.85,M.slab,d*0.8);
+      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.84,M.slab,d*0.78);
       box(g,u,-w*0.45,h*0.5,0, M.slab,h,d*0.8);
       box(g,u, w*0.45,h*0.5,0, M.slab,h,d*0.8);
     } else box(g,u,0,0,0, w*0.9,h,d*0.8);
