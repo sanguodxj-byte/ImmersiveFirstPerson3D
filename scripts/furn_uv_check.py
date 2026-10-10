@@ -293,6 +293,11 @@ def fixtures():
                 set(c for c, _, _ in check_names(geom, ["face", "mid", "crest"]))))
     out.append(("fx-deadname-clean", set(),
                 set(c for c, _, _ in check_names(geom, ["face", "mid"]))))
+    # Arch<->case：漏一个 case 必须报，齐了必须干净
+    s_missing = "enum Arch { Bed, Stool }  case Arch.Bed: break;"
+    s_ok = "enum Arch { Bed, Stool }  case Arch.Bed: break; case Arch.Stool: break;"
+    out.append(("fx-nocase", {"nocase"}, set(c for c, _, _ in check_arch_cases(s_missing))))
+    out.append(("fx-nocase-clean", set(), set(c for c, _, _ in check_arch_cases(s_ok))))
     return out
 
 
@@ -317,6 +322,26 @@ def check_names(cstext=None, names=None):
         if ('"%s"' % n) not in cstext:
             out.append(("deadname", "区段名 %s 在 SPEC 里有，几何从未点名引用" % n,
                         "接进某个面，或从 SPEC 删掉"))
+    return out
+
+
+def check_arch_cases(cstext=None):
+    """enum Arch 里每个原型都得有对应 case。少一个 case 不是编译错误 —— switch 直接
+    走空，那件家具只剩一个面都不发的空壳，游戏里表现为"家具消失"。
+    本轮就是切片误删了 Armchair/Throne 的 case，靠 deadname 才撞见。"""
+    if cstext is None:
+        f = os.path.join(FA.MOD, "Source", "RimFirstPerson3D", "Furniture3D.cs")
+        if not os.path.exists(f):
+            return [("nocs", "缺 Furniture3D.cs", "")]
+        cstext = open(f, encoding="utf-8").read()
+    m = re.search(r"enum Arch \{([^}]*)\}", cstext, re.S)
+    if not m:
+        return [("noenum", "找不到 enum Arch", "")]
+    arches = [a.strip() for a in m.group(1).replace("\n", " ").split(",") if a.strip()]
+    out = []
+    for a in arches:
+        if ("case Arch.%s:" % a) not in cstext:
+            out.append(("nocase", "Arch.%s 没有对应 case（几何会走空）" % a, "补 case"))
     return out
 
 
@@ -394,6 +419,10 @@ def main():
         bad += 1
     print("== 表 <-> 代码对齐 ==")
     for code, msg, hint in check_code_alignment():
+        print(f"  [{code}] {msg}")
+        bad += 1
+    print("== Arch <-> case ==")
+    for code, msg, hint in check_arch_cases():
         print(f"  [{code}] {msg}")
         bad += 1
     print("== 区段名 <-> 几何点名 ==")

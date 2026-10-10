@@ -24,3 +24,5 @@ docs/_stale/
 docs/furniture/audit/raw/
 # 标定看图台产物（_furn_grid.py 随时可重生成）
 docs/furniture/fit/
+# 部件清单缓存（furn_guard.py --refresh 重取）
+docs/furniture/guard/

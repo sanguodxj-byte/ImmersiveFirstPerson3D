@@ -171,7 +171,7 @@ const backSign = r => (r==='south' ? 1 : r==='north' ? -1 : r==='east' ? -1 : 1)
 
 // ---------------------------------------------------------------- 网格拼装
 // dir: 0北(-Z) 1南(+Z) 2东(+X) 3西(-X)
-function G(){ return {pos:[],uvs:[],idx:[]}; }
+function G(){ return {pos:[],uvs:[],idx:[],parts:[]}; }   // parts = 建模守卫读的部件清单
 function quad(g,a,b,c,d,ua,ub,uc,ud){
   const P=g.pos,U=g.uvs,I=g.idx;
   const push=(p,uv)=>{P.push(p[0],p[1],p[2]);U.push(uv[0],uv[1]);return P.length/3-1;};
@@ -180,6 +180,7 @@ function quad(g,a,b,c,d,ua,ub,uc,ud){
 }
 function box(g, uv, cx,cy,cz, w,h,d, nt){
   const x0=cx-w/2,x1=cx+w/2, z0=cz-d/2,z1=cz+d/2, y0=cy,y1=cy+h;
+  g.parts.push({k:'box', x0,x1,y0,y1,z0,z1, nt:!!nt});
   const mx=Math.max(0.001,uv.xz[0]), mz=Math.max(0.001,uv.xz[1]);
   const U=x=>tu[0]+(tu[2]-tu[0])*((x+mx/2)/mx);
   const V=z=>tu[1]+(tu[3]-tu[1])*((z+mz/2)/mz);
@@ -196,6 +197,7 @@ function box(g, uv, cx,cy,cz, w,h,d, nt){
 // 之前按半径用，凳面/腿/床柱在检查页里全比游戏内粗一倍。
 function cyl(g, uv, cx,cz,y0,h,dia,seg=12){
   const r = dia/2;
+  g.parts.push({k:'cyl', cx,cz,r, y0,y1:y0+h, x0:cx-r,x1:cx+r, z0:cz-r,z1:cz+r});
   const s = uv.s4[1]||uv.top||FALLBACK;
   const cp = uv.top||FALLBACK;
   for(let i=0;i<seg;i++){
@@ -264,12 +266,13 @@ function build(item, rot){
       pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot,
               M.bedFrame+M.mattress, M.pillowD, M.pillow);
     const uvq = woodUv(key, rot, [w,d]);
-    const r = M.leg*1.1, bs2 = backSign(rot);
+    const r = M.leg*1.1, bs2 = backSign(rot), ins = 0.05;   // 立柱内缩：不与床板外圆共面
     for(const sa of [-1,1]){
-      const h = sa*bs2 > 0 ? M.headboard : M.footboard;   // 床头端高柱、床尾端矮柱
+      const head = sa*bs2 > 0;
+      const h = (head ? M.headboard : M.footboard) + (head ? 0.02 : -0.02);
       for(const sl of [-1,1]){
-        if(longZ) cyl(g,uvq, sl*(w/2-r), sa*(d/2-r), 0, h, r*2);
-        else      cyl(g,uvq, sa*(w/2-r), sl*(d/2-r), 0, h, r*2);
+        if(longZ) cyl(g,uvq, sl*(w/2-r-ins), sa*(d/2-r-ins), 0, h, r*2);
+        else      cyl(g,uvq, sa*(w/2-r-ins), sl*(d/2-r-ins), 0, h, r*2);
       }
     }
   } else if(it.arch==='stool'){
@@ -283,14 +286,18 @@ function build(item, rot){
     if(hasRegion(key,'pillow'))
       pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot, M.roll, M.pillowD, M.pillow);
   } else if(it.arch==='chair'){
-    const sh=M.seat, sw=Math.min(0.52, Math.min(w,d)*0.72), bs=backSign(rot), bt=M.chairBackT;
-    const seat = faceUv(key,rot,[sw,sw]);
+    // 与 C# Arch.Chair 同口径：座盘收小，靠背落在座盘的弦内，腿张到盘沿下
+    const sh=M.seat, cush=M.cush, sd=Math.min(0.44, Math.min(w,d)*0.62);
+    const bt=M.chairBackT, rr=sd/2, bz=rr-bt*1.2;
+    const bw=1.84*Math.sqrt(Math.max(0.0025, rr*rr-(bz+bt/2)*(bz+bt/2)));
+    const seat = faceUv(key,rot,[sd,sd]);
     seat.s4[1] = wood(key,rot);
-    cyl(g, seat, 0,0, sh, M.cush, sw);
-    const ub = panelUv(key,rot,[w,d],'back', longZ);
-    if(longZ) box(g,ub,0,sh-0.04,bs*(sw/2-bt/2), sw*0.86,M.chairBack-sh+0.04,bt);
-    else      box(g,ub,bs*(sw/2-bt/2),sh-0.04,0, bt,M.chairBack-sh+0.04,sw*0.86);
-    legs(g, woodUv(key,rot,[w,d]), sw*0.33, sh, M.leg);
+    cyl(g, seat, 0,0, sh-cush, cush, sd);
+    const bs=backSign(rot), ub = panelUv(key,rot,[w,d],'back', longZ);
+    const bh = M.chairBack-(sh-cush);
+    if(longZ) box(g,ub,0,sh-cush-0.06,bs*bz, bw,bh,bt);
+    else      box(g,ub,bs*bz,sh-cush-0.06,0, bt,bh,bw);
+    legs(g, woodUv(key,rot,[w,d]), rr*0.72, sh-cush+0.03, M.leg);
   } else if(it.arch==='lamp'){
     const poleTop = M.pole - M.shade;
     cyl(g, uvNames(key,rot,[w,d],'front','front'), 0,0, 0, 0.05, 0.36);
@@ -307,7 +314,7 @@ function build(item, rot){
   } else if(it.arch==='marker'){
     box(g, uvNames(key,rot,[w,d],'front','front'), 0,0,0, 0.10,0.85,0.10);
     box(g, uvNames(key,rot,[w,d],'top','top'), 0,0.60,0, 0.62,0.20,0.08);
-    box(g, uvNames(key,rot,[w,d],'tip','tip'), 0,0.80,0, 0.10,0.14,0.10);
+    box(g, uvNames(key,rot,[w,d],'tip','tip'), 0,0.80,0, 0.08,0.14,0.08);
   } else if(it.arch==='floodlight'){
     cyl(g, uvNames(key,rot,[w,d],'baser','basel'), 0,0, 0, 0.14, 0.62);   // 底座：顶面/侧壁各一条实心带
     cyl(g, uvNames(key,rot,[w,d],'pole','pole'), 0,0, 0.14, 0.62, 0.16);
@@ -320,12 +327,13 @@ function build(item, rot){
     box(g, ug, 0,0.30,0, 0.95,0.22,0.85);
     box(g, ug, 0,0.52,bs*0.36, 0.80,0.85,0.14);
     box(g, uvNames(key,rot,[w,d],'spire','spire'), 0,1.37,bs*0.30, 0.34,0.42,0.28);
-    for(const sd of [-1,1]) box(g, ug, sd*0.62,0.52,-0.04, 0.22,0.34,0.70);
+    for(const sd of [-1,1]) box(g, ug, sd*0.54,0.24,-0.04, 0.22,0.62,0.70);
   } else if(it.arch==='drape'){
     const bs=backSign(rot), sv=viewOf(rot);
     const ut = uvNames(key,rot,[w,d],'tassel','tassel'), u2 = uvNames(key,rot,[w,d],'tassel2','tassel2'),
           u3 = uvNames(key,rot,[w,d],'tassel3','tassel3');
     box(g, ut, 0,M.rod,bs*0.02, w*0.86,0.09,0.09);
+    for(const sd of [-1,1]) box(g, ut, sd*w*0.40,0,bs*0.02, 0.07,M.rod+0.045,0.07);
     box(g, ut, -w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
     box(g, u3, 0,0.34,bs*0.02, 0.09,0.13,0.09);
     box(g, u2, w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
@@ -369,12 +377,13 @@ function build(item, rot){
     box(g, slabUv(key,rot,[w,d]), 0,h,0, w*0.96,M.slab,d*0.96);
     const u = sh ? slabUv(key,rot,[w,d]) : faceUv(key,rot,[w,d]);
     if(sh){
-      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.84,M.slab,d*0.78);
+      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.90,M.slab,d*0.74);
       // pos.y = 底面高度（与 C# Part 同口径），写 h*0.5 会让侧板悬在半空
       box(g,u,-w*0.45,0,0, M.slab,h,d*0.8);
       box(g,u, w*0.45,0,0, M.slab,h,d*0.8);
     } else box(g,u,0,0,0, w*0.9,h,d*0.8);
   }
+  geo_parts = g.parts;      // 供 ?parts=1 取用（同一份几何代码，不开第二条口径）
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos,3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uvs,2));
@@ -383,6 +392,7 @@ function build(item, rot){
 }
 
 let ITEM='bed', ROT='south';
+let geo_parts = [];
 const root = new THREE.Group(); scene.add(root);
 const grid = new THREE.GridHelper(12,24,0x4a5568,0x2e3446); grid.position.y=-0.003; scene.add(grid);
 const EMPTY = new URLSearchParams(location.search).get('empty') === '1';
@@ -514,7 +524,14 @@ if(PRETTY){
   scene.add(key);
   const rim = new THREE.DirectionalLight(0x9fc4ff, 0.5); rim.position.set(-5,3.5,-6); scene.add(rim);
 }
-if(q.get('gallery')==='1'){
+if(q.get('parts')==='1'){
+  // 全部件清单：每件 × 四个朝向，逐条给出包围盒。守卫脚本用 --dump-dom 取这一段。
+  const out = {};
+  for(const it of Object.keys(ITEMS))
+    for(const r of ['south','north','east','west']){ build(it, r); out[`${it}.${r}`] = geo_parts; }
+  const pre = document.createElement('pre'); pre.id = 'partjson';
+  pre.textContent = JSON.stringify(out); document.body.appendChild(pre);
+} else if(q.get('gallery')==='1'){
   // 全量展厅：同类排一排，行内按各自包围盒推进，行间距取该行最"深"的那件。
   // 相机在 -Z 看向 +Z，x 小的落在画面右边 -> 数组顺序就是从右往左念。
   const EYE = 1.62;                       // Metrics3D.HumanEyeHeight：第一人称相机基准

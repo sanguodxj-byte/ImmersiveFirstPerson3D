@@ -645,46 +645,6 @@ namespace RimFirstPerson3D
                     }
                     break;
                 }
-                case Arch.Chair:
-                {
-                    // 餐椅：座面是画出来的椭圆 -> 圆柱（同凳），靠背取顶栏那条白带，
-                    // 腿带是线稿：只拿一条腿当立面材料，圆柱腿本身用木面。
-                    float sh = Metrics3D.ChairSeatHeight;
-                    float sw = Mathf.Min(0.52f, Mathf.Min(w, d) * 0.72f);
-                    int si = uvs.Count;
-                    var seat = FaceUv(key, rot, new Vector2(sw, sw));
-                    seat.side = WoodRegion(key, rot);
-                    uvs.Add(seat);
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Cylinder,
-                        pos = new Vector3(0f, sh, 0f),
-                        size = new Vector3(sw, Metrics3D.SeatCushionThickness, sw),
-                        uv = si
-                    });
-                    float bs = BackSign(rot);
-                    float bt = ChairBackThickness;
-                    int bi = uvs.Count;
-                    uvs.Add(PanelUv(key, rot, xz, "back"));
-                    float bh = Metrics3D.ChairBackHeight - sh + 0.04f;
-                    m.parts.Add(longZ
-                        ? new Part
-                        {
-                            kind = Prim.Box, uv = bi,
-                            pos = new Vector3(0f, sh - 0.04f, bs * (sw * 0.5f - bt * 0.5f)),
-                            size = new Vector3(sw * 0.86f, bh, bt)
-                        }
-                        : new Part
-                        {
-                            kind = Prim.Box, uv = bi,
-                            pos = new Vector3(bs * (sw * 0.5f - bt * 0.5f), sh - 0.04f, 0f),
-                            size = new Vector3(bt, bh, sw * 0.86f)
-                        });
-                    int li = uvs.Count;
-                    uvs.Add(WoodUv(key, rot, xz));
-                    Legs(m, li, sw * 0.33f, sh, Metrics3D.LegThickness);
-                    break;
-                }
                 case Arch.Stool:
                 {
                     float sh = Metrics3D.ChairSeatHeight;
@@ -703,6 +663,52 @@ namespace RimFirstPerson3D
                     });
                     uvs.Add(WoodUv(key, rot, xz));             // 2 = 腿（圆柱，三视图没画它们）
                     Legs(m, 2, sw * 0.34f, sh, Metrics3D.LegThickness);
+                    break;
+                }
+                case Arch.Chair:
+                {
+                    // 餐椅：座面是画出来的椭圆 -> 圆柱。靠背板必须落在座盘的**弦内**：
+                    // 原来板宽 0.45、摆在 z=0.23（盘半径 0.26），板底两角整个悬在盘外，
+                    // 人眼高度看就是"椅背浮着"。腿同理要张到座盘沿下。
+                    float sh = Metrics3D.ChairSeatHeight;
+                    float cush = Metrics3D.SeatCushionThickness;
+                    float sd = Mathf.Min(0.44f, Mathf.Min(w, d) * 0.62f);   // 座盘直径
+                    float t = ChairBackThickness;
+                    float r = sd * 0.5f;
+                    float bz = r - t * 1.2f;                                // 靠背中心（往座盘里收）
+                    float bw = 1.84f * Mathf.Sqrt(Mathf.Max(0.0025f,
+                                    r * r - (bz + t * 0.5f) * (bz + t * 0.5f)));
+                    int si = uvs.Count;
+                    var seat = FaceUv(key, rot, new Vector2(sd, sd));
+                    seat.side = WoodRegion(key, rot);
+                    uvs.Add(seat);
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, sh - cush, 0f),
+                        size = new Vector3(sd, cush, sd),
+                        uv = si
+                    });
+                    float bs = BackSign(rot);
+                    int bi = uvs.Count;
+                    uvs.Add(PanelUv(key, rot, xz, "back"));
+                    float bh = Metrics3D.ChairBackHeight - (sh - cush);      // 板底插进座盘以下
+                    m.parts.Add(longZ
+                        ? new Part
+                        {
+                            kind = Prim.Box, uv = bi,
+                            pos = new Vector3(0f, sh - cush - 0.06f, bs * bz),
+                            size = new Vector3(bw, bh, t)
+                        }
+                        : new Part
+                        {
+                            kind = Prim.Box, uv = bi,
+                            pos = new Vector3(bs * bz, sh - cush - 0.06f, 0f),
+                            size = new Vector3(t, bh, bw)
+                        });
+                    int li = uvs.Count;
+                    uvs.Add(WoodUv(key, rot, xz));
+                    Legs(m, li, r * 0.72f, sh - cush + 0.03f, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.Armchair:
@@ -738,8 +744,8 @@ namespace RimFirstPerson3D
                             pos = new Vector3(bs * (w * 0.5f - t * 0.5f), sh, 0f),
                             size = new Vector3(t, bh - sh, d * 0.98f)
                         });
-                    uvs.Add(PanelUv(key, rot, xz, "arml"));              // 3 = 扶手 A
-                    uvs.Add(PanelUv(key, rot, xz, "armr"));              // 4 = 扶手 B
+                    uvs.Add(PanelUv(key, rot, xz, "arml"));             // 3 = 扶手 A
+                    uvs.Add(PanelUv(key, rot, xz, "armr"));             // 4 = 扶手 B
                     // 扶手往后伸进靠背（0.88 半长 0.88 > 靠背内面 0.84），否则两者之间留缝
                     for (int i = 0; i < 2; i++)
                     {
@@ -908,7 +914,7 @@ namespace RimFirstPerson3D
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0.80f, 0f),
-                        size = new Vector3(0.10f, 0.14f, 0.10f),
+                        size = new Vector3(0.08f, 0.14f, 0.08f),   // 比桩身窄一圈，别与它共面
                         uv = ti
                     });
                     break;
@@ -997,8 +1003,8 @@ namespace RimFirstPerson3D
                         m.parts.Add(new Part
                         {
                             kind = Prim.Box,
-                            pos = new Vector3(sd * 0.62f, seatY + 0.22f, -0.04f),
-                            size = new Vector3(0.22f, 0.34f, 0.70f),
+                            pos = new Vector3(sd * 0.54f, seatY - 0.06f, -0.04f),
+                            size = new Vector3(0.22f, 0.62f, 0.70f),
                             uv = ai
                         });
                     break;
@@ -1123,8 +1129,8 @@ namespace RimFirstPerson3D
                     if (shelf)
                     {
                         // 侧板 + 层板：俯视段给层板顶面，立边与侧板各面用木面。
-                        // 层板比侧板内空再小一点（0.84/0.78 vs 侧板的 0.85/0.8）：
-                        // 严格共面的两个面会互相闪面（z-fighting）。
+                        // 层板要**压进**侧板（0.90 覆盖侧板内面 0.875），又不能与它共面：
+                        // 0.84 会留 3.5cm 缝 -> 部件清单上看是三块悬空孤岛（furn_guard 报的）。
                         for (int i = 0; i < 3; i++)
                         {
                             float y = h * (0.12f + i * 0.34f);
@@ -1132,7 +1138,7 @@ namespace RimFirstPerson3D
                             {
                                 kind = Prim.Box,
                                 pos = new Vector3(0f, y, 0f),
-                                size = new Vector3(w * 0.84f, Metrics3D.SlabThickness, d * 0.78f),
+                                size = new Vector3(w * 0.90f, Metrics3D.SlabThickness, d * 0.74f),
                                 uv = 2
                             });
                         }
@@ -1235,14 +1241,19 @@ namespace RimFirstPerson3D
             float r = Metrics3D.LegThickness * 1.1f;
             bool longZ = rot == Rot4.North || rot == Rot4.South;
             float bs = BackSign(rot);
+            // 立柱外圆不能与床板外圆严格共面（原来都在 w/2、d/2 上，871cm² 的面对面贴
+            // 在一起必然闪面），也不能与床垫面/床板顶同高 —— 一律内缩 2cm、柱头错开 2cm。
+            // 0.02 正好等于端板那 4% 的宽度损失（板边在 w*0.48），两者会贴成
+            // 同一圆柱面 -> 390cm² 共面。内缩到 0.05 才真正错开。
+            const float inset = 0.05f;
             for (int sa = -1; sa <= 1; sa += 2)
             {
-                float h = sa * bs > 0f ? headH : footH;
+                float h = (sa * bs > 0f ? headH : footH) + (sa * bs > 0f ? 0.02f : -0.02f);
                 for (int sl = -1; sl <= 1; sl += 2)
                 {
                     var pos = longZ
-                        ? new Vector3(sl * (w * 0.5f - r), 0f, sa * (d * 0.5f - r))
-                        : new Vector3(sa * (w * 0.5f - r), 0f, sl * (d * 0.5f - r));
+                        ? new Vector3(sl * (w * 0.5f - r - inset), 0f, sa * (d * 0.5f - r - inset))
+                        : new Vector3(sa * (w * 0.5f - r - inset), 0f, sl * (d * 0.5f - r - inset));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
