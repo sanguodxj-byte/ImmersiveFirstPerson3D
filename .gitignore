@@ -18,3 +18,7 @@ docs/_stale/
 
 # 编辑器备份
 *.bak
+
+# 审核台逐格原图：每跑一轮就换一批（600 张 ~20MB），历史里留一份没意义。
+# 拼版表 *_sheet.png 与 overview.png 仍然入库，那才是给人看的验收证据。
+docs/furniture/audit/raw/
