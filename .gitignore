@@ -4,3 +4,17 @@ scripts/__pycache__/
 
 # 家具审核台的 Chrome 临时 profile（若有人改回共享目录）
 docs/furniture/audit/.chrome-profile/
+
+# JiuwenSwarm runtime file operation logs
+.agent_history/
+
+# 本地代理工具目录（不入库）
+.office-claw/
+.workbuddy/
+.zcode/
+
+# 已弃用的归档
+docs/_stale/
+
+# 编辑器备份
+*.bak
