@@ -275,7 +275,97 @@ def fixtures():
                           '    "stool": {\n    },\n}')))
     out.append(("fx-dupkey-clean", [],
                 dup_names('SPEC = {\n    "bed": {\n    },\n    "stool": {\n    },\n}')))
+    # 页面取样键：拿 arch 名当键（漏写 item:）必须报 viewkey；补上 item: 就必须干净。
+    # 每例只植入一类缺陷：反向判据把"条目名"也算可达，于是 viewkey 单例不连带 noviewitem。
+    one = {"diningchair": {"south": {}}, "bed": {"south": {}}}
+    one2 = {"diningchair": {"south": {}}}
+    bad_html = "const ITEMS = {\n  diningchair: {arch:'chair', w:1, d:1},\n};\n"
+    good_html = ("const ITEMS = {\n  diningchair: {arch:'chair', item:'diningchair', w:1, d:1},"
+                 "\n  bed: {arch:'bed', w:1, d:2},\n};\n")
+    orphan_html = "const ITEMS = {\n  bed: {arch:'bed', w:1, d:2},\n};\n"
+    out.append(("fx-viewkey", {"viewkey"}, set(c for c, _, _ in check_viewer(one2, bad_html))))
+    out.append(("fx-viewkey-clean", set(), set(c for c, _, _ in check_viewer(one, good_html))))
+    out.append(("fx-noviewitem", {"noviewitem"},
+                set(c for c, _, _ in check_viewer(one, orphan_html))))
+    # 区段名对账：几何里写了 "face" 就不该报，没写就该报
+    geom = 'Region(k, v, "face"); Region(k, v, "mid");'
+    out.append(("fx-deadname", {"deadname"},
+                set(c for c, _, _ in check_names(geom, ["face", "mid", "crest"]))))
+    out.append(("fx-deadname-clean", set(),
+                set(c for c, _, _ in check_names(geom, ["face", "mid"]))))
     return out
+
+
+def spec_region_names(spec=None):
+    spec = spec or FA.SPEC
+    return sorted({r for it in spec.values() for v in it.values()
+                   for r in v if r not in ("path", "discard")})
+
+
+def check_names(cstext=None, names=None):
+    """区段名必须被几何点名过。AllRegions 是从 SPEC 机械生成的，拿它跟自己对账等于自证；
+    真正独立的事实是"几何代码里有没有人写 Region(key, v, "face")"。
+    写了 SPEC 却没人点名的区 = 白占图集，还会让人以为那个面有对应像素。"""
+    if cstext is None:
+        f = os.path.join(FA.MOD, "Source", "RimFirstPerson3D", "Furniture3D.cs")
+        if not os.path.exists(f):
+            return [("nocs", "缺 Furniture3D.cs", "")]
+        cstext = open(f, encoding="utf-8").read()
+    names = names if names is not None else spec_region_names()
+    out = []
+    for n in names:
+        if ('"%s"' % n) not in cstext:
+            out.append(("deadname", "区段名 %s 在 SPEC 里有，几何从未点名引用" % n,
+                        "接进某个面，或从 SPEC 删掉"))
+    return out
+
+
+VIEW = os.path.join(FA.MOD, "viewer", "furniture.html")
+
+
+def viewer_keys(text):
+    """检查页 ITEMS 里每件**实际**用的取样件名 —— 与 build() 里 `key = it.item || it.arch` 同口径。"""
+    m = re.search(r"const ITEMS = \{(.*?)\n\};", text, re.S)
+    if not m:
+        return None
+    out = {}
+    for line in m.group(1).splitlines():
+        mm = re.match(r"^\s*([a-z][a-z0-9]*):\s*\{([^}]*)\}", line)
+        if not mm:
+            continue
+        arch = re.search(r"arch:\s*'([a-z]+)'", mm.group(2))
+        if not arch:
+            continue
+        it = re.search(r"item:\s*'([a-z0-9]+)'", mm.group(2))
+        out[mm.group(1)] = it.group(1) if it else arch.group(1)
+    return out
+
+
+def check_viewer(spec=None, text=None):
+    """几何页与 SPEC 双向对账。页面上的取样键是 `it.item || it.arch` —— 配方名与件名不是一回事
+    （Arch.Chair 的件叫 diningchair），漏写 item: 就拿 'chair.xxx' 去查表，查不到走兜底，
+    闸门全绿而模型糊成一片。反向：SPEC 里的件页面必须能指到，否则审核压根不出这件的图。"""
+    spec = spec or FA.SPEC
+    if text is None:
+        if not os.path.exists(VIEW):
+            return [("noview", "缺 viewer/furniture.html", "")]
+        text = open(VIEW, encoding="utf-8").read()
+    keys = viewer_keys(text)
+    if keys is None:
+        return [("noview", "检查页里没有 ITEMS 表", "")]
+    errs = []
+    for name, key in sorted(keys.items()):
+        if key not in spec:
+            errs.append(("viewkey", "检查页 %s 用取样件名 '%s'，SPEC 里没有它的区" % (name, key),
+                         "给该条补 item:'<件名>'（arch 名不等于件名）"))
+    # 可达 = 页面条目名（?item= 用的就是它）或某条目的取样键。两个名字允许不同：
+    # 条目叫 bedrolldouble、取样键也叫 bedrolldouble，而 arch 叫 bedroll。
+    reach = set(keys) | set(keys.values())
+    for it in sorted(spec):
+        if it not in reach:
+            errs.append(("noviewitem", "SPEC 有 %s，检查页没有一件指向它" % it,
+                         "补 ITEMS 条目，否则审核根本不出这件的图"))
+    return errs
 
 
 def main():
@@ -304,6 +394,14 @@ def main():
         bad += 1
     print("== 表 <-> 代码对齐 ==")
     for code, msg, hint in check_code_alignment():
+        print(f"  [{code}] {msg}")
+        bad += 1
+    print("== 区段名 <-> 几何点名 ==")
+    for code, msg, hint in check_names():
+        print(f"  [{code}] {msg}")
+        bad += 1
+    print("== 检查页 ITEMS <-> SPEC ==")
+    for code, msg, hint in check_viewer():
         print(f"  [{code}] {msg}")
         bad += 1
     print("结论:", "PASS 0 缺陷" if bad == 0 else f"FAIL {bad} 处缺陷")

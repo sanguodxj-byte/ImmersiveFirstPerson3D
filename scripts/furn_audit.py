@@ -5,7 +5,9 @@
 行 = 朝向 south/north/east/west；列 = 机位 45°/俯视/主视·南/侧视·东/低角度/贴脸。
 产物 docs/furniture/audit/<item>.png，供逐格目视判读（禁止用数值统计代替看图）。
 """
+import io
 import os
+import re
 import glob
 import shutil
 import subprocess
@@ -27,7 +29,11 @@ SHOT_TIMEOUT_MS = 90000
 
 ITEMS = ["bed", "stool", "endtable", "dresser", "shelf", "armchair",
          "table1x2", "table2x2", "table2x4", "table3x3",
-         "bookcase", "bookcasesmall", "shelfsmall"]
+         "bookcase", "bookcasesmall", "shelfsmall",
+         "couch", "diningchair", "doublebed", "royalbed", "hospitalbed",
+         "bedroll", "bedrolldouble",
+         "standinglamp", "floodlight", "column", "plantpot", "penmarker",
+         "throne", "grandthrone", "drape", "stelelarge", "stelegrand"]
 ROTS = ["south", "north", "east", "west"]
 VIEWS = ["45°", "俯视", "主视·南", "侧视·东", "低角度", "贴脸"]
 CELL = (620, 500)
@@ -36,7 +42,9 @@ EMPTY = "__empty__"
 
 def url(item, rot, view):
     from urllib.parse import quote
-    return "%s?item=%s&rot=%s&view=%s" % (PORT, item, rot, quote(view))
+    # still=1：关掉页面上的按钮叠层。它们是 DOM 文字，与差分参考图必然不同，
+    # 留着就得切掉顶部一大条，正上方机位的模型顶会被一起切 -> 好件被误判成断裂。
+    return "%s?item=%s&rot=%s&view=%s&still=1" % (PORT, item, rot, quote(view))
 
 
 def _crop_model(im):
@@ -98,19 +106,35 @@ def model_mask(a, a0):
     """差分遮罩：与同机位的空场景逐像素比，有差别的才是模型。
     不能用"与背景色的色差" —— 家具上有近黑的暗面，会被当成背景，好好的模型被切成几段。"""
     m = np.abs(a - a0).sum(axis=2) > 12
-    m[:205, :] = False                   # 顶部 HUD 文本块 + 三排按钮：参考图按默认件渲，
-                                         # 文字/高亮态与本格不同，会被差分抓成假段。
-                                         # 这 6 个机位里模型最低也从 y~205 起，切掉不伤判据。
-    m[455:500, 500:620] = False        # 右下角水印
+    if HUD_ROWS:
+        m[:HUD_ROWS, :] = False
+    y0, y1, x0, x1 = MISS_BOX
+    m[y0:y1, x0:x1] = False             # 哨兵自己不算部件
     return m
 
 
+def missing_regions(p):
+    """页面里出现"查无此区"= 左下角哨兵变纯洋红。这类格子必须判失败：
+    兜底色会让面看起来"是白的"，肉眼看不出来，闸门不报就是假绿。"""
+    a = np.asarray(Image.open(p).convert("RGB")).astype(int)
+    y0, y1, x0, x1 = MISS_BOX
+    blk = a[y0:y1, x0:x1]
+    mag = (np.abs(blk - np.array([255, 0, 255])).sum(axis=2) <= 24)
+    return int(mag.sum())
+
+
+HUD_ROWS = 0              # still=1 下页面把 HUD 也关了，差分就是模型本体，不必切行
+MISS_BOX = (476, 500, 0, 24)   # 左下角(24x24)"缺取样区"洋红哨兵：不算模型，单独判
 MIN_BAND_PX = 800        # 小于这块面积的段 = 描边线/抗锯齿细行，不当一个"部件"
 
 
-def bands(m, min_px=25, gap=3):
-    """按行切成连续段，再按面积滤掉细行（描边线）。段数 >1 = 剪影断裂
-    （有部件悬空 / 被剔除 / 没接上）。真缺陷的量级是几千像素（书架侧板那次是 2429）。"""
+def bands(m, min_px=6, gap=6):
+    """按行切成连续段，再按面积滤掉细行。段数 >1 = 剪影断裂（有部件悬空/被剔除/没接上）。
+
+    min_px 只能到"这条缝里确实还有像素"的量级：细柱/薄板(5~16cm)在 3.5m 外只占 6~25 列，
+    旧值 25 会把探照灯的灯杆、书架的侧板判成"断开"。gap=6 是因为腿与座面的接缝
+    在 45° 俯视里会被座盘挡住，真实投影就有几行空。真缺陷的量级是整块板件错位
+    （书架侧板那次是 2429 像素、断几十行），这两档都还抓得到（见 selftest）。"""
     on = m.sum(axis=1) >= min_px
     out, y = [], 0
     while y < len(on):
@@ -146,15 +170,26 @@ def sheet(item):
                 im = im.resize(CELL, Image.NEAREST)
             canvas.paste(im, (c * CELL[0], 26 + r * CELL[1]))
     small = canvas.resize((W // 2, H // 2), Image.LANCZOS)
-    path = os.path.join(OUT, "%s_sheet.png" % item)
-    small.save(path)
+    return _save(small, os.path.join(OUT, "%s_sheet.png" % item))
+
+
+def _save(im, path):
+    """先写临时名再原子改名：目标文件被预览/扫描句柄占着时，直接 w+b 会 EINVAL。"""
+    tmp = path + ".tmp"
+    im.save(tmp, "PNG")   # 扩展名不是 .png，必须点名格式
+    try:
+        os.replace(tmp, path)
+    except OSError as e:
+        print("  [sheet] %s 覆盖失败(%s)，保留 %s" % (os.path.basename(path), e, tmp))
+        return tmp
     return path
 
 
 def clean_scoped_tmp():
     tmp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
-    for d in glob.glob(os.path.join(tmp, "scoped_dir*")):
-        shutil.rmtree(d, ignore_errors=True)
+    for pat in ("scoped_dir*", "furnshot-*", "shapeshot-*", "HeadlessChrome*"):
+        for d in glob.glob(os.path.join(tmp, pat)):
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def overview():
@@ -181,12 +216,77 @@ def overview():
             sc = min(CW / im.width, CH / im.height)
             im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.LANCZOS)
             sheet.paste(im, (x + (CW - im.width) // 2, y + (CH - im.height) // 2))
-    path = os.path.join(OUT, "overview.png")
-    sheet.save(path)
-    return path
+    return _save(sheet, os.path.join(OUT, "overview.png"))
+
+
+def js_check():
+    """检查页的 JS 先过一遍语法。一次括号写歪就是整页崩、几百格全空白，
+    而截图要跑十几分钟才看得见 —— 这条闸门一秒就能拦住（本轮真撞上过一次）。"""
+    html = os.path.join(MOD, "viewer", "furniture.html")
+    if not os.path.exists(html):
+        return ["缺 viewer/furniture.html"]
+    src = io.open(html, encoding="utf-8").read()
+    blocks = re.findall(r'<script[^>]*>(.*?)</script>', src, re.S)
+    kinds = re.findall(r'<script([^>]*)>', src)
+    out = []
+    skip = []
+    for n, (attr, body) in enumerate(zip(kinds, blocks)):
+        ext = "mjs" if "module" in attr else "js"
+        tmp = os.path.join(tempfile.gettempdir(), "furn_view_%d.%s" % (n, ext))
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(body)
+        try:
+            r = subprocess.run(["node", "--check", tmp], stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=90)
+        except Exception as e:                      # 没装 node 就别拦，只是少一道保险
+            skip.append("node 不可用，跳过 JS 语法检查：%s" % e)
+            break
+        if r.returncode:
+            out.append("第 %d 段 <script> 语法错：%s"
+                       % (n + 1, r.stdout.decode("utf-8", "replace").strip()[:300]))
+    if skip and not out:
+        print("  [js] " + skip[0])
+    return out
+
+
+def selftest():
+    """剪影判据必须双向：整块的要放行、真断的要抓住、只有 HUD 差异的要判 0 段。
+    不跑这一轮，"480 格无断裂"可能只是判据失灵。"""
+    H, W = 500, 620
+    solid = np.zeros((H, W), int)
+    solid[200:400, 200:420] = 30
+    cut = solid.copy()
+    cut[300:330, :] = 0                       # 中间挖掉 30 行 = 上下两截
+    sent = np.zeros((H, W), int)
+    y0, y1, x0, x1 = MISS_BOX
+    sent[y0:y1, x0:x1] = 200                 # 只有左下角哨兵在变（缺取样区）
+    a0 = np.zeros((H, W, 3), int)
+    mk = lambda a: model_mask(a[..., None].repeat(3, 2), a0)
+    got = [("solid", 1, len(bands(mk(solid)))),
+           ("split", 2, len(bands(mk(cut)))),
+           ("sentinel-only", 0, len(bands(mk(sent))))]
+    bad = [(n, w, g) for n, w, g in got if w != g]
+    # 哨兵检测本身也要双向：纯洋红必须数到，正常底色必须数不到
+    mag_ok = int((np.abs(sent[..., None].repeat(3, 2)[y0:y1, x0:x1]
+                         - np.array([255, 0, 255])).sum(axis=2) <= 24).sum())
+    if mag_ok:
+        bad.append(("sentinel-detect", 1, mag_ok))     # 纯灰不算洋红：这里应为 0
+    return bad
 
 
 def main():
+    js = js_check()
+    for m in js:
+        print("  [js] " + m)
+    if js:
+        print("检查页 JS 未过 —— 不出图，先修页面")
+        return 2
+    bad_fx = selftest()
+    for n, w, g in bad_fx:
+        print("  [fixture] %s: 期望 %d 段，实得 %d 段" % (n, w, g))
+    if bad_fx:
+        print("剪影夹具未通过 —— 判据本身不可信，拒绝给存量背书")
+        return 2
     clean_scoped_tmp()
     os.makedirs(RAW, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
@@ -199,6 +299,15 @@ def main():
                 bad.append((os.path.basename(p), err))
     for name, err in bad:
         print("  [blank] %s: %s" % (name, err))
+    miss = []
+    for i in ITEMS:
+        for r in ROTS:
+            for v in VIEWS:
+                p = cell(i, r, v)
+                if os.path.exists(p) and missing_regions(p) > 20:
+                    miss.append("%s/%s/%s" % (i, r, v))
+    for m_ in miss:
+        print("  [missing] " + m_ + " 查无此取样区（走了兜底色）")
     # 剪影连通性：每个机位渲一张空场景，逐格差分后按行看有没有断成几截
     for v in VIEWS:
         shoot((EMPTY, EMPTY, v, True))
@@ -222,9 +331,10 @@ def main():
     for i in ITEMS:
         print("sheet:", sheet(i))
     print("overview:", overview())
-    ok = not bad and not split
+    ok = not bad and not split and not miss
     print("结论:", "PASS %d 格全出图、剪影无断裂" % len(jobs) if ok else
-          "FAIL 没出图 %d 格 / 剪影断裂 %d 格" % (len(bad), len(split)))
+          "FAIL 没出图 %d 格 / 剪影断裂 %d 格 / 缺取样区 %d 格"
+          % (len(bad), len(split), len(miss)))
     return 0 if ok else 1
 
 

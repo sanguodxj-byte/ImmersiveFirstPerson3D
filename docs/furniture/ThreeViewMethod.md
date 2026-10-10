@@ -59,6 +59,21 @@
    白面。按行分带切 `top`/`back`/`front`/`arml`/`armr`，每带的 x 区间 = 该带各行最长不透明段
    的交集（带内天然无洞）；板件边棱与圆柱仍走 `wood`。运行时用 `UvNames`/`PanelUv` 点名配区，
    缺某朝向的某条带时按 south→north→east 回退。
+10. **单图型（`Graphic_Single`：四向共用一张立面图，如灯/柱/盆/桩/探照灯）**：
+    `front` 就是图里那条竖带，`top` 是该件**真实存在的水平面**（灯罩顶、柱头、盆土、牌面），
+    图里没画的圆柱仍走 `wood`。三个朝向的查表全落到同一张图上（判据 9 的回退链），
+    所以 SPEC 只写 `south` 一块即可 —— 但每件仍必须有一处 `wood`（判据 8 不豁免）。
+11. **梯形 / 波浪轮廓逐带取样**：一件的剪影若逐层收窄（石碑、帷幔裙摆），一条矩形铺不满：
+    要么含洞（`hole`），要么两侧丢一条（`cover` 不足）。解法是把件拆成几段叠块，
+    每段的大面(±Z)/薄边(±X)/顶面各点一条对应高度的横带（`Bands(face, edge, cap)`），
+    而不是把缺口塞进 `discard`（那里要 ≥30% 笔画才算线稿带）。
+12. **贴花型不接管**：`SleepingSpot` / `DoubleSleepingSpot` 的原版图是"一圈轮廓 + 中间全透明"
+    的地面贴花 —— 它没有实体面可取（任何跨过空洞的矩形都会 `hole`，把空洞丢掉就 `cover` 不足）。
+    这类件**不进配方表**，让原版贴花继续画：糊一块实心垫子反而把"这是地上一个位置"画成了"这是一张床"。
+13. **取样坐标由 `scripts/_furn_fit.py fix` 标定，不靠目测**：先声明语义矩形（top/front/pillow/…），
+    工具把每个矩形**收缩**到最大实心子矩形（躲开圆角与空洞）、再**吃进**相邻无主的实心像素
+    （床架外圈那几列），最后打印可直接粘回 SPEC 的块 + 每图"无归属"聚类。收缩顺序按大面优先
+    （`ORDER`），`wood` 走"无笔画"掩码且允许压在别的区里 —— 与检查器同一套判据。
 
 ## 2. 单一真源与产物
 
@@ -98,8 +113,8 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 
 ## 4. 本批已落地 / 待办
 
-已落地（`furn_uv_check` 0 缺陷、`furn_color_check` 材质像素零改写、240 格审核无剪影断裂、
-编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`（含 `wood` 干净木面区 +
+已落地（`furn_uv_check` 0 缺陷、`furn_color_check` 材质像素零改写、720 格审核全出图 /
+无剪影断裂 / 无"查无此取样区"、编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`（含 `wood` 干净木面区 +
 圆柱/薄边配区）、`armchair`（线稿型分带首例）、`table1x2` `table2x2` `table2x4` `table3x3`
 （台面 top / 台面边 edge / 画出来的腿条 front / 腿的圆盖 wood）、
 `bookcase` `bookcasesmall`（共用 `Arch.Cabinet`：正面就是厚框 + 亮内腔，读作一块大面板）、
@@ -111,15 +126,59 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 没有区 = 不接管（走原立板回退），杜绝"整族接管却借用别件的像素"（bookcase 曾借 shelf 的区）。
 `AllRegions` 由 `scripts/furn_regions.py` 从 SPEC 机械生成，不手抄。
 
+第二批（同四个闸门全绿）：
+- `couch` 复用 `Arch.Armchair` —— 沙发与扶手椅是同一套几何（箱体 + 靠背 + 两端扶手），
+  差别只在占格 2×1：扶手落在长轴两端、靠背横跨 2 格，配方一行都不用改。
+- `doublebed` `royalbed` `hospitalbed` 各用自己的取样件（原来四件床共用 `bed` 的区，
+  等于把单人床的像素糊到皇家床上），并新增**枕头**板件 `AddPillows`：
+  图里枕头与床垫是两块分开的白面，模型上也分开才认得出"床"；2 格宽的床并排两个。
+  床的 `top` 因此**不含枕头**（`doublebed` 那种枕头在图端的件，`top` 从枕头以下开始）。
+- `bedroll` `bedrolldouble` 用新 `Arch.Bedroll`：一条薄垫 + 枕头，没有床架/床头板/立柱 ——
+  占格与床相同（1×2 / 2×2），只能靠轮廓区分。
+- `diningchair` 用新 `Arch.Chair`：座面是画出来的椭圆 → 圆柱（同凳），靠背取顶栏那条白带。
+  它的腿带是纯线稿（笔画 >55%），几何里没有任何面用 `front`（座沿走 `wood`），
+  所以 `front` 干脆不声明，整带 `discard` —— 与其留一个没人引用的区，不如让 SPEC 说实话。
+- 本层新增件的尺寸（枕头 0.11/0.34、地铺 0.08、椅背厚 0.06）暂放 `Furniture3D` 的私有常量：
+  `Metrics3D.cs` 是并行修改中的共享文件，写进那里等于把未提交的值绑进已提交的几何。
+
+第三、四批（同四个闸门全绿）：
+- **单图型**（`Graphic_Single`：原版四向共用一张立面图）—— `standinglamp` `column`
+  `plantpot` `penmarker` `floodlight`。取样口径与前两批不同：`front` 就是图里那条竖带，
+  `top` 是该件**真正存在的水平面**（灯罩/柱头/盆土/牌面），图里没画的圆柱走 `wood`。
+  朝向不再各自取图：`Region()` 的 south→north→east 回退天然把单图喂给四个立面。
+- 探照灯的底座是椭圆：一条矩形吃不下两翼。标定器改成**按内容像素取优**
+  （`max_content_rect`，旧版按面积取优会挑中一根细高条），于是"灯头 / 杆+底座中缝 /
+  左翼 / 右翼"四条无洞矩形就能覆盖 99.7% —— 底座顶面取右翼、侧壁取左翼。
+- Royalty：`throne` 复用扶手椅几何（只把座高 0.48、靠背 1.35 换掉，一条 case 两种件）；
+  `grandthrone` = 白台座 + 金椅 + 尖顶 + 两根扶手柱；`drape` = 横杆 + 布面 + 三个穗子；
+  `stelelarge`(2x2) / `stelegrand`(3x3) = 碑身 + 基座，高度按占格算。
+- **梯形/波浪轮廓要"逐带取样"**：石碑上窄下宽、帷幔的裙摆是波浪边，一条矩形铺不满 ——
+  要么含洞（`hole`），要么两侧丢一条（`cover` 不足）。解法是把件拆成几段叠块，
+  每段的大面(±Z)/薄边(±X)/顶面各点一条对应高度的横带（`Bands(face, edge, cap)`）。
+  石碑因此有 crest/top/shoulder/mid/face/front 六条带、三段叠块；帷幔有 top/mid/front
+  三条布带 + 左/中/右三条穗带（穗子之间是透的，一条矩形盖不住三个）。
+  这样"图里每一块实心像素都有归属"就不再是靠 discard 糊过去的。
+- `SleepingSpot` / `DoubleSleepingSpot` 与 `WallLamp` 明确**不接管**（见硬约束 12 与 §4 待办）。
+
+修的问题（两件都影响**审核证据**，游戏内几何本来就是对的）：- 检查页 `viewer/furniture.html` 过去**不转占格轴** —— `ITEMS` 里写的是 def 的 `<size>`（South 帧），
+  转东/西时 C# 走 `GenAdj.OccupiedRect` 会换轴，页面不换，于是 bed/桌/柜/沙发在 east/west
+  两行里"长轴仍沿 Z、床头板跑到侧栏"。现在 `build()` 里同步换轴。
+- 剪影闸门过去靠"切掉顶部 205 行"躲开页面上的按钮叠层，而正上方机位的模型顶正好被切进去 ——
+  好件被误判成"断成 2 段"（diningchair 那次就是这么来的）。现在出图走 `?still=1`：
+  页面关掉全部 DOM 叠层，差分参考图与本格只差模型本身，`HUD_ROWS=0` 不切行。
+  代价是画面里不再有那叠诊断文字，于是换成**哨兵**：查无此取样区时左下角画 24×24 纯洋红，
+  审核台按像素判（`missing_regions`），比读文字更硬。
+- 剪影判据现在自带合成夹具（整块→1 段、挖一刀→2 段、只有哨兵→0 段），
+  夹具不过就拒绝给存量背书 —— 否则"480 格无断裂"可能只是判据失灵。
+- 面取样兜底：整件没有立面段时（diningchair 的腿带是纯线稿，几何也不拿它当面），
+  `FaceUv` 退到 `wood` 而不是 `Vector4.zero` —— 后者会去采图集原点，且让页面报"缺取样区"，
+  把真信号埋在一堆良性噪音里。
+
 待办，按优先级：
-1. **couch**：横带 ~96%，纵带 99.4%（`_furn_fit.py pack` 已给坐标），但扶手在两侧形成
-   独立小块，要与 armchair 的扶手配区一起定。
-2. **床的变体** doublebed / royalbed / hospitalbed / bedroll / bedrolldouble /
-   sleepspot / doublesleepspot：分带 90~97%，枕头、床尾架、输液杆要单独配区。
-3. **diningchair**：圈背 + 椭圆坐垫 + 四条腿，白面被黑框切成互不相邻的小块，
-   横带/纵带都只能覆盖 ~97%（分带器对纯透明行直接判废），需要按连通块切区的工具。
-4. royalbed、hospitalbed、bedroll、sleepspot、doublebed 等床的变体（分带 90~97%，
-   枕头/床尾结构要单独配区）；lampstanding、plantpot、column、walllamp、floodlight、
-   stele、Royalty throne/drape。
-5. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
-6. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图；游戏内颜色比对。
+1. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
+2. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图；游戏内颜色比对。
+3. 抽屉/柜门的面板内部线稿（dresser / endtable 正面目前是整块面板，抽屉缝靠贴图自带）。
+4. `SteleLarge` 是 `Graphic_Random` 的 6 张变体（largestelea..f），本层只取 a 做取样件
+   —— 六块碑在 3D 里长得一样。要区分就得按变体各配一套区（同一配方，6 个件名）。
+5. `WallLamp` 未接管：它是挂墙件（贴墙画），家具层按占格中心落地，做出来会浮在格子中间；
+   要接得先由墙层给出"贴哪面墙"的锚点。

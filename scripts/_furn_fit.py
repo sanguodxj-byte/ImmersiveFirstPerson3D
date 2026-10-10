@@ -124,7 +124,211 @@ def fit_bands(src, k=3, vert=False):
     return rs, best[0] / float(total)
 
 
+def max_rect(avail):
+    """bool 矩阵里面积最大的全 True 子矩形 -> (x0,y0,x1,y1)。直方图法，O(H*W)。"""
+    H, W = avail.shape
+    heights = np.zeros(W, dtype=np.int64)
+    best_area, best = 0, (0, 0, 0, 0)
+    for y in range(H):
+        heights = np.where(avail[y], heights + 1, 0)
+        stack = []                      # [(起点列, 高)]
+        for x in range(W + 1):
+            h = int(heights[x]) if x < W else 0
+            start = x
+            while stack and stack[-1][1] > h:
+                sx, sh = stack.pop()
+                if sh * (x - sx) > best_area:
+                    best_area = sh * (x - sx)
+                    best = (sx, y - sh + 1, x, y + 1)
+                start = sx
+            stack.append((start, h))
+    return best
+
+
+ORDER = {                      # 收缩优先级：先点名要的带优先占位，后面的只能捡剩下的
+    "bedlike": ("top", "pillow", "front", "wood"),
+    "soft": ("top", "back", "arml", "armr", "front", "wood"),
+    "chair": ("top", "back", "front", "wood"),
+    # 石碑是一摞横带：从最窄的碑冠往下铺，否则 top 先长大就把 face 的位子吃光了
+    "bands": ("crest", "upper", "top", "mid", "face", "front", "neck", "base", "wood"),
+}
+# 逐件指定优先级；没列出的走 kind 启发式
+ORDER_OF = {
+    "stelelarge": "bands", "stelegrand": "bands",
+    "floodlight": ("top", "pole", "basel", "baser", "wood"),
+}
+
+
+def grow(ct, ok, r):
+    """向外吃进"实心、未认领、且不属于别的区声明范围"的像素（逐边贪心，每次吃增益最大的一边）。
+    只收缩不扩张的话，床架外圈那几列木面就永远没人认领。"""
+    x0, y0, x1, y1 = r
+    for _ in range(400):
+        gains = []
+        if x0 > 0:
+            col = ok[:, x0 - 1]
+            gains.append((int(ct[y0:y1, x0 - 1].sum()), col[y0:y1].all(), -1, 0))
+        if x1 < ok.shape[1]:
+            col = ok[:, x1]
+            gains.append((int(ct[y0:y1, x1].sum()), col[y0:y1].all(), 1, 0))
+        if y0 > 0:
+            row = ok[y0 - 1, :]
+            gains.append((int(ct[y0 - 1, x0:x1].sum()), row[x0:x1].all(), 0, -1))
+        if y1 < ok.shape[0]:
+            row = ok[y1, :]
+            gains.append((int(ct[y1, x0:x1].sum()), row[x0:x1].all(), 0, 1))
+        cand = [g for g in gains if g[1] and g[0] > 0]
+        if not cand:
+            break
+        _, _, dx, dy = max(cand, key=lambda g: g[0])
+        if dx < 0:
+            x0 -= 1
+        elif dx > 0:
+            x1 += 1
+        elif dy < 0:
+            y0 -= 1
+        else:
+            y1 += 1
+    return (x0, y0, x1, y1)
+
+
+def max_content_rect(valid, ct, box):
+    """在 box 内找"整块都 valid（实心、未认领）"且**盖住内容像素最多**的子矩形。
+    面积最大的那个往往是一条细高条（椭圆的中段），而覆盖内容最多的是一横条 ——
+    闸门看的是覆盖率，所以这里必须按内容像素计权，不按面积。"""
+    x0, y0, x1, y1 = box
+    # 积分图：任意矩形的内容像素数 O(1) 取，否则这层四重循环跑不动
+    itg = np.zeros((ct.shape[0] + 1, ct.shape[1] + 1), np.int64)
+    itg[1:, 1:] = np.cumsum(np.cumsum(ct.astype(np.int64), axis=0), axis=1)
+
+    def wsum(yy0, xx0, yy1, xx1):
+        return int(itg[yy1, xx1] - itg[yy0, xx1] - itg[yy1, xx0] + itg[yy0, xx0])
+
+    best, bw = None, -1
+    for a in range(y0, y1):
+        colok = np.ones(x1 - x0, bool)
+        for b in range(a, y1):
+            colok &= valid[b, x0:x1]
+            if not colok.any():
+                break                       # 再往下没有整列都合法的了
+            run = []
+            for i in range(x1 - x0 + 1):
+                if i < x1 - x0 and colok[i]:
+                    run.append(i)
+                    continue
+                if run:
+                    w = wsum(a, x0 + run[0], b + 1, x0 + run[-1] + 1)
+                    if w > bw:
+                        bw, best = w, (x0 + run[0], a, x0 + run[-1] + 1, b + 1)
+                    run = []
+    return best or (0, 0, 0, 0)
+
+
+def fix_view(src, d, order):
+    """把声明的矩形各自收缩到"最大实心(不透明、无重叠)子矩形"，再向外吃进无主的实心像素。
+    wood 特殊：它允许压在别的区里，但必须避开黑笔画（补绘后不能残留描边）。"""
+    op = src[:, :, 3] >= 128
+    ct = CK.content_mask(src)
+    clean = op & ~FA.dilate(FA.black_mask(src))
+    claimed = np.zeros(op.shape, bool)
+    declared = np.zeros(op.shape, bool)
+    for name in order:
+        if name in d and name != "wood":
+            x0, y0, x1, y1 = d[name]
+            declared[y0:y1, x0:x1] = True
+    out = {}
+    # 没列进 ORDER 的区名也要走一遍：静默丢掉一个区，打印出来的"新 SPEC"就少一块，
+    # 粘回去等于把该件的这个面悄悄删了。
+    order = tuple(order) + tuple(k for k in d if k not in ("path", "discard")
+                                 and k not in order)
+    for name in order:
+        if name not in d:
+            continue
+        x0, y0, x1, y1 = d[name]
+        good = clean if name == "wood" else op
+        avail = (good & ~claimed) if name != "wood" else good   # noqa: E712
+        box = np.zeros(op.shape, bool)
+        box[y0:y1, x0:x1] = True
+        r = max_content_rect(avail & box, ct, (x0, y0, x1, y1))
+        if name != "wood":
+            free = op & ~claimed & (~declared | box)
+            r = grow(ct, free, r)
+        out[name] = tuple(int(v) for v in r)
+        if name != "wood":
+            claimed[r[1]:r[3], r[0]:r[2]] = True
+    return out
+
+
+def leftover(src, d, rects):
+    """收缩后没人认领的内容像素（与检查器同一口径：笔画、边缘余量不算）。"""
+    ct = CK.content_mask(src)
+    cov = np.zeros(ct.shape, bool)
+    for name, r in rects.items():
+        if name == "wood":
+            continue
+        cov[r[1]:r[3], r[0]:r[2]] = True
+    for r in d.get("discard", []):
+        cov[r[1]:r[3], r[0]:r[2]] = True
+    miss = ct & ~cov & ~FA.dilate(FA.dilate(FA.black_mask(src)))
+    if not miss.any():
+        return "无"
+    ys, xs = np.where(miss)
+    return f"{int(miss.sum())}px y{ys.min()}..{ys.max()} x{xs.min()}..{xs.max()}"
+
+
+def main_fix(items):
+    """python scripts/_furn_fit.py fix couch doublebed ...  -> 打印可直接粘回 SPEC 的块"""
+    for item in items:
+        views = FA.SPEC.get(item)
+        if not views:
+            print(f"# {item}: SPEC 里没有")
+            continue
+        kind = ORDER_OF.get(item) or (
+            "bedlike" if any("pillow" in v for v in views.values()) and
+            "back" not in views.get("south", {}) else
+            ("soft" if "arml" in views.get("south", {}) else "chair"))
+        order = kind if isinstance(kind, tuple) else ORDER[kind]
+        print(f'    "{item}": {{')
+        for view, d in views.items():
+            src = FA.load(d["path"])
+            rects = fix_view(src, d, order)
+            print(f'        "{view}": {{"path": "{d["path"]}",')
+            print("                  " + ", ".join(f'"{k}": {v}' for k, v in rects.items()) + "},")
+            lo = leftover(src, d, rects)
+            if lo != "无":
+                print(f"        # 无归属: {lo}")
+        print("    },")
+
+
+def selftest_rect():
+    """max_content_rect 必须按"内容像素"取优，不是按面积：两块合法区，一块大而无内容、
+    一块小而全是内容 —— 选错的那次，粘回 SPEC 就是白丢覆盖率。"""
+    v = np.zeros((20, 20), bool)
+    v[2:12, 2:8] = True            # 60 格，面积大
+    v[6:11, 12:19] = True          # 35 格，面积小
+    ct = np.zeros((20, 20), int)
+    ct[6:11, 12:19] = 1            # 内容只在小块里
+    big = max_content_rect(v, ct, (0, 0, 20, 20))
+    ct2 = np.zeros((20, 20), int)
+    ct2[2:12, 2:8] = 1             # 内容只在大块里
+    small = max_content_rect(v, ct2, (0, 0, 20, 20))
+    bad = []
+    if big != (12, 6, 19, 11):
+        bad.append(("按内容取优", big, (12, 6, 19, 11)))
+    if small != (2, 2, 8, 12):
+        bad.append(("反向", small, (2, 2, 8, 12)))
+    return bad
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "fix":
+        for n, got, want in selftest_rect():
+            print(f"  [夹具] max_content_rect {n}: 实得 {got} 应为 {want}")
+        if selftest_rect():
+            print("夹具未过 —— 标定器本身不可信，拒绝出坐标")
+            return 2
+        main_fix(sys.argv[2:] or list(FA.SPEC))
+        return
     if "pack" in sys.argv:
         for item in (sys.argv[2:] or DRAFT):
             for view, d in DRAFT[item].items():

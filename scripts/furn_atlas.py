@@ -37,6 +37,9 @@ VIEW_JSON = os.path.join(VIEW_DIR, "furn_uv.json")
 F = "Core/textures/things/building/furniture"
 FB = F + "/bed"
 BK = F + "/bookcase"
+STL = F + "/stelelarge"
+WL = F + "/walllamp"
+ROY = "Royalty/textures/things/building/furniture"
 
 PAD = 2          # 图集内每块取样的边缘复制宽度（防双线性/ mip 串色）
 STROKE_LUMA = 40 # 黑描边判定阈值（0-255）
@@ -172,8 +175,141 @@ SPEC = {
                  "back": (94, 81, 108, 96), "arml": (88, 96, 113, 120),
                  "top": (87, 120, 159, 176), "wood": (100, 126, 140, 140)},
     },
+    # ---- 沙发：与扶手椅同一配方（箱体 + 靠背 + 两端扶手），只是 2x1 长轴上多两个坐垫。
+    # south 是长边（坐垫/靠背/裙板三条横带 + 两端扶手柱），east 是端视（靠背立柱 + 箱体）。
+    "couch": {
+        "south": {"path": f"{F}/couch_south.png",
+                  "back": (56, 84, 200, 112), "top": (62, 112, 196, 162),
+                  "arml": (51, 112, 62, 162), "armr": (196, 128, 207, 162),
+                  "front": (48, 162, 207, 174), "wood": (100, 120, 160, 150)},
+        "north": {"path": f"{F}/couch_north.png",
+                  "arml": (43, 103, 61, 112), "armr": (195, 102, 214, 112),
+                  "back": (45, 112, 211, 146),
+                  "front": (48, 146, 208, 172), "wood": (100, 120, 160, 140)},
+        "east": {"path": f"{F}/couch_east.png",
+                 "top": (108, 59, 159, 150), "back": (86, 23, 108, 213),
+                 "front": (108, 150, 162, 213), "wood": (120, 90, 150, 130)},
+    },
+    # ---- 餐椅：座面是画出来的椭圆（同凳：圆柱面 + 木侧），靠背 = 顶栏那条白带，
+    # 腿带是线稿 -> 只取一条腿做立面，其余整带声明丢弃。
+    "diningchair": {
+        "south": {"path": f"{F}/diningchair_south.png",
+                  "back": (17, 3, 45, 8), "top": (16, 26, 47, 44),
+                  "discard": [(10, 44, 54, 62)], "wood": (22, 30, 44, 40)},
+        "north": {"path": f"{F}/diningchair_north.png",
+                  "top": (14, 26, 50, 44),
+                  "discard": [(14, 16, 48, 26), (10, 44, 54, 62)]},
+        "east": {"path": f"{F}/diningchair_east.png",
+                 "top": (18, 27, 52, 44),
+                 "discard": [(6, 2, 24, 30), (14, 44, 56, 62)],
+                 "wood": (26, 30, 46, 40)},
+    },
+    # ---- 床家族：top = 床垫（**不含枕头**，枕头是独立板件），pillow = 枕头白块，
+    # front = 图底部那条立面带（床尾栏）。south 头在图上端，east 头在图左端。
+    "doublebed": {
+        "south": {"path": f"{FB}/doublebed_south.png",
+                  "top": (4, 28, 124, 112), "pillow": (4, 4, 124, 28),
+                  "front": (4, 112, 124, 124), "wood": (40, 60, 90, 100)},
+        "east": {"path": f"{FB}/doublebed_east.png",
+                 "top": (32, 5, 124, 112), "pillow": (4, 5, 32, 124),
+                 "front": (32, 112, 124, 124), "wood": (60, 40, 100, 90)},
+    },
+    "royalbed": {
+        "south": {"path": f"{FB}/royalbed_south.png",
+                  "top": (5, 42, 123, 112), "pillow": (4, 5, 124, 42),
+                  "front": (4, 112, 124, 126), "wood": (40, 60, 90, 100)},
+        "east": {"path": f"{FB}/royalbed_east.png",
+                 "top": (32, 5, 124, 112), "pillow": (4, 5, 32, 124),
+                 "front": (39, 112, 124, 126), "wood": (60, 40, 100, 90)},
+    },
+    "hospitalbed": {
+        "south": {"path": f"{FB}/hospitalbed_south.png",
+                  "top": (32, 38, 96, 112), "pillow": (35, 4, 93, 38),
+                  "front": (31, 112, 97, 124), "wood": (50, 60, 80, 100)},
+        "east": {"path": f"{FB}/hospitalbed_east.png",
+                 "top": (32, 31, 124, 90), "pillow": (4, 33, 32, 97),
+                 "front": (37, 90, 124, 98), "wood": (60, 50, 100, 80)},
+    },
+    # ---- 地铺（bedroll / sleeping spot）：没有床架、床头板，就一条薄垫 + 枕头 ----
+    "bedroll": {
+        "south": {"path": f"{FB}/bedroll_south.png",
+                  "top": (8, 38, 60, 113), "pillow": (7, 7, 58, 38),
+                  "front": (9, 113, 59, 121), "wood": (20, 60, 45, 100)},
+        "east": {"path": f"{FB}/bedroll_east.png",
+                 "top": (40, 9, 122, 50), "pillow": (6, 7, 40, 57),
+                 "front": (40, 50, 122, 57), "wood": (70, 20, 110, 45)},
+    },
+    "bedrolldouble": {
+        "south": {"path": f"{FB}/bedrolldouble_south.png",
+                  "top": (9, 56, 121, 113), "pillow": (9, 7, 121, 56),
+                  "front": (9, 113, 121, 121), "wood": (60, 80, 110, 110)},
+        "east": {"path": f"{FB}/bedrolldouble_east.png",
+                 "top": (40, 10, 122, 50), "pillow": (6, 11, 40, 120),
+                 "front": (40, 50, 122, 121), "wood": (70, 20, 110, 45)},
+    },
+    # ---- 第三批（草稿，坐标待 _furn_fit.py fix 收缩）：单图型 Graphic_Single ----
+    # 这类件原版只画一张立面图（四向共用），所以 front = 图里那条带，
+    # top = 该件真正的水平面（灯罩顶/柱头/盆土），侧壁与圆柱一律 wood。
+    "standinglamp": {
+        "south": {"path": f"{F}/lampstanding.png",
+                  "top": (22, 10, 39, 27), "neck": (26, 27, 35, 33),
+                  "front": (17, 33, 45, 50), "wood": (24, 36, 40, 46)},
+    },
+    "column": {
+        "south": {"path": f"{F}/column.png",
+                  "top": (13, 3, 51, 26), "front": (17, 26, 47, 121),
+                  "wood": (24, 40, 40, 90)},
+    },
+    "plantpot": {
+        "south": {"path": f"{F}/plantpot.png",
+                  "top": (20, 18, 44, 42), "front": (18, 42, 46, 59),
+                  "wood": (26, 21, 38, 34)},
+    },
+    "penmarker": {
+        "south": {"path": f"{F}/penmarker.png",
+                  "tip": (28, 3, 35, 11), "top": (16, 11, 48, 26),
+                  "front": (27, 26, 37, 53), "wood": (30, 30, 34, 50)},
+    },
+    "floodlight": {
+        "south": {"path": f"{F}/floodlight.png",
+                  "top": (67, 52, 190, 92), "pole": (111, 92, 145, 184),
+                  "basel": (97, 150, 111, 178), "baser": (145, 150, 159, 178),
+                  "wood": (69, 57, 187, 83)},
+    },
+    # ---- 第四批草稿（坐标待 _furn_fit.py fix 收缩）：Royalty 大件 + 石碑 ----
+    "throne": {
+        "south": {"path": f"{ROY}/throne_south.png",
+                  "back": (85, 43, 170, 110), "arml": (76, 110, 96, 142),
+                  "armr": (160, 110, 183, 142), "top": (96, 110, 160, 142),
+                  "front": (76, 142, 183, 185), "wood": (110, 130, 160, 138)},
+    },
+    "grandthrone": {
+        "south": {"path": f"{ROY}/grandthrone_south.png",
+                  "spire": (115, 34, 141, 66), "gold": (105, 57, 115, 66),
+                  "front": (30, 66, 225, 150), "top": (30, 150, 225, 196),
+                  "wood": (60, 160, 200, 180)},
+    },
+    "drape": {
+        "south": {"path": f"{ROY}/drape_south.png",
+                  "top": (66, 74, 190, 100), "mid": (68, 100, 188, 124),
+                  "front": (67, 124, 188, 148), "tassel": (69, 148, 81, 158),
+                  "tassel2": (175, 148, 187, 158), "tassel3": (123, 148, 134, 158), "wood": (80, 80, 170, 96)},
+    },
+    "stelelarge": {
+        "south": {"path": f"{STL}/largestelea.png",
+                  "crest": (79, 42, 177, 70), "top": (64, 70, 192, 86),
+                  "shoulder": (64, 86, 192, 96), "mid": (64, 96, 192, 108),
+                  "face": (64, 108, 192, 120), "front": (64, 120, 192, 188),
+                  "wood": (90, 100, 170, 115)},
+    },
+    "stelegrand": {
+        "south": {"path": f"{F}/grandstele.png",
+                  "crest": (228, 68, 284, 79), "top": (198, 79, 314, 101),
+                  "shoulder": (170, 89, 198, 101), "mid": (138, 101, 374, 148),
+                  "face": (107, 148, 405, 220), "front": (111, 220, 400, 426),
+                  "wood": (180, 170, 340, 210)},
+    },
 }
-
 VIEWS_ORDER = ("south", "east", "north")
 
 

@@ -46,6 +46,9 @@ const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
   bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
   seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
   armSeat:0.42, armBack:0.85, armArm:0.62, uph:0.16, cush:0.09, tableH:0.75,
+  pillow:0.11, pillowD:0.34, roll:0.08, chairBack:0.90, chairBackT:0.06,
+  pole:1.55, shade:0.26, shadeD:0.38, potH:0.40, potD:0.50, columnH:1.85,
+  rod:1.42, cloth:0.06, drapeCloth:0.95,
 };
 const ITEMS = {
   bed:      {arch:'bed',   w:1, d:2},
@@ -61,6 +64,25 @@ const ITEMS = {
   bookcase: {arch:'dresser', item:'bookcase', w:2, d:1},
   bookcasesmall: {arch:'dresser', item:'bookcasesmall', w:1, d:1},
   shelfsmall: {arch:'shelf', item:'shelfsmall', w:1, d:1},
+  // 占格一律抄 def 的 <size>（South 帧）；build() 里转东/西时换轴，与 C# OccupiedRect 同口径
+  couch:    {arch:'armchair', item:'couch', w:2, d:1},
+  diningchair: {arch:'chair', item:'diningchair', w:1, d:1},
+  doublebed: {arch:'bed', item:'doublebed', w:2, d:2},
+  royalbed:  {arch:'bed', item:'royalbed',  w:2, d:2},
+  hospitalbed: {arch:'bed', item:'hospitalbed', w:1, d:2},
+  bedroll:   {arch:'bedroll', w:1, d:2},
+  bedrolldouble: {arch:'bedroll', item:'bedrolldouble', w:2, d:2},
+  // 单图型（Graphic_Single）：arch 名与取样件名不同时必须写 item:，否则查不到区
+  standinglamp: {arch:'lamp', item:'standinglamp', w:1, d:1},
+  floodlight: {arch:'floodlight', w:1, d:1},
+  column:   {arch:'column', w:1, d:1},
+  plantpot: {arch:'pot', item:'plantpot', w:1, d:1},
+  penmarker:{arch:'marker', item:'penmarker', w:1, d:1},
+  throne: {arch:'throne', item:'throne', w:1, d:1, seatH:0.48, backH:1.35},
+  grandthrone: {arch:'grandthrone', w:3, d:2},
+  drape:   {arch:'drape', w:2, d:1},
+  stelelarge: {arch:'stele', item:'stelelarge', w:2, d:2},
+  stelegrand: {arch:'stele', item:'stelegrand', w:3, d:3},
 };
 
 const app = document.getElementById('app');
@@ -109,10 +131,13 @@ const opp = v => v==='south'?'north': v==='north'?'south':'west';
 function faceUv(arch, rot, xz){
   const v = viewOf(rot);
   const cross = (v==='east') ? 'south' : 'east';
-  return { top: Region(arch, v, 'top'),
-           s4: [Region(arch, opp(v), 'front'), Region(arch, v, 'front'),
-                Region(arch, cross, 'front'), Region(arch, cross, 'front')],
-           xz };
+  // 与 C# FaceUv 同口径：整件没有立面段时（diningchair 的腿带是纯线稿、几何也不用它）
+  // 退到木面，而不是去查一个不存在的区 —— 查不到会污染"缺取样区"判据。
+  const s4 = hasRegion(arch, 'front')
+    ? [Region(arch, opp(v), 'front'), Region(arch, v, 'front'),
+       Region(arch, cross, 'front'), Region(arch, cross, 'front')]
+    : (function(){ const w = wood(arch, rot); return [w,w,w,w]; })();
+  return { top: Region(arch, v, 'top'), s4, xz };
 }
 // 与 C# Furniture3D.WoodRegion/WoodUv/SlabUv 同口径：SPEC 里每件声明一处 wood（干净木面区），
 // 三视图没画到的面 —— 圆柱侧壁与顶盖、薄板四周一圈立边 —— 只能取它。
@@ -203,11 +228,26 @@ function endPanel(g,uv,longZ,thick,sign,len,y0,h){
   else      box(g,uv,sign*(len/2-t/2),y0,0, t,h,thick*0.96);
 }
 
+const hasRegion = (key, name) => ['south','north','east'].some(v => R(`${key}.${v}.${name}`));
+
+// 与 C# Furniture3D.AddPillows 同口径：pos.y 是底面，surfY = 床垫上表面
+function pillows(g, uv, w, d, rot, surfY, depth, thick){
+  const longZ = (rot==='north'||rot==='south'), bs = backSign(rot);
+  const len = longZ?d:w, wid = longZ?w:d;
+  const n = wid>=1.5?2:1, pw = wid*0.84/n;
+  for(let i=0;i<n;i++){
+    const off = (i-(n-1)*0.5)*pw*1.08, z = bs*(len/2-depth/2-0.07);
+    if(longZ) box(g,uv,off,surfY,z, pw*0.94,thick,depth);
+    else      box(g,uv,z,surfY,off, depth,thick,pw*0.94);
+  }
+}
+
 function build(item, rot){
   const it = ITEMS[item], key = it.item || it.arch;   // 取样件名（一个配方可以服务多件）
   const uv0 = faceUv(key, rot, [it.w, it.d]);
   const g = G();
-  const w = it.w, d = it.d;
+  let w = it.w, d = it.d;
+  if(rot==='east'||rot==='west'){ const t=w; w=d; d=t; }
   const longZ = (rot==='north'||rot==='south');
   const len = longZ?d:w, thick = longZ?w:d;
   const headSign = backSign(rot);
@@ -217,6 +257,9 @@ function build(item, rot){
     const uvb = endPanelUv(key, rot, [w,d], longZ);
     endPanel(g,uvb,longZ,thick,headSign,len,M.bedFrame,M.headboard-M.bedFrame);
     endPanel(g,uvb,longZ,thick,-headSign,len,M.bedFrame,M.footboard-M.bedFrame);
+    if(hasRegion(key,'pillow'))
+      pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot,
+              M.bedFrame+M.mattress, M.pillowD, M.pillow);
     const uvq = woodUv(key, rot, [w,d]);
     const r = M.leg*1.1, bs2 = backSign(rot);
     for(const sa of [-1,1]){
@@ -232,6 +275,69 @@ function build(item, rot){
     seat.s4[1] = wood(key,rot);
     cyl(g, seat, 0,0, M.seat, M.cush, sw);
     legs(g, woodUv(key,rot,[w,d]), sw*0.34, M.seat, M.leg);
+  } else if(it.arch==='bedroll'){
+    box(g, faceUv(key,rot,[w,d]), 0,0,0, w-0.08,M.roll,d-0.08);
+    if(hasRegion(key,'pillow'))
+      pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot, M.roll, M.pillowD, M.pillow);
+  } else if(it.arch==='chair'){
+    const sh=M.seat, sw=Math.min(0.52, Math.min(w,d)*0.72), bs=backSign(rot), bt=M.chairBackT;
+    const seat = faceUv(key,rot,[sw,sw]);
+    seat.s4[1] = wood(key,rot);
+    cyl(g, seat, 0,0, sh, M.cush, sw);
+    const ub = panelUv(key,rot,[w,d],'back', longZ);
+    if(longZ) box(g,ub,0,sh-0.04,bs*(sw/2-bt/2), sw*0.86,M.chairBack-sh+0.04,bt);
+    else      box(g,ub,bs*(sw/2-bt/2),sh-0.04,0, bt,M.chairBack-sh+0.04,sw*0.86);
+    legs(g, woodUv(key,rot,[w,d]), sw*0.33, sh, M.leg);
+  } else if(it.arch==='lamp'){
+    const poleTop = M.pole - M.shade;
+    cyl(g, uvNames(key,rot,[w,d],'front','front'), 0,0, 0, 0.05, 0.36);
+    cyl(g, uvNames(key,rot,[w,d],'wood','neck'), 0,0, 0.05, poleTop-0.05, 0.05);
+    cyl(g, uvNames(key,rot,[w,d],'top','top'), 0,0, poleTop, M.shade, M.shadeD);
+  } else if(it.arch==='column'){
+    cyl(g, uvNames(key,rot,[w,d],'front','front'), 0,0, 0.14, M.columnH-0.30, 0.34);
+    const uc = uvNames(key,rot,[w,d],'top','front');
+    box(g, uc, 0,0,0, 0.56,0.14,0.56);
+    box(g, uc, 0,M.columnH-0.16,0, 0.60,0.16,0.60);
+  } else if(it.arch==='pot'){
+    const up = faceUv(key,rot,[M.potD,M.potD]);
+    cyl(g, up, 0,0, 0, M.potH, M.potD);
+  } else if(it.arch==='marker'){
+    box(g, uvNames(key,rot,[w,d],'front','front'), 0,0,0, 0.10,0.85,0.10);
+    box(g, uvNames(key,rot,[w,d],'top','top'), 0,0.60,0, 0.62,0.20,0.08);
+    box(g, uvNames(key,rot,[w,d],'tip','tip'), 0,0.80,0, 0.10,0.14,0.10);
+  } else if(it.arch==='floodlight'){
+    cyl(g, uvNames(key,rot,[w,d],'baser','basel'), 0,0, 0, 0.14, 0.62);   // 底座：顶面/侧壁各一条实心带
+    cyl(g, uvNames(key,rot,[w,d],'pole','pole'), 0,0, 0.14, 0.62, 0.16);
+    box(g, uvNames(key,rot,[w,d],'top','top'), 0,0.76,0, 0.90,0.24,0.30);
+  } else if(it.arch==='grandthrone'){
+    const ud = uvNames(key,rot,[w,d],'top','front'), bs=backSign(rot);
+    box(g, ud, 0,0,0, w*0.96,0.16,d*0.94);
+    box(g, ud, 0,0.16,-bs*d*0.22, w*0.78,0.14,d*0.50);
+    const ug = uvNames(key,rot,[w,d],'gold','gold');
+    box(g, ug, 0,0.30,0, 0.95,0.22,0.85);
+    box(g, ug, 0,0.52,bs*0.36, 0.80,0.85,0.14);
+    box(g, uvNames(key,rot,[w,d],'spire','spire'), 0,1.37,bs*0.30, 0.34,0.42,0.28);
+    for(const sd of [-1,1]) box(g, ug, sd*0.62,0.52,-0.04, 0.22,0.34,0.70);
+  } else if(it.arch==='drape'){
+    const bs=backSign(rot), sv=viewOf(rot);
+    const ut = uvNames(key,rot,[w,d],'tassel','tassel'), u2 = uvNames(key,rot,[w,d],'tassel2','tassel2'),
+          u3 = uvNames(key,rot,[w,d],'tassel3','tassel3');
+    box(g, ut, 0,M.rod,bs*0.02, w*0.86,0.09,0.09);
+    box(g, ut, -w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
+    box(g, u3, 0,0.34,bs*0.02, 0.09,0.13,0.09);
+    box(g, u2, w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
+    const F=Region(key,sv,'front'), E=Region(key,sv,'mid');
+    box(g, {top:Region(key,sv,'top'), s4:[F,F,E,E], xz:[w*0.82,M.cloth]}, 0,0.47,bs*0.02, w*0.82,M.drapeCloth,M.cloth);
+  } else if(it.arch==='stele'){
+    // 与 C# Arch.Stele 同口径：碑身三段叠块，每段的大面/薄边/顶面各取一条横带
+    const h=0.55+0.50*Math.max(w,d), sv=viewOf(rot);
+    const bd=(f,e,cap,xz)=>{const F=Region(key,sv,f), E=Region(key,sv,e);
+      return {top:Region(key,sv,cap), s4:[F,F,E,E], xz};};
+    const hLow=(h-0.18)*0.40, hMid=(h-0.18)*0.32;
+    box(g, bd('face','mid','mid',[w*0.56,0.24]), 0,0.18,0, w*0.56,hLow,0.24);
+    box(g, bd('mid','shoulder','mid',[w*0.48,0.22]), 0,0.18+hLow,0, w*0.48,hMid,0.22);
+    box(g, bd('top','top','crest',[w*0.38,0.20]), 0,0.18+hLow+hMid,0, w*0.38,h-0.18-hLow-hMid,0.20);
+    box(g, uvNames(key,rot,[w,d],'front','front'), 0,0,0, w*0.72,0.18,d*0.42);
   } else if(it.arch==='endtable'){
     const h = M.nightstand - M.slab;
     box(g, slabUv(key,rot,[w,d]), 0,h,0, w*0.92,M.slab,d*0.92);
@@ -243,12 +349,12 @@ function build(item, rot){
     const ul = uvNames(key,rot,[w,d],'wood','front');   // 腿侧 = 画出来的腿条，圆盖 = 木面
     const off = Math.min(w,d)/2-0.14;
     for(const sx of [-1,1]) for(const sz of [-1,1]) cyl(g,ul,sx*off,sz*off,0,h,M.leg);
-  } else if(it.arch==='armchair'){
-    const sh=M.armSeat, t=M.uph, bs=backSign(rot);
+  } else if(it.arch==='armchair'||it.arch==='throne'){
+    const sh=it.seatH||M.armSeat, bk=it.backH||M.armBack, t=M.uph, bs=backSign(rot);
     box(g, uvNames(key,rot,[w,d],'top','front'), 0,0,0, w*0.9,sh,d*0.86);
     const ub = panelUv(key,rot,[w,d],'back', longZ);
-    if(longZ) box(g,ub,0,sh,bs*(d/2-t/2), w*0.98,M.armBack-sh,t);
-    else      box(g,ub,bs*(w/2-t/2),sh,0, t,M.armBack-sh,d*0.98);
+    if(longZ) box(g,ub,0,sh,bs*(d/2-t/2), w*0.98,bk-sh,t);
+    else      box(g,ub,bs*(w/2-t/2),sh,0, t,bk-sh,d*0.98);
     for(let i=0;i<2;i++){
       const sgn = i? 1 : -1, ua = panelUv(key,rot,[w,d], i?'armr':'arml', longZ);
       if(longZ) box(g,ua,sgn*(w/2-t/2),0,0, t,M.armArm,d*0.88);
@@ -277,10 +383,33 @@ let ITEM='bed', ROT='south';
 const root = new THREE.Group(); scene.add(root);
 const grid = new THREE.GridHelper(12,24,0x4a5568,0x2e3446); grid.position.y=-0.003; scene.add(grid);
 const EMPTY = new URLSearchParams(location.search).get('empty') === '1';
-const FLAT = new URLSearchParams(location.search).get('flat') === '1';   // 差分/着色探针用
+const FLAT = new URLSearchParams(location.search).get('flat') === '1';
+// still=1：审核出图用。按钮/朝向条是 DOM 叠层，与差分参考图必然不一致，
+// 留在画面里就得靠"切掉顶部 205 行"遮丑 —— 正上方机位的模型顶部会被一起切掉，
+// 于是好件被误判成剪影断裂。关掉叠层后差分只剩模型本体，不用切。
+const STILL = new URLSearchParams(location.search).get('still') === '1';
+// 关叠层必须在**按钮都建好之后**再关：朝向条 #rots 是 addRotBar() 动态造的，
+// 在脚本开头那次循环里它还不存在，于是漏进每一格审核图，被差分抓成一个假"部件"。
+function hideChrome(){
+  if (!STILL) return;
+  for (const id of ['views', 'items', 'rots', 'hud'])
+    { const e = document.getElementById(id); if (e) e.style.display = 'none'; }
+}   // 差分/着色探针用
+// 出图模式下把"缺取样区"标成左下角一块纯洋红：审核台按像素判，比读文字可靠。
+// 空场景参考图也必须走这里 —— 否则两边左下角不一样，差分会把哨兵本身抓成一个"部件"。
+function sentinel(){
+  if (!STILL) return;
+  let b = document.getElementById('miss');
+  if (!b) { b = document.createElement('div'); b.id = 'miss';
+    b.style.cssText = 'position:fixed;left:0;bottom:0;width:24px;height:24px;z-index:20';
+    document.body.appendChild(b); }
+  b.style.background = MISSING.size ? 'rgb(255,0,255)' : 'rgb(28,30,38)';
+}
+
 function rebuild(){
+  hideChrome();
   while(root.children.length) root.remove(root.children[0]);
-  if(EMPTY){ hud(); return; }        // 差分回路用：只画场景不画模型（?empty=1）
+  if(EMPTY){ hud(); sentinel(); return; }   // 差分回路用：只画场景不画模型（?empty=1）
   const geo = build(ITEM, ROT);
   root.add(new THREE.Mesh(geo, FLAT ? new THREE.MeshNormalMaterial() : mat));
   // 描边：运行时用**沿平均法线外扩的反绕壳**（ModelBuilder.ToHull）。
@@ -291,6 +420,7 @@ function rebuild(){
     new THREE.LineBasicMaterial({color:0x0a0910}));
   root.add(edges);
   hud();
+  sentinel();
 }
 
 const VIEWS = {
@@ -304,7 +434,12 @@ const VIEWS = {
 let cur='45°';
 function setView(k){
   cur=k; const v=VIEWS[k];
-  camera.position.set(...v.p); controls.target.set(...v.t); controls.update();
+  // 机位按占格外推：贴脸机位离中心 1.15m，而 3x3 的桌半径 2.1m —— 相机埋在网格里面，
+  // 画面只剩几条桌沿，剪影闸门会把这种取景误判成"断裂"。小件（半径<0.9）保持原机位。
+  const it = ITEMS[ITEM], R = it ? 0.5*Math.hypot(it.w, it.d) : 0.707;
+  const sc = Math.max(1, R/0.9);
+  camera.position.set(v.p[0]*sc, v.p[1]*sc, v.p[2]*sc);
+  controls.target.set(...v.t); controls.update();
   [...document.getElementById('views').children].forEach(b=>b.classList.toggle('on',b.dataset.k===k));
 }
 Object.keys(VIEWS).forEach(k=>{
@@ -358,7 +493,8 @@ const PRETTY = q.get('pretty')==='1' || q.get('gallery')==='1';
 if(PRETTY){
   ['hud','items','views','rots'].forEach(id=>{const e=document.getElementById(id); if(e) e.style.display='none';});
   grid.visible = false;
-  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // 出图模式关阴影：投到地面的影子也是"与空场景的差异"，会被剪影闸门当成一个部件
+  renderer.shadowMap.enabled = !STILL; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.08;
   scene.background = new THREE.Color(0x2b3242);
   scene.fog = new THREE.Fog(0x2b3242, 16, 44);
@@ -369,7 +505,7 @@ if(PRETTY){
   scene.children.filter(o=>o.isDirectionalLight).forEach(l=>l.intensity*=0.3);
   scene.children.filter(o=>o.isAmbientLight).forEach(l=>l.intensity=0.3);
   const key = new THREE.DirectionalLight(0xfff1dd, 1.15);
-  key.position.set(4.5,7.5,5.5); key.castShadow = true;
+  key.position.set(4.5,7.5,5.5); key.castShadow = !STILL;
   key.shadow.mapSize.set(2048,2048);
   const sc = key.shadow.camera; sc.left=-14; sc.right=14; sc.top=14; sc.bottom=-14; sc.far=42;
   scene.add(key);

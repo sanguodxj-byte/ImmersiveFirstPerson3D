@@ -36,9 +36,10 @@ def shoot(item, rot, view, empty=False, flat=False):
            "--window-size=620,500", "--virtual-time-budget=25000", "--timeout=90000",
            "--user-data-dir=" + tempfile.mkdtemp(prefix="shapeshot-"),
            "--screenshot=" + p,
-           "%s?item=%s&rot=%s&view=%s%s%s" % (PORT, item, rot, quote(view),
-                                              "&empty=1" if empty else "",
-                                              "&flat=1" if flat else "")]
+           # still=1：与审核台同一口径（关掉 DOM 叠层、关阴影），否则差分里混进按钮条
+           "%s?item=%s&rot=%s&view=%s&still=1%s%s" % (PORT, item, rot, quote(view),
+                                                      "&empty=1" if empty else "",
+                                                      "&flat=1" if flat else "")]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=140)
     return p
 

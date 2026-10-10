@@ -26,7 +26,9 @@ namespace RimFirstPerson3D
     // def 只用于定位：占几格、朝向。
     public static class Furniture3D
     {
-        private enum Arch { Bed, Stool, Nightstand, Cabinet, ShelfUnit, Armchair, Table }
+        private enum Arch { Bed, Bedroll, Stool, Chair, Nightstand, Cabinet, ShelfUnit,
+                          Armchair, Throne, GrandThrone, Drape, Stele,
+                          Table, Lamp, Column, Pot, Marker, FloodLight }
 
         /// <summary>一条配方：defName 关键字 -> 几何配方 + 取样件名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
         private struct Recipe
@@ -50,7 +52,31 @@ namespace RimFirstPerson3D
             new Recipe(new[] { "table3x3" }, Arch.Table, "table3x3"),
             new Recipe(new[] { "endtable", "nightstand" }, Arch.Nightstand, "endtable"),
             new Recipe(new[] { "armchair" }, Arch.Armchair, "armchair"),
-            new Recipe(new[] { "doublebed", "royalbed", "hospitalbed", "bed" }, Arch.Bed, "bed"),
+            new Recipe(new[] { "couch" }, Arch.Armchair, "couch"),
+            new Recipe(new[] { "diningchair" }, Arch.Chair, "diningchair"),
+            // 床家族：关键字先长后短（doublebed 含 bed、bedrolldouble 含 bedroll）。
+            // SleepingSpot / DoubleSleepingSpot 不接管：原版是"一圈轮廓 + 中间透明"的地面贴花，
+            // 不是实体面，糊成一块实心垫子反而错。
+            new Recipe(new[] { "bedrolldouble" }, Arch.Bedroll, "bedrolldouble"),
+            new Recipe(new[] { "bedroll" }, Arch.Bedroll, "bedroll"),
+            new Recipe(new[] { "doublebed" }, Arch.Bed, "doublebed"),
+            new Recipe(new[] { "royalbed" }, Arch.Bed, "royalbed"),
+            new Recipe(new[] { "hospitalbed" }, Arch.Bed, "hospitalbed"),
+            new Recipe(new[] { "bed" }, Arch.Bed, "bed"),
+            // 单图型（Graphic_Single：原版只画一张立面图，四向共用）：顶面取该件真正的水平面，
+            // 竖面取图里那条带，图里没画的圆柱一律 wood。
+            new Recipe(new[] { "standinglamp" }, Arch.Lamp, "standinglamp"),
+            new Recipe(new[] { "floodlight" }, Arch.FloodLight, "floodlight"),
+            new Recipe(new[] { "column" }, Arch.Column, "column"),
+            new Recipe(new[] { "plantpot" }, Arch.Pot, "plantpot"),
+            new Recipe(new[] { "penmarker" }, Arch.Marker, "penmarker"),
+            // Royalty 大件：王座沿用扶手椅的几何（箱体 + 靠背 + 两扶手），只把靠背加高；
+            // 大王座是"台座 + 金椅 + 尖顶"，帷幔是"横杆 + 布面 + 穗子"，石碑是"碑身 + 基座"。
+            new Recipe(new[] { "grandthrone" }, Arch.GrandThrone, "grandthrone"),
+            new Recipe(new[] { "throne" }, Arch.Throne, "throne"),
+            new Recipe(new[] { "drape" }, Arch.Drape, "drape"),
+            new Recipe(new[] { "stelegrand" }, Arch.Stele, "stelegrand"),
+            new Recipe(new[] { "stelelarge" }, Arch.Stele, "stelelarge"),
             new Recipe(new[] { "dresser", "cabinet" }, Arch.Cabinet, "dresser"),
             // 关键字先长后短：shelfsmall 含 "shelf"、bookcasesmall 含 "bookcase"，
             // 顺序错了就会用小件的配方去套大件的取样名（或反过来）。
@@ -161,6 +187,22 @@ namespace RimFirstPerson3D
             "bed.south.front",
             "bed.south.top",
             "bed.south.wood",
+            "bedroll.east.front",
+            "bedroll.east.pillow",
+            "bedroll.east.top",
+            "bedroll.east.wood",
+            "bedroll.south.front",
+            "bedroll.south.pillow",
+            "bedroll.south.top",
+            "bedroll.south.wood",
+            "bedrolldouble.east.front",
+            "bedrolldouble.east.pillow",
+            "bedrolldouble.east.top",
+            "bedrolldouble.east.wood",
+            "bedrolldouble.south.front",
+            "bedrolldouble.south.pillow",
+            "bedrolldouble.south.top",
+            "bedrolldouble.south.wood",
             "bookcase.east.front",
             "bookcase.east.top",
             "bookcase.east.wood",
@@ -173,6 +215,45 @@ namespace RimFirstPerson3D
             "bookcasesmall.south.front",
             "bookcasesmall.south.top",
             "bookcasesmall.south.wood",
+            "column.south.front",
+            "column.south.top",
+            "column.south.wood",
+            "couch.east.back",
+            "couch.east.front",
+            "couch.east.top",
+            "couch.east.wood",
+            "couch.north.arml",
+            "couch.north.armr",
+            "couch.north.back",
+            "couch.north.front",
+            "couch.north.wood",
+            "couch.south.arml",
+            "couch.south.armr",
+            "couch.south.back",
+            "couch.south.front",
+            "couch.south.top",
+            "couch.south.wood",
+            "diningchair.east.top",
+            "diningchair.east.wood",
+            "diningchair.north.top",
+            "diningchair.south.back",
+            "diningchair.south.top",
+            "diningchair.south.wood",
+            "doublebed.east.front",
+            "doublebed.east.pillow",
+            "doublebed.east.top",
+            "doublebed.east.wood",
+            "doublebed.south.front",
+            "doublebed.south.pillow",
+            "doublebed.south.top",
+            "doublebed.south.wood",
+            "drape.south.front",
+            "drape.south.mid",
+            "drape.south.tassel",
+            "drape.south.tassel2",
+            "drape.south.tassel3",
+            "drape.south.top",
+            "drape.south.wood",
             "dresser.east.front",
             "dresser.east.top",
             "dresser.north.front",
@@ -186,6 +267,39 @@ namespace RimFirstPerson3D
             "endtable.south.front",
             "endtable.south.top",
             "endtable.south.wood",
+            "floodlight.south.basel",
+            "floodlight.south.baser",
+            "floodlight.south.pole",
+            "floodlight.south.top",
+            "floodlight.south.wood",
+            "grandthrone.south.front",
+            "grandthrone.south.gold",
+            "grandthrone.south.spire",
+            "grandthrone.south.top",
+            "grandthrone.south.wood",
+            "hospitalbed.east.front",
+            "hospitalbed.east.pillow",
+            "hospitalbed.east.top",
+            "hospitalbed.east.wood",
+            "hospitalbed.south.front",
+            "hospitalbed.south.pillow",
+            "hospitalbed.south.top",
+            "hospitalbed.south.wood",
+            "penmarker.south.front",
+            "penmarker.south.tip",
+            "penmarker.south.top",
+            "penmarker.south.wood",
+            "plantpot.south.front",
+            "plantpot.south.top",
+            "plantpot.south.wood",
+            "royalbed.east.front",
+            "royalbed.east.pillow",
+            "royalbed.east.top",
+            "royalbed.east.wood",
+            "royalbed.south.front",
+            "royalbed.south.pillow",
+            "royalbed.south.top",
+            "royalbed.south.wood",
             "shelf.east.front",
             "shelf.east.top",
             "shelf.north.front",
@@ -199,6 +313,24 @@ namespace RimFirstPerson3D
             "shelfsmall.south.front",
             "shelfsmall.south.top",
             "shelfsmall.south.wood",
+            "standinglamp.south.front",
+            "standinglamp.south.neck",
+            "standinglamp.south.top",
+            "standinglamp.south.wood",
+            "stelegrand.south.crest",
+            "stelegrand.south.face",
+            "stelegrand.south.front",
+            "stelegrand.south.mid",
+            "stelegrand.south.shoulder",
+            "stelegrand.south.top",
+            "stelegrand.south.wood",
+            "stelelarge.south.crest",
+            "stelelarge.south.face",
+            "stelelarge.south.front",
+            "stelelarge.south.mid",
+            "stelelarge.south.shoulder",
+            "stelelarge.south.top",
+            "stelelarge.south.wood",
             "stool.east.front",
             "stool.east.top",
             "stool.north.front",
@@ -228,6 +360,12 @@ namespace RimFirstPerson3D
             "table3x3.north.front",
             "table3x3.north.top",
             "table3x3.north.wood",
+            "throne.south.arml",
+            "throne.south.armr",
+            "throne.south.back",
+            "throne.south.front",
+            "throne.south.top",
+            "throne.south.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -277,10 +415,20 @@ namespace RimFirstPerson3D
             // 否则由 east 图给出。
             string cross = (v == "east") ? "south" : "east";
             var side4 = new Vector4[4];
-            side4[0] = Region(arch, Opp(v), "front");
-            side4[1] = Region(arch, v, "front");
-            side4[2] = Region(arch, cross, "front");
-            side4[3] = side4[2];
+            if (!HasRegion(arch, "front"))
+            {
+                // 有的件整张图就没有立面段（diningchair 的"腿带"是纯线稿，几何也不拿它当面）：
+                // 退到木面，而不是 Vector4.zero —— 那会去采图集原点。
+                var wf = WoodRegion(arch, rot);
+                for (int i = 0; i < 4; i++) side4[i] = wf;
+            }
+            else
+            {
+                side4[0] = Region(arch, Opp(v), "front");
+                side4[1] = Region(arch, v, "front");
+                side4[2] = Region(arch, cross, "front");
+                side4[3] = side4[2];
+            }
             return new UvSpec
             {
                 top = Region(arch, v, topRegion),
@@ -399,6 +547,28 @@ namespace RimFirstPerson3D
 
         // ---- 建模 ----
 
+        // 本层新增件的尺寸写在这里，不进 Metrics3D（那是并行修改中的共享文件）
+        private const float PillowThickness = 0.11f;
+        private const float PillowDepth = 0.34f;        // 沿床长方向占多深
+        private const float BedrollThickness = 0.08f;
+        private const float ChairBackThickness = 0.06f;
+        private const float ColumnHeight = 1.85f;   // 原版柱图 64x128：1 格宽、2 格高
+        private const float ThroneSeatHeight = 0.48f;
+        private const float ThroneBackHeight = 1.35f;
+        private const float DrapeRodHeight = 1.42f;
+        private const float ClothThickness = 0.06f;
+
+        private static bool HasRegion(string key, string region)
+        {
+            string[] vs = { "south", "north", "east" };
+            for (int i = 0; i < vs.Length; i++)
+            {
+                var r = Reg(key + "." + vs[i] + "." + region);
+                if (r.w > r.y) return true;
+            }
+            return false;
+        }
+
         private static Built Build(Arch arch, string key, Rot4 rot, float w, float d)
         {
             var m = new Model3D();
@@ -444,6 +614,75 @@ namespace RimFirstPerson3D
                     AddPosts(m, 3, w, d, rot, Metrics3D.BedHeadboardHeight, Metrics3D.FootboardHeight);
                     // 4 = 床架侧板：0.4m 高的床架侧立面在三视图里根本没有（立面段只有 15px 的床尾栏）
                     uvs.Add(WoodUv(key, rot, xz));
+                    // 5 = 枕头：图里枕头与床垫是两块分开的白面，模型上也得分开才认得出"床"
+                    if (HasRegion(key, "pillow"))
+                    {
+                        int pi = uvs.Count;
+                        uvs.Add(UvNames(key, rot, xz, "pillow", "pillow"));
+                        AddPillows(m, pi, w, d, rot, Metrics3D.MattressSurface,
+                                   PillowDepth, PillowThickness);
+                    }
+                    break;
+                }
+                case Arch.Bedroll:
+                {
+                    // 地铺：一条薄垫 + 枕头。床架、床头板、立柱一概没有 —— 那是"床"的特征；
+                    // bedroll 占格与床相同（1x2），只能靠轮廓区分。
+                    int mi = uvs.Count;
+                    uvs.Add(FaceUv(key, rot, xz));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(w - 0.08f, BedrollThickness, d - 0.08f),
+                        uv = mi
+                    });
+                    if (HasRegion(key, "pillow"))
+                    {
+                        int pi = uvs.Count;
+                        uvs.Add(UvNames(key, rot, xz, "pillow", "pillow"));
+                        AddPillows(m, pi, w, d, rot, BedrollThickness, PillowDepth, PillowThickness);
+                    }
+                    break;
+                }
+                case Arch.Chair:
+                {
+                    // 餐椅：座面是画出来的椭圆 -> 圆柱（同凳），靠背取顶栏那条白带，
+                    // 腿带是线稿：只拿一条腿当立面材料，圆柱腿本身用木面。
+                    float sh = Metrics3D.ChairSeatHeight;
+                    float sw = Mathf.Min(0.52f, Mathf.Min(w, d) * 0.72f);
+                    int si = uvs.Count;
+                    var seat = FaceUv(key, rot, new Vector2(sw, sw));
+                    seat.side = WoodRegion(key, rot);
+                    uvs.Add(seat);
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, sh, 0f),
+                        size = new Vector3(sw, Metrics3D.SeatCushionThickness, sw),
+                        uv = si
+                    });
+                    float bs = BackSign(rot);
+                    float bt = ChairBackThickness;
+                    int bi = uvs.Count;
+                    uvs.Add(PanelUv(key, rot, xz, "back"));
+                    float bh = Metrics3D.ChairBackHeight - sh + 0.04f;
+                    m.parts.Add(longZ
+                        ? new Part
+                        {
+                            kind = Prim.Box, uv = bi,
+                            pos = new Vector3(0f, sh - 0.04f, bs * (sw * 0.5f - bt * 0.5f)),
+                            size = new Vector3(sw * 0.86f, bh, bt)
+                        }
+                        : new Part
+                        {
+                            kind = Prim.Box, uv = bi,
+                            pos = new Vector3(bs * (sw * 0.5f - bt * 0.5f), sh - 0.04f, 0f),
+                            size = new Vector3(bt, bh, sw * 0.86f)
+                        });
+                    int li = uvs.Count;
+                    uvs.Add(WoodUv(key, rot, xz));
+                    Legs(m, li, sw * 0.33f, sh, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.Stool:
@@ -467,10 +706,14 @@ namespace RimFirstPerson3D
                     break;
                 }
                 case Arch.Armchair:
+                case Arch.Throne:
                 {
                     // 线稿型软包椅：整件是"白面 + 黑框"，没有俯视段/立面段之分。
                     // 座面/靠背/两扶手各点一条白面带，板件的边棱与腿用木面。
-                    float sh = Metrics3D.ArmchairSeatHeight;
+                    // 王座 = 同一条几何，只是座更高、靠背顶到 1.35m。
+                    bool throne = arch == Arch.Throne;
+                    float sh = throne ? ThroneSeatHeight : Metrics3D.ArmchairSeatHeight;
+                    float bh = throne ? ThroneBackHeight : Metrics3D.ArmchairBackHeight;
                     float t = Metrics3D.UpholsteryThickness;
                     float bs = BackSign(rot);
                     uvs.Add(UvNames(key, rot, xz, "top", "front"));    // 1 = 箱体
@@ -487,13 +730,13 @@ namespace RimFirstPerson3D
                         {
                             kind = Prim.Box, uv = 2,
                             pos = new Vector3(0f, sh, bs * (d * 0.5f - t * 0.5f)),
-                            size = new Vector3(w * 0.98f, Metrics3D.ArmchairBackHeight - sh, t)
+                            size = new Vector3(w * 0.98f, bh - sh, t)
                         }
                         : new Part
                         {
                             kind = Prim.Box, uv = 2,
                             pos = new Vector3(bs * (w * 0.5f - t * 0.5f), sh, 0f),
-                            size = new Vector3(t, Metrics3D.ArmchairBackHeight - sh, d * 0.98f)
+                            size = new Vector3(t, bh - sh, d * 0.98f)
                         });
                     uvs.Add(PanelUv(key, rot, xz, "arml"));              // 3 = 扶手 A
                     uvs.Add(PanelUv(key, rot, xz, "armr"));              // 4 = 扶手 B
@@ -556,6 +799,309 @@ namespace RimFirstPerson3D
                     });
                     uvs.Add(UvNames(key, rot, xz, "wood", "front"));   // 2 = 腿
                     Legs(m, 2, Mathf.Min(w, d) * 0.5f - 0.14f, h, Metrics3D.LegThickness);
+                    break;
+                }
+                case Arch.Lamp:
+                {
+                    // 立灯：底座 + 灯杆 + 灯罩。灯罩 = 图里那圈发光的白面（top）；
+                    // 灯杆在图里只是 3px 的一条线，没有可取的面 —— 走木面。
+                    float poleTop = Metrics3D.LampPoleHeight - Metrics3D.LampShadeHeight;
+                    int bi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "front", "front"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(0.36f, 0.05f, 0.36f),
+                        uv = bi
+                    });
+                    int pi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "wood", "neck"));   // 杆身=图里那段颈，端面没画=木面
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0.05f, 0f),
+                        size = new Vector3(0.05f, poleTop - 0.05f, 0.05f),
+                        uv = pi
+                    });
+                    int si = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "top", "top"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, poleTop, 0f),
+                        size = new Vector3(Metrics3D.LampShadeDiameter, Metrics3D.LampShadeHeight,
+                                           Metrics3D.LampShadeDiameter),
+                        uv = si
+                    });
+                    break;
+                }
+                case Arch.Column:
+                {
+                    int ci = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "front", "front"));   // 1 = 柱身（图里那条竖带）
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0.14f, 0f),
+                        size = new Vector3(0.34f, ColumnHeight - 0.30f, 0.34f),
+                        uv = ci
+                    });
+                    int bi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "top", "front"));     // 2 = 底座/柱头：水平面另有带
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(0.56f, 0.14f, 0.56f),
+                        uv = bi
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, ColumnHeight - 0.16f, 0f),
+                        size = new Vector3(0.60f, 0.16f, 0.60f),
+                        uv = bi
+                    });
+                    break;
+                }
+                case Arch.Pot:
+                {
+                    // 花盆：原版是一张俯视图 —— 中心那块棕色是盆土（顶面），外圈白环是盆壁。
+                    int i0 = uvs.Count;
+                    // 顶面 UV 按盆口尺寸铺，别按占格 1x1 铺（那会把盆土糊到 2 倍大）
+                    uvs.Add(FaceUv(key, rot, new Vector2(Metrics3D.PlantPotDiameter,
+                                                         Metrics3D.PlantPotDiameter)));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(Metrics3D.PlantPotDiameter, Metrics3D.PlantPotHeight,
+                                           Metrics3D.PlantPotDiameter),
+                        uv = i0
+                    });
+                    break;
+                }
+                case Arch.Marker:
+                {
+                    int pi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "front", "front"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(0.10f, 0.85f, 0.10f),
+                        uv = pi
+                    });
+                    int bi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "top", "top"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.60f, 0f),
+                        size = new Vector3(0.62f, 0.20f, 0.08f),
+                        uv = bi
+                    });
+                    int ti = uvs.Count;                       // 桩头露在牌子上面那一截
+                    uvs.Add(UvNames(key, rot, xz, "tip", "tip"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.80f, 0f),
+                        size = new Vector3(0.10f, 0.14f, 0.10f),
+                        uv = ti
+                    });
+                    break;
+                }
+                case Arch.FloodLight:
+                {
+                    // 底座：图里是一条椭圆，左半 = 侧壁，右半 = 顶面（两条都不含洞）
+                    int bi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "baser", "basel"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(0.62f, 0.14f, 0.62f),
+                        uv = bi
+                    });
+                    int pi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "pole", "pole"));     // 2 = 灯杆（图里杆与底座是一条竖带）
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Cylinder,
+                        pos = new Vector3(0f, 0.14f, 0f),
+                        size = new Vector3(0.16f, 0.62f, 0.16f),
+                        uv = pi
+                    });
+                    int hi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "top", "top"));       // 3 = 横灯头（两端黄色灯面就在这条带里）
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.76f, 0f),
+                        size = new Vector3(0.90f, 0.24f, 0.30f),
+                        uv = hi
+                    });
+                    break;
+                }
+                case Arch.GrandThrone:
+                {
+                    // 大王座（3x2）：白台座 + 台阶 + 金椅 + 尖顶。图里金与白是两块分开的带，
+                    // 所以几何也分两批板件，各点自己的取样带。
+                    float bs = BackSign(rot);
+                    int di = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "top", "front"));      // 1 = 台座（顶面/立面分开）
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(w * 0.96f, 0.16f, d * 0.94f),
+                        uv = di
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.16f, -bs * d * 0.22f),
+                        size = new Vector3(w * 0.78f, 0.14f, d * 0.50f),
+                        uv = di
+                    });
+                    int gi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "gold", "gold"));      // 2 = 金椅 + 尖顶
+                    float seatY = 0.30f;
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, seatY, 0f),
+                        size = new Vector3(0.95f, 0.22f, 0.85f),
+                        uv = gi
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, seatY + 0.22f, bs * 0.36f),
+                        size = new Vector3(0.80f, 0.85f, 0.14f),
+                        uv = gi
+                    });
+                    int qi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "spire", "spire"));    // 3 = 尖顶
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, seatY + 1.07f, bs * 0.30f),
+                        size = new Vector3(0.34f, 0.42f, 0.28f),
+                        uv = qi
+                    });
+                    int ai = gi;                                          // 4 = 两侧金扶手柱（同金带）
+                    for (int sd = -1; sd <= 1; sd += 2)
+                        m.parts.Add(new Part
+                        {
+                            kind = Prim.Box,
+                            pos = new Vector3(sd * 0.62f, seatY + 0.22f, -0.04f),
+                            size = new Vector3(0.22f, 0.34f, 0.70f),
+                            uv = ai
+                        });
+                    break;
+                }
+                case Arch.Drape:
+                {
+                    // 帷幔（2x1）：横杆 + 垂下的布面 + 三个穗子。布面是竖直的，原版把它画成
+                    // 三段横带 + 一道波浪裙摆，所以大面/薄边/顶面各取一段；穗子只有左右两块
+                    // 是实心矩形（中间那块与它们之间是透的），左右各取一条、中间复用。
+                    float bs = BackSign(rot);
+                    string sv = ViewOf(rot);
+                    int ti = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "tassel", "tassel"));   // 1 = 横杆 + 左穗
+                    int tj = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "tassel2", "tassel2")); // 2 = 右穗
+                    int tk = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "tassel3", "tassel3")); // 3 = 中穗
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, DrapeRodHeight, bs * 0.02f),
+                        size = new Vector3(w * 0.86f, 0.09f, 0.09f),
+                        uv = ti
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(-w * 0.36f, 0.34f, bs * 0.02f),
+                        size = new Vector3(0.09f, 0.13f, 0.09f),
+                        uv = ti
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.34f, bs * 0.02f),
+                        size = new Vector3(0.09f, 0.13f, 0.09f),
+                        uv = tk
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(w * 0.36f, 0.34f, bs * 0.02f),
+                        size = new Vector3(0.09f, 0.13f, 0.09f),
+                        uv = tj
+                    });
+                    int ci = uvs.Count;
+                    uvs.Add(Bands(key, sv, "front", "mid", "top",          // 4 = 布面
+                                  new Vector2(w * 0.82f, ClothThickness)));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.47f, bs * 0.02f),
+                        size = new Vector3(w * 0.82f, 0.95f, ClothThickness),
+                        uv = ci
+                    });
+                    break;
+                }
+                case Arch.Stele:
+                {
+                    // 石碑：一块竖碑 + 一个基座。碑身的大面 = 图里那片刻纹（top），
+                    // 基座 = 图底部那条带（front）。占格 2x2 / 3x3 只改高度与宽度。
+                    float h = 0.55f + 0.50f * Mathf.Max(w, d);
+                    // 碑身是上窄下宽的梯形：拆成三段叠块，每段的大面/薄边各取图里
+                    // 对应高度的那条横带。梯形逐带取样才铺得满 —— 一条矩形要么含洞、
+                    // 要么丢掉两侧（原版这块碑的图就是逐层收窄的）。
+                    string sv = ViewOf(rot);
+                    float hLow = (h - 0.18f) * 0.40f, hMid = (h - 0.18f) * 0.32f;
+                    int si = uvs.Count;
+                    uvs.Add(Bands(key, sv, "face", "mid", "mid", new Vector2(w * 0.56f, 0.24f)));   // 1 = 下段
+                    int ui = uvs.Count;
+                    uvs.Add(Bands(key, sv, "mid", "shoulder", "mid", new Vector2(w * 0.48f, 0.22f))); // 2 = 中段
+                    int vi = uvs.Count;
+                    uvs.Add(Bands(key, sv, "top", "top", "crest", new Vector2(w * 0.38f, 0.20f)));   // 3 = 上段
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.18f, 0f),
+                        size = new Vector3(w * 0.56f, hLow, 0.24f),
+                        uv = si
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.18f + hLow, 0f),
+                        size = new Vector3(w * 0.48f, hMid, 0.22f),
+                        uv = ui
+                    });
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0.18f + hLow + hMid, 0f),
+                        size = new Vector3(w * 0.38f, h - 0.18f - hLow - hMid, 0.20f),
+                        uv = vi
+                    });
+                    int bi = uvs.Count;
+                    uvs.Add(UvNames(key, rot, xz, "front", "front"));
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(w * 0.72f, 0.18f, d * 0.42f),
+                        uv = bi
+                    });
                     break;
                 }
                 case Arch.Cabinet:
@@ -639,6 +1185,47 @@ namespace RimFirstPerson3D
             var size = longZ ? new Vector3(thick * 0.96f, h, t)
                              : new Vector3(t, h, thick * 0.96f);
             m.parts.Add(new Part { kind = Prim.Box, pos = pos, size = size, uv = uvIdx });
+        }
+
+        /// <summary>一条带子铺满某个面：大面(±Z)取 face，薄边(±X)取 edge，顶面取 cap。
+        /// 石碑这种"逐层收窄"的图靠它把每条横带派到对应的那一面。</summary>
+        private static UvSpec Bands(string key, string view, string face, string edge,
+            string cap, Vector2 xz)
+        {
+            var f = Region(key, view, face);
+            var e = Region(key, view, edge);
+            return new UvSpec
+            {
+                top = Region(key, view, cap),
+                side = f,
+                side4 = new[] { f, f, e, e },
+                sideTileH = 0f,
+                sideTileW = 0f,
+                modelXZ = xz
+            };
+        }
+
+        /// <summary>枕头：贴着床头那一端，沿床宽并排（2 格宽的床放两个）。pos.y 是底面，
+        /// 所以 surfY 传"床垫上表面"，枕头就坐在床垫上而不是陷进去。</summary>
+        private static void AddPillows(Model3D m, int uvIdx, float w, float d, Rot4 rot,
+            float surfY, float depth, float thick)
+        {
+            bool longZ = rot == Rot4.North || rot == Rot4.South;
+            float bs = BackSign(rot);
+            float len = longZ ? d : w, wid = longZ ? w : d;
+            int n = wid >= 1.5f ? 2 : 1;
+            float pw = wid * 0.84f / n;
+            for (int i = 0; i < n; i++)
+            {
+                float off = (i - (n - 1) * 0.5f) * pw * 1.08f;
+                var pos = longZ
+                    ? new Vector3(off, surfY, bs * (len * 0.5f - depth * 0.5f - 0.07f))
+                    : new Vector3(bs * (len * 0.5f - depth * 0.5f - 0.07f), surfY, off);
+                var size = longZ
+                    ? new Vector3(pw * 0.94f, thick, depth)
+                    : new Vector3(depth, thick, pw * 0.94f);
+                m.parts.Add(new Part { kind = Prim.Box, pos = pos, size = size, uv = uvIdx });
+            }
         }
 
         /// <summary>四角立柱：床头那两端高（床头板高），床尾那两端矮（床尾板高）。</summary>

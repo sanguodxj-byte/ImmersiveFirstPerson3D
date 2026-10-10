@@ -64,12 +64,21 @@ def main():
         print(f"{p}  {src.shape[1]}x{src.shape[0]} scale x{sc}")
 
 
+DIRS = (F, FB, F + "/walllamp", F + "/stelelarge", F + "/bookcase",
+        "Core/textures/things/building/misc",
+        "Royalty/textures/things/building/furniture")
+
+
 def find(item, view):
-    for d in (F, FB):
+    for d in DIRS:
         p = f"{d}/{item}_{view}.png"
         if os.path.exists(os.path.join(FA.TEX, p.replace("/", os.sep))):
             return p
-    raise FileNotFoundError(f"{item}_{view}.png 不在 {F} 也不在 {FB}")
+    for d in DIRS:                       # 单图型（Graphic_Single）：没有朝向后缀
+        p = f"{d}/{item}.png"
+        if os.path.exists(os.path.join(FA.TEX, p.replace("/", os.sep))):
+            return p
+    raise FileNotFoundError(f"{item}_{view}.png 不在 {' '.join(DIRS)}")
 
 
 if __name__ == "__main__":
