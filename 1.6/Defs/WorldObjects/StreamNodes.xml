@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <WorldObjectDef>
+    <defName>FP3D_StreamNode</defName>
+    <label>streamed region</label>
+    <description>A neighboring region streamed in for seamless traversal.</description>
+    <worldObjectClass>RimWorld.Planet.MapParent</worldObjectClass>
+    <texture>World/WorldObjects/Sites/GenericSite</texture>
+    <expandingIconTexture>World/WorldObjects/Expanding/Sites/GenericSite</expandingIconTexture>
+    <expandingIcon>true</expandingIcon>
+    <expandingIconPriority>40</expandingIconPriority>
+  </WorldObjectDef>
+</Defs>

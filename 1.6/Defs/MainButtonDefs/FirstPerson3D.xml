@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <MainButtonDef>
+    <defName>FP3D_FirstPerson</defName>
+    <label>第一人称</label>
+    <workerClass>RimFirstPerson3D.MainButtonWorker_FirstPerson3D</workerClass>
+    <order>100</order>
+    <validWithoutMap>false</validWithoutMap>
+    <minimized>true</minimized>
+  </MainButtonDef>
+</Defs>
