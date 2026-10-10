@@ -1,0 +1,18 @@
+# AI生成
+WROTE D:\rim mod\FirstPerson3D\docs\wreckage\_vision\analysis.json
+== ruinedtank
+    ruinedtank.png size [320, 192] bbox [312, 188] asp 1.66 border T/B/L/R 0.0 0.0 0.0 0.0 hit 0.436 0.401 0.356 0.479 dark% 0.276
+== crashedshippart
+    crashedshippart.png size [1024, 512] bbox [1018, 493] asp 2.065 border T/B/L/R 0.0 0.0 0 0 hit 0.0 0.0 0.0 0.0 dark% 0.0815
+== ancientwarwalkershell
+    ancientwarwalkershell.png size [320, 192] bbox [316, 187] asp 1.69 border T/B/L/R 0.0 1.5 0 0 hit 0.386 0.5 0.241 0.369 dark% 0.2128
+== largeengineblock
+    largeengineblock.png size [128, 64] bbox [124, 64] asp 1.938 border T/B/L/R 0.0 2.0 2.0 0.0 hit 0.274 0.863 0.625 0.406 dark% 0.2412
+== giantwheela
+    giantwheela.png size [128, 128] bbox [111, 121] asp 0.917 border T/B/L/R 2 2 0 0 hit 0.514 0.505 0.43 0.479 dark% 0.0701
+== concretebarrier
+    concretebarrier.png size [64, 64] bbox [64, 64] asp 1.0 border T/B/L/R 3.0 3.0 3.0 3.0 hit 1.0 1.0 1.0 1.0 dark% 0.1787
+== rustedindustrialtruck
+    rustedindustrialtruck_south.png size [512, 512] bbox [435, 429] asp 1.014 border T/B/L/R 0 0 0 0 hit 0.232 0.276 0.0 0.0 dark% 0.3109
+    rustedindustrialtruck_east.png size [512, 512] bbox [440, 446] asp 0.987 border T/B/L/R 0.0 0.0 0.0 0.0 hit 0.0 0.0 0.249 0.244 dark% 0.2247
+    rustedindustrialtruck_north.png size [512, 512] bbox [422, 444] asp 0.95 border T/B/L/R 0.0 0.0 0.0 0.0 hit 0.175 0.336 0.0 0.0 dark% 0.2139

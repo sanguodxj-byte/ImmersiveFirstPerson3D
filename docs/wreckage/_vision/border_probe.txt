@@ -1,0 +1,82 @@
+# AI生成
+== ruinedtank.png
+   L1 boundary=907 dark=907 frac=1.000
+   L2 boundary=903 dark=903 frac=1.000
+   L3 boundary=894 dark=894 frac=1.000
+   L4 boundary=887 dark=664 frac=0.749
+   L5 boundary=879 dark=388 frac=0.441
+   L6 boundary=889 dark=349 frac=0.393
+   L7 boundary=905 dark=326 frac=0.360
+   L8 boundary=918 dark=248 frac=0.270
+   (still dark at L8 -> outline thicker than 8 px)
+== crashedshippart.png
+   L1 boundary=2985 dark=2985 frac=1.000
+   L2 boundary=2974 dark=2974 frac=1.000
+   L3 boundary=2967 dark=2967 frac=1.000
+   L4 boundary=2960 dark=2960 frac=1.000
+   L5 boundary=2951 dark=2951 frac=1.000
+   L6 boundary=2938 dark=2938 frac=1.000
+   L7 boundary=2923 dark=2923 frac=1.000
+   L8 boundary=2912 dark=2912 frac=1.000
+   (still dark at L8 -> outline thicker than 8 px)
+== ancientwarwalkershell.png
+   L1 boundary=922 dark=922 frac=1.000
+   L2 boundary=918 dark=918 frac=1.000
+   L3 boundary=908 dark=908 frac=1.000
+   L4 boundary=897 dark=607 frac=0.677
+   L5 boundary=889 dark=258 frac=0.290
+   L6 boundary=896 dark=222 frac=0.248
+   L7 boundary=905 dark=216 frac=0.239
+   L8 boundary=914 dark=205 frac=0.224
+   (still dark at L8 -> outline thicker than 8 px)
+== largeengineblock.png
+   L1 boundary=353 dark=353 frac=1.000
+   L2 boundary=343 dark=343 frac=1.000
+   L3 boundary=332 dark=263 frac=0.792
+   L4 boundary=326 dark=29 frac=0.089
+   L5 boundary=336 dark=18 frac=0.054
+   L6 boundary=345 dark=11 frac=0.032
+   L7 boundary=352 dark=7 frac=0.020
+   L8 boundary=354 dark=7 frac=0.020
+   (still dark at L8 -> outline thicker than 8 px)
+== giantwheela.png
+   L1 boundary=343 dark=343 frac=1.000
+   L2 boundary=339 dark=339 frac=1.000
+   L3 boundary=335 dark=276 frac=0.824
+   L4 boundary=330 dark=34 frac=0.103
+   L5 boundary=328 dark=0 frac=0.000
+== concretebarrier.png
+   L1 boundary=252 dark=252 frac=1.000
+   L2 boundary=244 dark=244 frac=1.000
+   L3 boundary=236 dark=236 frac=1.000
+   L4 boundary=228 dark=0 frac=0.000
+== rustedindustrialtruck_south.png
+   L1 boundary=1862 dark=1862 frac=1.000
+   L2 boundary=1857 dark=1857 frac=1.000
+   L3 boundary=1856 dark=1856 frac=1.000
+   L4 boundary=1850 dark=1850 frac=1.000
+   L5 boundary=1844 dark=1756 frac=0.952
+   L6 boundary=1837 dark=1401 frac=0.763
+   L7 boundary=1831 dark=1322 frac=0.722
+   L8 boundary=1822 dark=1083 frac=0.594
+   (still dark at L8 -> outline thicker than 8 px)
+== rustedindustrialtruck_east.png
+   L1 boundary=1873 dark=1873 frac=1.000
+   L2 boundary=1868 dark=1868 frac=1.000
+   L3 boundary=1866 dark=1866 frac=1.000
+   L4 boundary=1860 dark=1860 frac=1.000
+   L5 boundary=1850 dark=1760 frac=0.951
+   L6 boundary=1839 dark=1280 frac=0.696
+   L7 boundary=1829 dark=1112 frac=0.608
+   L8 boundary=1829 dark=956 frac=0.523
+   (still dark at L8 -> outline thicker than 8 px)
+== rustedindustrialtruck_north.png
+   L1 boundary=1608 dark=1608 frac=1.000
+   L2 boundary=1601 dark=1601 frac=1.000
+   L3 boundary=1593 dark=1593 frac=1.000
+   L4 boundary=1583 dark=1583 frac=1.000
+   L5 boundary=1571 dark=1566 frac=0.997
+   L6 boundary=1558 dark=1376 frac=0.883
+   L7 boundary=1547 dark=1213 frac=0.784
+   L8 boundary=1539 dark=1044 frac=0.678
+   (still dark at L8 -> outline thicker than 8 px)

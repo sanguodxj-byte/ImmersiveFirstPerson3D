@@ -1,0 +1,3275 @@
+{
+  "pix_per_cell": 128,
+  "count": 169,
+  "items": [
+    {
+      "name": "rustedcara",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcara_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcara_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcara_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedcarb",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarb_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarb_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarb_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedcarc",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarc_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarc_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcarc_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedcard",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcard_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcard_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcard_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedcare",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcare_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcare_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcars/rustedcare_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedapc",
+      "group": "载具残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ruinedapc.png",
+          "px": [
+            320,
+            192
+          ],
+          "cell": [
+            2.5,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedtank",
+      "group": "载具残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ruinedtank.png",
+          "px": [
+            320,
+            192
+          ],
+          "cell": [
+            2.5,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "podcar",
+      "group": "载具残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/podcar.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedcarframe",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedcarframe_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedcarframe_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedcarframe_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedmilitaryjeep",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedmilitaryjeep_south.png",
+          "px": [
+            192,
+            320
+          ],
+          "cell": [
+            1.5,
+            2.5
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedmilitaryjeep_east.png",
+          "px": [
+            320,
+            192
+          ],
+          "cell": [
+            2.5,
+            1.5
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedmilitaryjeep_north.png",
+          "px": [
+            192,
+            320
+          ],
+          "cell": [
+            1.5,
+            2.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedtruck",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/rustedtruck_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/rustedtruck_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/rustedtruck_north.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedforklift",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedforklift_south.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedforklift_east.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedforklift_north.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedindustrialtruck",
+      "group": "载具残骸",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedindustrialtruck_south.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedindustrialtruck_east.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedindustrialtruck_north.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "crashedpoisonshippart",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/exotic/crashedpoisonshippart.png",
+          "px": [
+            1024,
+            512
+          ],
+          "cell": [
+            8.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "crashedshippart",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/exotic/crashedshippart.png",
+          "px": [
+            1024,
+            512
+          ],
+          "cell": [
+            8.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "shipchunka",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/exotic/shipchunk/shipchunka.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "shipchunkb",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/exotic/shipchunk/shipchunkb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "shipchunkc",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/exotic/shipchunk/shipchunkc.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrusteddropship",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrusteddropship.png",
+          "px": [
+            384,
+            320
+          ],
+          "cell": [
+            3.0,
+            2.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientdropshipengine",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientdropshipengine.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbustedshipbeacon",
+      "group": "飞船残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbustedshipbeacon.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusa",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusa.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusb",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusc",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusd",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusd.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetrituse",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetrituse.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusf",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusf.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusg",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusg.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritush",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritush.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusi",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusi.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusj",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusj.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusk",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusk.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusl",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusl.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusm",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusm.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusn",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusn.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetrituso",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetrituso.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusp",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusp.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusq",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusq.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritusr",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritusr.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetrituss",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetrituss.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmechdetritust",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmechdetritus/ancientmechdetritust.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "destroyedmechdropbeacona",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/destroyedmechdropbeacon/destroyedmechdropbeacona.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "destroyedmechdropbeaconb",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/destroyedmechdropbeacon/destroyedmechdropbeaconb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "destroyedmechdropbeaconc",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/destroyedmechdropbeacon/destroyedmechdropbeaconc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbandnode",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientbandnode.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientlargemechformer",
+      "group": "战争机器残骸",
+      "views": {
+        "south": {
+          "tex": "Biotech/textures/things/building/ruins/ancientlargemechformer_south.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancienttoxifiergenerator",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancienttoxifiergenerator.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientexostridercannon",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostridercannon.png",
+          "px": [
+            384,
+            256
+          ],
+          "cell": [
+            3.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientexostriderhead",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostriderhead.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientexostridermidsection",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostridermidsection.png",
+          "px": [
+            384,
+            256
+          ],
+          "cell": [
+            3.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "exostriderlega",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostriderleg/exostriderlega.png",
+          "px": [
+            256,
+            129
+          ],
+          "cell": [
+            2.0,
+            1.0078
+          ]
+        }
+      }
+    },
+    {
+      "name": "exostriderlegb",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostriderleg/exostriderlegb.png",
+          "px": [
+            256,
+            129
+          ],
+          "cell": [
+            2.0,
+            1.0078
+          ]
+        }
+      }
+    },
+    {
+      "name": "exostriderlegc",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Biotech/textures/things/building/ruins/ancientexostrider/ancientexostriderleg/exostriderlegc.png",
+          "px": [
+            256,
+            129
+          ],
+          "cell": [
+            2.0,
+            1.0078
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarspiderremains",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientwarspiderremains.png",
+          "px": [
+            320,
+            320
+          ],
+          "cell": [
+            2.5,
+            2.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarsprinterremains",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientwarsprinterremains.png",
+          "px": [
+            320,
+            192
+          ],
+          "cell": [
+            2.5,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarwalkerclaw",
+      "group": "战争机器残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkerclaw_south.png",
+          "px": [
+            64,
+            128
+          ],
+          "cell": [
+            0.5,
+            1.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkerclaw_east.png",
+          "px": [
+            128,
+            64
+          ],
+          "cell": [
+            1.0,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarwalkerfoot",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkerfoot.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarwalkerleg",
+      "group": "战争机器残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkerleg_south.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkerleg_east.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarwalkershell",
+      "group": "战争机器残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkershell.png",
+          "px": [
+            320,
+            192
+          ],
+          "cell": [
+            2.5,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientwarwalkertorso",
+      "group": "战争机器残骸",
+      "views": {
+        "south": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkertorso_south.png",
+          "px": [
+            256,
+            384
+          ],
+          "cell": [
+            2.0,
+            3.0
+          ]
+        },
+        "east": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkertorso_east.png",
+          "px": [
+            384,
+            256
+          ],
+          "cell": [
+            3.0,
+            2.0
+          ]
+        },
+        "north": {
+          "tex": "Core/textures/things/building/ruins/ancientwarwalkertorso_north.png",
+          "px": [
+            256,
+            384
+          ],
+          "cell": [
+            2.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedengineblocka",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedengineblock/rustedengineblocka.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedengineblockb",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedengineblock/rustedengineblockb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedengineblockc",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedengineblock/rustedengineblockc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientgeneratora",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientgenerator/ancientgeneratora.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientgeneratorb",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientgenerator/ancientgeneratorb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientsecurityturreta",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientsecurityturret/ancientsecurityturreta.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientsecurityturretb",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientsecurityturret/ancientsecurityturretb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientsecurityturretc",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientsecurityturret/ancientsecurityturretc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientsecurityturretd",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientsecurityturret/ancientsecurityturretd.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmegacannontripoda",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmegacannontripod/ancientmegacannontripoda.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmegacannontripodb",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmegacannontripod/ancientmegacannontripodb.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmegacannontripodc",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmegacannontripod/ancientmegacannontripodc.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "largeengineblock",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/largeengineblock.png",
+          "px": [
+            128,
+            64
+          ],
+          "cell": [
+            1.0,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "jetengine",
+      "group": "引擎机械残骸",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/jetengine.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheela",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheela.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheelb",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheelb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheelc",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheelc.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheeld",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheeld.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheele",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheele.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "giantwheelf",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/giantwheel/giantwheelf.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheela",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheela.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheelb",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheelb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheelc",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheelc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheeld",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheeld.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheele",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheele.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "wheelf",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/wheel/wheelf.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedwashingmachinea",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedwashingmachine/rustedwashingmachinea.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedwashingmachineb",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedwashingmachine/rustedwashingmachineb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "shoppingcarta",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/shoppingcart/shoppingcarta.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "shoppingcartb",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/shoppingcart/shoppingcartb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "shoppingcartc",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/shoppingcart/shoppingcartc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "shoppingcartd",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/shoppingcart/shoppingcartd.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "shoppingcarte",
+      "group": "轮件杂物",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/shoppingcart/shoppingcarte.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbarrela",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbarrel/ancientbarrela.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbarrelb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbarrel/ancientbarrelb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbarrelc",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbarrel/ancientbarrelc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbarreld",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbarrel/ancientbarreld.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientbarrele",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientbarrel/ancientbarrele.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientconcretebarriera",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientconcretebarrier/ancientconcretebarriera.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientconcretebarrierb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientconcretebarrier/ancientconcretebarrierb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cratea",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientcrate/cratea.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "crateb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientcrate/crateb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cratec",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientcrate/cratec.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientunstablefuelnodea",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientfuelnode/ancientunstablefuelnodea.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientunstablefuelnodeb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientfuelnode/ancientunstablefuelnodeb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientunstablefuelnodec",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientfuelnode/ancientunstablefuelnodec.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientlampposta",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientlamppost/ancientlampposta.png",
+          "px": [
+            64,
+            128
+          ],
+          "cell": [
+            0.5,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientlamppostb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientlamppost/ancientlamppostb.png",
+          "px": [
+            64,
+            128
+          ],
+          "cell": [
+            0.5,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientlamppostc",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientlamppost/ancientlamppostc.png",
+          "px": [
+            64,
+            128
+          ],
+          "cell": [
+            0.5,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycratea",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycratea.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycrateb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycrateb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycratec",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycratec.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycrated",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycrated.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycratee",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycratee.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycratef",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycratef.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientmilitarycrateg",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientmilitarycrate/ancientmilitarycrateg.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientpipesa",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientpipes/ancientpipesa.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientpipesb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientpipes/ancientpipesb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientpipesc",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientpipes/ancientpipesc.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrazorwirea",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrazorwire/ancientrazorwirea.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrazorwireb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrazorwire/ancientrazorwireb.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrazorwirec",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrazorwire/ancientrazorwirec.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrazorwired",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrazorwire/ancientrazorwired.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientrazorwiree",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientrazorwire/ancientrazorwiree.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientspacercratea",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientspacercrate/ancientspacercratea.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientspacercrateb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientspacercrate/ancientspacercrateb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientspacercratec",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancientspacercrate/ancientspacercratec.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancienttanktrapa",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancienttanktrap/ancienttanktrapa.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancienttanktrapb",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancienttanktrap/ancienttanktrapb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancienttanktrapc",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/ancienttanktrap/ancienttanktrapc.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "concretebarrier",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/concretebarrier.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cratelarge",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/cratelarge.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cratelong",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/cratelong.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cratesmall",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/cratesmall.png",
+          "px": [
+            64,
+            64
+          ],
+          "cell": [
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "pipelinesection",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/pipelinesection.png",
+          "px": [
+            128,
+            64
+          ],
+          "cell": [
+            1.0,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedbarbedwirefence_atlas",
+      "group": "废墟路障管件",
+      "views": {
+        "view": {
+          "tex": "Core/textures/things/building/ruins/rustedbarbedwirefence_atlas.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcrane_base",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcrane_base.png",
+          "px": [
+            512,
+            512
+          ],
+          "cell": [
+            4.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranearm",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranearm_south.png",
+          "px": [
+            256,
+            128
+          ],
+          "cell": [
+            2.0,
+            1.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranearm_east.png",
+          "px": [
+            128,
+            256
+          ],
+          "cell": [
+            1.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranearmsmall",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranearmsmall_south.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranearmsmall_east.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcontainera",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainera_south.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainera_east.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainera_north.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcontainerb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerb_south.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerb_east.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerb_north.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcontainerc",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "south": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerc_south.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerc_east.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcontainer/ancientcontainerc_north.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcratepalleta",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcratepallet/ancientcratepalleta.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcratepalletb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcratepallet/ancientcratepalletb.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ancientcratepalletc",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ancientcratepallet/ancientcratepalletc.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencratea",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencratea.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencrateb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencrateb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencratec",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencratec.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencrated",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencrated.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencratee",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencratee.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencratef",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencratef.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "oldwoodencrateg",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/oldwoodencrate/oldwoodencrateg.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranecolumna",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranecolumn/ruinedcranecolumna.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranecolumnb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranecolumn/ruinedcranecolumnb.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranecolumnc",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranecolumn/ruinedcranecolumnc.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ruinedcranecolumnd",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/ruinedcranecolumn/ruinedcranecolumnd.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedmetalcratea",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedmetalcrate/rustedmetalcratea.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedmetalcrateb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedmetalcrate/rustedmetalcrateb.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedmetalcratec",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedmetalcrate/rustedmetalcratec.png",
+          "px": [
+            128,
+            128
+          ],
+          "cell": [
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedopencontainera",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainera_east.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainera_north.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedopencontainerb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerb_east.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerb_north.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedopencontainerc",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerc_east.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerc_north.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "rustedopencontainerd",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "east": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerd_east.png",
+          "px": [
+            256,
+            512
+          ],
+          "cell": [
+            2.0,
+            4.0
+          ]
+        },
+        "north": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/rustedopencontainer/rustedopencontainerd_north.png",
+          "px": [
+            512,
+            256
+          ],
+          "cell": [
+            4.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainera",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainera.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainerb",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainerb.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainerc",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainerc.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainerd",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainerd.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainere",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainere.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "smallancientcontainerf",
+      "group": "废墟箱桶吊机",
+      "views": {
+        "view": {
+          "tex": "Odyssey/textures/things/building/ancient/shipping/smallancientcontainer/smallancientcontainerf.png",
+          "px": [
+            256,
+            256
+          ],
+          "cell": [
+            2.0,
+            2.0
+          ]
+        }
+      }
+    }
+  ]
+}

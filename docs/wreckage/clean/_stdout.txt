@@ -1,0 +1,11 @@
+# AI生成
+WROTE D:\rim mod\FirstPerson3D\docs\wreckage\clean\clean_report.json
+ruinedtank.png size [320, 192] layers [907, 903, 894, 664] erased 3368 bbox_after [305, 180] asp 1.694
+crashedshippart.png size [1024, 512] layers [2985, 2974, 2967, 2960, 2951, 2938, 2923, 2912, 2894, 2878, 2754] erased 32136 bbox_after [996, 472] asp 2.11
+ancientwarwalkershell.png size [320, 192] layers [922, 918, 908, 607] erased 3355 bbox_after [308, 179] asp 1.721
+largeengineblock.png size [128, 64] layers [353, 343, 263] erased 959 bbox_after [118, 58] asp 2.034
+giantwheela.png size [128, 128] layers [343, 339, 276] erased 958 bbox_after [106, 116] asp 0.914
+concretebarrier.png size [64, 64] layers [252, 244, 236] erased 732 bbox_after [58, 58] asp 1.0
+rustedindustrialtruck_south.png size [512, 512] layers [1862, 1857, 1856, 1850, 1756, 1401, 1322, 1083] erased 12987 bbox_after [419, 416] asp 1.007
+rustedindustrialtruck_east.png size [512, 512] layers [1873, 1868, 1866, 1860, 1760, 1280, 1112, 956] erased 12575 bbox_after [427, 427] asp 1.0
+rustedindustrialtruck_north.png size [512, 512] layers [1608, 1601, 1593, 1583, 1566, 1376, 1213, 1044] erased 11584 bbox_after [406, 431] asp 0.942

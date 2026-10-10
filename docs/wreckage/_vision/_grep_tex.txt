@@ -1,0 +1,103 @@
+# AI生成
+./Animal3D.cs:355:            if (mat == null || mat.mainTexture == null) { try { mat = g.MatSingle; } catch { } }
+./BuildingLayer3D.cs:115:            if (mat == null || mat.mainTexture == null) { try { mat = g.MatSingle; } catch { } }
+./BuildingLayer3D.cs:116:            if (mat == null || mat.mainTexture == null) return;
+./Crosshair3D.cs:16:        private static Texture2D solid;
+./Crosshair3D.cs:34:                solid = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+./FpsHud3D.cs:14:        private static Texture2D solid;
+./FpsHud3D.cs:31:                solid = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+./Grass3D.cs:65:            Texture2D tex = null;
+./Grass3D.cs:66:            try { tex = ContentFinder<Texture2D>.Get("Things/Plant/Grass/GrassA", false); } catch { }
+./Grass3D.cs:73:                    if (g != null) tex = g.MatSingle != null ? g.MatSingle.mainTexture as Texture2D : null;
+./Grass3D.cs:77:            mats = new Material[3];
+./Grass3D.cs:86:                var m = new Material(ShaderDatabase.Cutout) { name = "Fps3D_Grass" + i, enableInstancing = true };
+./Grass3D.cs:87:                m.mainTexture = tex != null ? (Texture)tex : Util3D.WhiteTex;
+./Hand3D.cs:10:        private static Texture2D tex;
+./Hand3D.cs:38:        private static Texture2D BuildHandTexture(Color skin)
+./Hand3D.cs:41:            var t = new Texture2D(S, S, TextureFormat.RGBA32, false)
+./HandTerminal3D.cs:85:                    scanMat.mainTextureOffset = new Vector2(0f, (Time.time * 0.26f) % 1f);
+./HandTerminal3D.cs:138:            var scanTex = new Texture2D(4, 128, TextureFormat.RGBA32, false)
+./HandTerminal3D.cs:148:            scanMat = new Material(ShaderDatabase.Transparent) { name = "Fps3D_TermScanMat" };
+./HandTerminal3D.cs:149:            scanMat.mainTexture = scanTex;
+./HandTerminal3D.cs:152:            var blackTex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "Fps3D_TermBlack" };
+./HandTerminal3D.cs:155:            maskMat = new Material(ShaderDatabase.Transparent) { name = "Fps3D_TermMaskMat" };
+./HandTerminal3D.cs:156:            maskMat.mainTexture = blackTex;
+./HandTerminal3D.cs:162:        private static Material MakePartMat(Texture2D tex)
+./HandTerminal3D.cs:164:            var m = new Material(ShaderDatabase.Cutout) { name = "Fps3D_Term_" + tex.name };
+./HandTerminal3D.cs:165:            m.mainTexture = tex;
+./HandTerminal3D.cs:185:        private static Texture2D BuildNoiseTex(Color32 baseCol, int amplitude, string name)
+./HandTerminal3D.cs:188:            var t = new Texture2D(S, S, TextureFormat.RGBA32, false)
+./HandTerminal3D.cs:204:        private static Texture2D BuildBrushedTex(Color32 baseCol, string name)
+./HandTerminal3D.cs:207:            var t = new Texture2D(S, S, TextureFormat.RGBA32, false)
+./HandTerminal3D.cs:225:        private static Texture2D BuildScreenTex()
+./HandTerminal3D.cs:228:            var t = new Texture2D(W, H, TextureFormat.RGBA32, false)
+./HandTerminal3D.cs:289:        private static void Band(Texture2D t, int cx, int cy, int r0, int r1, Color c)
+./HandTerminal3D.cs:300:        private static void SolidDisc(Texture2D t, int cx, int cy, int r, Color c)
+./HandTerminal3D.cs:309:        private static void FillRect(Texture2D t, int x, int y, int w, int h, Color c)
+./HandTerminal3D.cs:320:        private static void L(Texture2D t, int x, int y, int len, int thick, Color c, bool flipX, bool flipY)
+./ItemLayer3D.cs:70:                    if (m == null || m.mainTexture == null) { try { m = g.MatSingle; } catch { }
+./ItemLayer3D.cs:71:                        if (m != null && m.mainTexture != null) m = Util3D.InstancedMatFor(m); }
+./ItemLayer3D.cs:72:                    if (m == null || m.mainTexture == null) continue;
+./Model3D.cs:42:    /// 若材质来自 atlas 子图（mainTextureScale != 1），调用方应设 wholeCell=true，
+Binary file ./obj/Debug/RimFirstPerson3D.dll matches
+Binary file ./obj/Release/RimFirstPerson3D.dll matches
+./PawnLayer3D.cs:124:                        Material mat = MaterialPool.MatFrom(new MaterialRequest(fs.atlas, ShaderDatabase.Cutout));
+./PawnLayer3D.cs:206:                    if (mat != null && mat.mainTexture != null)
+./PerfMon3D.cs:23:        private static Texture2D hudBg;
+./PerfMon3D.cs:145:                hudBg = new Texture2D(1, 1);
+./PlantLayer3D.cs:110:                shadowMat = new Material(ShaderDatabase.Transparent)
+./PlantLayer3D.cs:113:                    mainTexture = ProcTex3D.Radial(32, 0.15f, 1.6f),
+./PlantLayer3D.cs:127:                arr = new Material[3];
+./PlantLayer3D.cs:136:                    arr[i] = new Material(src) { enableInstancing = true };
+./PlantLayer3D.cs:178:                    if (src == null || src.mainTexture == null) continue;
+./SkyScenery.cs:33:        private static Texture2D domeTexture;
+./SkyScenery.cs:39:        private static Texture2D cloudTex, sunTex;
+./SkyScenery.cs:90:                    skyMaterial = new Material(shader) { name = "FirstPerson3D_ProceduralSky" };
+./SkyScenery.cs:213:            domeTexture = new Texture2D(32, 64, TextureFormat.RGB24, false)
+./SkyScenery.cs:215:            domeMaterial = new Material(domeShader)
+./SkyScenery.cs:216:            { name = "FirstPerson3D_SkyDome", mainTexture = domeTexture, renderQueue = 1000 };
+./SkyScenery.cs:287:            sunMat = new Material(tShader) { name = "FirstPerson3D_Sun", mainTexture = sunTex, renderQueue = 1010 };
+./SkyScenery.cs:288:            haloMat = new Material(tShader) { name = "FirstPerson3D_SunHalo", mainTexture = MakeRadialTex(64, 0.0f, 0.55f), renderQueue = 1009 };
+./SkyScenery.cs:291:            cloudMat = new Material(tShader) { name = "FirstPerson3D_Clouds", mainTexture = cloudTex, renderQueue = 1020 };
+./SkyScenery.cs:294:            starMat = new Material(tShader) { name = "FirstPerson3D_Stars", mainTexture = MakeRadialTex(16, 0.1f, 1.0f), renderQueue = 1005 };
+./SkyScenery.cs:314:        private static Texture2D MakeRadialTex(int n, float inner, float gamma)
+./SkyScenery.cs:316:            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+./SkyScenery.cs:335:        private static Texture2D MakeCloudTex(int n)
+./SkyScenery.cs:337:            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+./SkyScenery.cs:520:                cloudMat.mainTextureOffset = cloudScroll;
+./SkyScenery.cs:564:                ridgeMaterial = new Material(shader) { name = "FirstPerson3D_DistantRidge" };
+./SkyScenery.cs:671:                skirtMaterial = new Material(shader) { name = "FirstPerson3D_HorizonSkirt" };
+./TerrainLayer3D.cs:186:            mat = BuildTerrainMaterial(td);
+./TerrainLayer3D.cs:191:        private Material BuildTerrainMaterial(TerrainDef td)
+./TerrainLayer3D.cs:196:            if (src != null) tex = src.mainTexture;
+./TerrainLayer3D.cs:199:                var t2 = ContentFinder<Texture2D>.Get(td.texturePath, reportFailure: false);
+./TerrainLayer3D.cs:205:            if (tex is Texture2D tw && tw.wrapMode != TextureWrapMode.Repeat)
+./TerrainLayer3D.cs:207:            var m = new Material(src != null ? src.shader : (td.Shader ?? ShaderDatabase.TerrainHard));
+./TerrainLayer3D.cs:208:            m.mainTexture = tex;
+./Util3D.cs:73:        private static Texture2D whiteTex;
+./Util3D.cs:74:        public static Texture2D WhiteTex
+./Util3D.cs:79:                whiteTex = new Texture2D(2, 2);
+./Util3D.cs:93:                var m = new Material(ShaderDatabase.Cutout);
+./Util3D.cs:94:                m.mainTexture = WhiteTex;
+./Util3D.cs:107:            m = new Material(src) { enableInstancing = true };
+./Util3D.cs:119:            mat = new Material(ShaderDatabase.Cutout);
+./Util3D.cs:120:            mat.mainTexture = tex;
+./Util3D.cs:132:            m = new Material(src);
+./Util3D.cs:135:            m.mainTextureScale = src.mainTextureScale;
+./Util3D.cs:136:            m.mainTextureOffset = src.mainTextureOffset;
+./Water3D.cs:14:        public static Texture2D Radial(int n, float inner, float gamma)
+./Water3D.cs:16:            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+./Water3D.cs:34:        public static Texture2D Ripple(int n)
+./Water3D.cs:36:            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+./Water3D.cs:108:        private static Texture2D rippleTex;
+./Water3D.cs:266:                chunk.surfMat.Add(SurfMaterial((Cls)(kv.Key / 2), (kv.Key & 1) == 1));
+./Water3D.cs:303:        private static Material SurfMaterial(Cls cls, bool moving)
+./Water3D.cs:309:            m = new Material(shader) { name = "Fps3D_Water_" + cls + (moving ? "_mv" : ""), mainTexture = rippleTex };
+./Water3D.cs:328:        private static Material BedMaterial()
+./Water3D.cs:332:            try { tex = TerrainDefOf.Sand.DrawMatSingle?.mainTexture; } catch { }
+./Water3D.cs:333:            if (tex == null) { try { tex = TerrainDefOf.Gravel.DrawMatSingle?.mainTexture; } catch { } }
+./Water3D.cs:334:            if (tex is Texture2D t2 && t2.wrapMode != TextureWrapMode.Repeat) t2.wrapMode = TextureWrapMode.Repeat;
+./Water3D.cs:335:            bedMat = new Material(ShaderDatabase.Cutout) { name = "Fps3D_WaterBed" };
+./Water3D.cs:336:            bedMat.mainTexture = tex != null ? tex : Util3D.WhiteTex;
+./Water3D.cs:355:                    kv.Value.mainTextureOffset = moving
+./Water3D.cs:360:            var bm = BedMaterial();

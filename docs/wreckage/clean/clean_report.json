@@ -1,0 +1,252 @@
+{
+  "ruinedtank.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\ruinedtank.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\ruinedtank.png",
+    "size": [
+      320,
+      192
+    ],
+    "layers": [
+      907,
+      903,
+      894,
+      664
+    ],
+    "erased_px": 3368,
+    "bbox_after": [
+      8,
+      6,
+      312,
+      185
+    ],
+    "bbox_wh_after": [
+      305,
+      180
+    ],
+    "bbox_aspect_after": 1.694
+  },
+  "crashedshippart.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\exotic\\crashedshippart.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\crashedshippart.png",
+    "size": [
+      1024,
+      512
+    ],
+    "layers": [
+      2985,
+      2974,
+      2967,
+      2960,
+      2951,
+      2938,
+      2923,
+      2912,
+      2894,
+      2878,
+      2754
+    ],
+    "erased_px": 32136,
+    "bbox_after": [
+      14,
+      16,
+      1009,
+      487
+    ],
+    "bbox_wh_after": [
+      996,
+      472
+    ],
+    "bbox_aspect_after": 2.11
+  },
+  "ancientwarwalkershell.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\ancientwarwalkershell.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\ancientwarwalkershell.png",
+    "size": [
+      320,
+      192
+    ],
+    "layers": [
+      922,
+      918,
+      908,
+      607
+    ],
+    "erased_px": 3355,
+    "bbox_after": [
+      5,
+      9,
+      312,
+      187
+    ],
+    "bbox_wh_after": [
+      308,
+      179
+    ],
+    "bbox_aspect_after": 1.721
+  },
+  "largeengineblock.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\largeengineblock.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\largeengineblock.png",
+    "size": [
+      128,
+      64
+    ],
+    "layers": [
+      353,
+      343,
+      263
+    ],
+    "erased_px": 959,
+    "bbox_after": [
+      7,
+      3,
+      124,
+      60
+    ],
+    "bbox_wh_after": [
+      118,
+      58
+    ],
+    "bbox_aspect_after": 2.034
+  },
+  "giantwheela.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\giantwheel\\giantwheela.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\giantwheela.png",
+    "size": [
+      128,
+      128
+    ],
+    "layers": [
+      343,
+      339,
+      276
+    ],
+    "erased_px": 958,
+    "bbox_after": [
+      13,
+      5,
+      118,
+      120
+    ],
+    "bbox_wh_after": [
+      106,
+      116
+    ],
+    "bbox_aspect_after": 0.914
+  },
+  "concretebarrier.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\concretebarrier.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\concretebarrier.png",
+    "size": [
+      64,
+      64
+    ],
+    "layers": [
+      252,
+      244,
+      236
+    ],
+    "erased_px": 732,
+    "bbox_after": [
+      3,
+      3,
+      60,
+      60
+    ],
+    "bbox_wh_after": [
+      58,
+      58
+    ],
+    "bbox_aspect_after": 1.0
+  },
+  "rustedindustrialtruck_south.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_south.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\rustedindustrialtruck_south.png",
+    "size": [
+      512,
+      512
+    ],
+    "layers": [
+      1862,
+      1857,
+      1856,
+      1850,
+      1756,
+      1401,
+      1322,
+      1083
+    ],
+    "erased_px": 12987,
+    "bbox_after": [
+      54,
+      64,
+      472,
+      479
+    ],
+    "bbox_wh_after": [
+      419,
+      416
+    ],
+    "bbox_aspect_after": 1.007
+  },
+  "rustedindustrialtruck_east.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_east.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\rustedindustrialtruck_east.png",
+    "size": [
+      512,
+      512
+    ],
+    "layers": [
+      1873,
+      1868,
+      1866,
+      1860,
+      1760,
+      1280,
+      1112,
+      956
+    ],
+    "erased_px": 12575,
+    "bbox_after": [
+      52,
+      11,
+      478,
+      437
+    ],
+    "bbox_wh_after": [
+      427,
+      427
+    ],
+    "bbox_aspect_after": 1.0
+  },
+  "rustedindustrialtruck_north.png": {
+    "src": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_north.png",
+    "dst": "D:\\rim mod\\FirstPerson3D\\docs\\wreckage\\clean\\rustedindustrialtruck_north.png",
+    "size": [
+      512,
+      512
+    ],
+    "layers": [
+      1608,
+      1601,
+      1593,
+      1583,
+      1566,
+      1376,
+      1213,
+      1044
+    ],
+    "erased_px": 11584,
+    "bbox_after": [
+      42,
+      27,
+      447,
+      457
+    ],
+    "bbox_wh_after": [
+      406,
+      431
+    ],
+    "bbox_aspect_after": 0.942
+  }
+}

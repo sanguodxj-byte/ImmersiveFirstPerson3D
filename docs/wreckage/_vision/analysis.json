@@ -1,0 +1,331 @@
+{
+  "ruinedtank": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\ruinedtank.png",
+      "size": [
+        320,
+        192
+      ],
+      "bbox": [
+        5,
+        2,
+        316,
+        189
+      ],
+      "bbox_wh": [
+        312,
+        188
+      ],
+      "bbox_aspect": 1.66,
+      "bbox_norm": [
+        0.975,
+        0.979
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 0.0,
+        "left_px": 0.0,
+        "right_px": 0.0,
+        "top_hit_rate": 0.436,
+        "bottom_hit_rate": 0.401,
+        "left_hit_rate": 0.356,
+        "right_hit_rate": 0.479
+      },
+      "opaque_px": 50972,
+      "dark_px": 14069,
+      "dark_ratio_of_opaque": 0.276
+    }
+  ],
+  "crashedshippart": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\exotic\\crashedshippart.png",
+      "size": [
+        1024,
+        512
+      ],
+      "bbox": [
+        3,
+        5,
+        1020,
+        497
+      ],
+      "bbox_wh": [
+        1018,
+        493
+      ],
+      "bbox_aspect": 2.065,
+      "bbox_norm": [
+        0.994,
+        0.963
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 0.0,
+        "left_px": 0,
+        "right_px": 0,
+        "top_hit_rate": 0.0,
+        "bottom_hit_rate": 0.0,
+        "left_hit_rate": 0.0,
+        "right_hit_rate": 0.0
+      },
+      "opaque_px": 447759,
+      "dark_px": 36494,
+      "dark_ratio_of_opaque": 0.0815
+    }
+  ],
+  "ancientwarwalkershell": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\ancientwarwalkershell.png",
+      "size": [
+        320,
+        192
+      ],
+      "bbox": [
+        1,
+        4,
+        316,
+        190
+      ],
+      "bbox_wh": [
+        316,
+        187
+      ],
+      "bbox_aspect": 1.69,
+      "bbox_norm": [
+        0.988,
+        0.974
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 1.5,
+        "left_px": 0,
+        "right_px": 0,
+        "top_hit_rate": 0.386,
+        "bottom_hit_rate": 0.5,
+        "left_hit_rate": 0.241,
+        "right_hit_rate": 0.369
+      },
+      "opaque_px": 48345,
+      "dark_px": 10286,
+      "dark_ratio_of_opaque": 0.2128
+    }
+  ],
+  "largeengineblock": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\largeengineblock.png",
+      "size": [
+        128,
+        64
+      ],
+      "bbox": [
+        3,
+        0,
+        126,
+        63
+      ],
+      "bbox_wh": [
+        124,
+        64
+      ],
+      "bbox_aspect": 1.938,
+      "bbox_norm": [
+        0.969,
+        1.0
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 2.0,
+        "left_px": 2.0,
+        "right_px": 0.0,
+        "top_hit_rate": 0.274,
+        "bottom_hit_rate": 0.863,
+        "left_hit_rate": 0.625,
+        "right_hit_rate": 0.406
+      },
+      "opaque_px": 6993,
+      "dark_px": 1687,
+      "dark_ratio_of_opaque": 0.2412
+    }
+  ],
+  "giantwheela": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\giantwheel\\giantwheela.png",
+      "size": [
+        128,
+        128
+      ],
+      "bbox": [
+        10,
+        3,
+        120,
+        123
+      ],
+      "bbox_wh": [
+        111,
+        121
+      ],
+      "bbox_aspect": 0.917,
+      "bbox_norm": [
+        0.867,
+        0.945
+      ],
+      "border": {
+        "top_px": 2,
+        "bottom_px": 2,
+        "left_px": 0,
+        "right_px": 0,
+        "top_hit_rate": 0.514,
+        "bottom_hit_rate": 0.505,
+        "left_hit_rate": 0.43,
+        "right_hit_rate": 0.479
+      },
+      "opaque_px": 11184,
+      "dark_px": 784,
+      "dark_ratio_of_opaque": 0.0701
+    }
+  ],
+  "concretebarrier": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Core\\textures\\things\\building\\ruins\\concretebarrier.png",
+      "size": [
+        64,
+        64
+      ],
+      "bbox": [
+        0,
+        0,
+        63,
+        63
+      ],
+      "bbox_wh": [
+        64,
+        64
+      ],
+      "bbox_aspect": 1.0,
+      "bbox_norm": [
+        1.0,
+        1.0
+      ],
+      "border": {
+        "top_px": 3.0,
+        "bottom_px": 3.0,
+        "left_px": 3.0,
+        "right_px": 3.0,
+        "top_hit_rate": 1.0,
+        "bottom_hit_rate": 1.0,
+        "left_hit_rate": 1.0,
+        "right_hit_rate": 1.0
+      },
+      "opaque_px": 4096,
+      "dark_px": 732,
+      "dark_ratio_of_opaque": 0.1787
+    }
+  ],
+  "rustedindustrialtruck": [
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_south.png",
+      "size": [
+        512,
+        512
+      ],
+      "bbox": [
+        46,
+        59,
+        480,
+        487
+      ],
+      "bbox_wh": [
+        435,
+        429
+      ],
+      "bbox_aspect": 1.014,
+      "bbox_norm": [
+        0.85,
+        0.838
+      ],
+      "border": {
+        "top_px": 0,
+        "bottom_px": 0,
+        "left_px": 0,
+        "right_px": 0,
+        "top_hit_rate": 0.232,
+        "bottom_hit_rate": 0.276,
+        "left_hit_rate": 0.0,
+        "right_hit_rate": 0.0
+      },
+      "opaque_px": 150144,
+      "dark_px": 46677,
+      "dark_ratio_of_opaque": 0.3109
+    },
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_east.png",
+      "size": [
+        512,
+        512
+      ],
+      "bbox": [
+        44,
+        3,
+        483,
+        448
+      ],
+      "bbox_wh": [
+        440,
+        446
+      ],
+      "bbox_aspect": 0.987,
+      "bbox_norm": [
+        0.859,
+        0.871
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 0.0,
+        "left_px": 0.0,
+        "right_px": 0.0,
+        "top_hit_rate": 0.0,
+        "bottom_hit_rate": 0.0,
+        "left_hit_rate": 0.249,
+        "right_hit_rate": 0.244
+      },
+      "opaque_px": 136822,
+      "dark_px": 30740,
+      "dark_ratio_of_opaque": 0.2247
+    },
+    {
+      "path": "D:\\rim mod\\RimWorld_Vanilla_Textures_1.6\\Odyssey\\textures\\things\\building\\ancient\\shipping\\rustedindustrialtruck_north.png",
+      "size": [
+        512,
+        512
+      ],
+      "bbox": [
+        34,
+        22,
+        455,
+        465
+      ],
+      "bbox_wh": [
+        422,
+        444
+      ],
+      "bbox_aspect": 0.95,
+      "bbox_norm": [
+        0.824,
+        0.867
+      ],
+      "border": {
+        "top_px": 0.0,
+        "bottom_px": 0.0,
+        "left_px": 0.0,
+        "right_px": 0.0,
+        "top_hit_rate": 0.175,
+        "bottom_hit_rate": 0.336,
+        "left_hit_rate": 0.0,
+        "right_hit_rate": 0.0
+      },
+      "opaque_px": 141713,
+      "dark_px": 30316,
+      "dark_ratio_of_opaque": 0.2139
+    }
+  ]
+}
