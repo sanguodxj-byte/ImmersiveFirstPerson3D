@@ -355,7 +355,8 @@ if(PRETTY){
   const rim = new THREE.DirectionalLight(0x9fc4ff, 0.5); rim.position.set(-5,3.5,-6); scene.add(rim);
 }
 if(q.get('gallery')==='1'){
-  const order = ['armchair','shelf','dresser','endtable','stool','bed'];   // 相机在 -Z，从左到右就按这个念
+  // 相机在 -Z 看向 +Z，x 小的落在画面右边 -> 数组要从右往左念（bed 在最左）
+  const order = ['armchair','shelf','dresser','endtable','stool','bed'];
   let x = 0; const gap = 0.8;
   for(const it of order){
     const geo = build(it,'south'); geo.computeBoundingBox();
