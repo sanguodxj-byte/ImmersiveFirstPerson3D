@@ -194,7 +194,7 @@ SPEC = {
     # 腿带是线稿 -> 只取一条腿做立面，其余整带声明丢弃。
     "diningchair": {
         "south": {"path": f"{F}/diningchair_south.png",
-                  "back": (17, 3, 45, 8), "top": (16, 26, 47, 44),
+                  "back": (19, 4, 44, 6), "top": (16, 26, 47, 44),
                   "discard": [(10, 44, 54, 62)], "wood": (22, 30, 44, 40)},
         "north": {"path": f"{F}/diningchair_north.png",
                   "top": (14, 26, 50, 44),

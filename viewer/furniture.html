@@ -214,7 +214,10 @@ function cyl(g, uv, cx,cz,y0,h,dia,seg=12){
     const UV=(a)=>{const p=[cx+Math.cos(a)*r, cz+Math.sin(a)*r];
         const u=Math.min(1,Math.max(0,(p[0]+mx/2)/mx)), v=Math.min(1,Math.max(0,(p[1]+mz/2)/mz));
         return [cp[0]+(cp[2]-cp[0])*u, cp[1]+(cp[3]-cp[1])*v];};
-      quad(g, [cx,y0+h,cz],[cx,y0+h,cz],P(a1),P(a0), UV(a0),UV(a0),UV(a1),UV(a0));
+      // 圆心那两点的 UV 必须是取样区的**中心**（与 C# Model3D 的 center 顶点同口径）。
+      // 之前写成 UV(a0)：每个三角的圆心被钉在同一条 rim 上 -> 圆面被拉成 12 片扇形黑白相间。
+      const UC=[(cp[0]+cp[2])/2,(cp[1]+cp[3])/2];
+      quad(g, [cx,y0+h,cz],[cx,y0+h,cz],P(a1),P(a0), UC,UC,UV(a1),UV(a0));
     }
   }
 }
@@ -326,7 +329,7 @@ function build(item, rot){
     box(g, ut, -w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
     box(g, u3, 0,0.34,bs*0.02, 0.09,0.13,0.09);
     box(g, u2, w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
-    const F=Region(key,sv,'front'), E=Region(key,sv,'mid');
+    const F=Region(key,sv,'mid'), E=Region(key,sv,'front');   // 大面=布身中段；裙摆花边给薄边
     box(g, {top:Region(key,sv,'top'), s4:[F,F,E,E], xz:[w*0.82,M.cloth]}, 0,0.47,bs*0.02, w*0.82,M.drapeCloth,M.cloth);
   } else if(it.arch==='stele'){
     // 与 C# Arch.Stele 同口径：碑身三段叠块，每段的大面/薄边/顶面各取一条横带
@@ -512,24 +515,48 @@ if(PRETTY){
   const rim = new THREE.DirectionalLight(0x9fc4ff, 0.5); rim.position.set(-5,3.5,-6); scene.add(rim);
 }
 if(q.get('gallery')==='1'){
-  // 相机在 -Z 看向 +Z，x 小的落在画面右边 -> 数组要从右往左念（bed 在最左）
-  const order = ['armchair','shelf','dresser','endtable','stool','bed'];
-  let x = 0; const gap = 0.8;
-  for(const it of order){
-    const geo = build(it,'south'); geo.computeBoundingBox();
-    const w = geo.boundingBox.max.x - geo.boundingBox.min.x;
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x+w/2, 0, 0); m.castShadow = true; m.receiveShadow = true;
-    scene.add(m);
-    const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo,45),
-                                     new THREE.LineBasicMaterial({color:0x14161c}));
-    e.position.copy(m.position); scene.add(e);
-    x += w + gap;
+  // 全量展厅：同类排一排，行内按各自包围盒推进，行间距取该行最"深"的那件。
+  // 相机在 -Z 看向 +Z，x 小的落在画面右边 -> 数组顺序就是从右往左念。
+  const EYE = 1.62;                       // Metrics3D.HumanEyeHeight：第一人称相机基准
+  const only = q.get('row');
+  const SETS = [
+    ['bed','doublebed','royalbed','hospitalbed','bedroll','bedrolldouble'],
+    ['armchair','couch','diningchair','throne','grandthrone','stool'],
+    ['dresser','endtable','shelf','shelfsmall','bookcase','bookcasesmall'],
+    ['table1x2','table2x2','table2x4','table3x3','column','plantpot'],
+    ['standinglamp','floodlight','penmarker','drape','stelelarge','stelegrand'],
+  ];
+  const rows = only === null ? SETS : [SETS[+only] || SETS[0]];
+  const gap = 0.8;
+  let z = 0, widest = 0;
+  for(const row of rows){
+    let x = 0, deep = 0;
+    for(const it of row){
+      const geo = build(it,'south'); geo.computeBoundingBox();
+      const w = geo.boundingBox.max.x - geo.boundingBox.min.x;
+      const dp = geo.boundingBox.max.z - geo.boundingBox.min.z;
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x+w/2, 0, z); m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+      const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo,45),
+                                       new THREE.LineBasicMaterial({color:0x14161c}));
+      e.position.copy(m.position); scene.add(e);
+      x += w + gap; deep = Math.max(deep, dp);
+    }
+    widest = Math.max(widest, x - gap);
+    z += deep + gap * 2.2;
   }
-  const total = x - gap;
-  controls.target.set(total/2, 0.5, 0);
-  camera.position.set(total/2, 2.25, -Math.max(9.6, total*1.05));   // 45°竖场 + 1.78 横场：留够边距不裁件
-  camera.lookAt(total/2, 0.5, 0);
+  const total = widest, depth = z - gap * 2.2;
+  if(only === null){
+    controls.target.set(total/2, 0.5, depth/2);
+    camera.position.set(total/2, Math.max(6, depth*0.75), depth/2 - Math.max(total, depth)*1.15);
+    camera.lookAt(total/2, 0.5, depth/2);
+  } else {
+    // 人眼高度平视：站在这排家具前面 3.4m 看过去
+    controls.target.set(total/2, 0.85, 0);
+    camera.position.set(total/2, EYE, -3.4);
+    camera.lookAt(total/2, 0.9, 0);
+  }
 } else {
   rebuild();
   if(PRETTY) root.traverse(o=>{ o.castShadow = true; o.receiveShadow = true; });

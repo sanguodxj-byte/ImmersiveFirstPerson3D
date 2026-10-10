@@ -1045,7 +1045,7 @@ namespace RimFirstPerson3D
                         uv = tj
                     });
                     int ci = uvs.Count;
-                    uvs.Add(Bands(key, sv, "front", "mid", "top",          // 4 = 布面
+                    uvs.Add(Bands(key, sv, "mid", "front", "top",           // 4 = 布面：大面取布身中段
                                   new Vector2(w * 0.82f, ClothThickness)));
                     m.parts.Add(new Part
                     {
