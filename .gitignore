@@ -4,6 +4,8 @@ scripts/__pycache__/
 
 # 家具审核台的 Chrome 临时 profile（若有人改回共享目录）
 docs/furniture/audit/.chrome-profile/
+# 出图沙盒（D 盘，替代 C 盘 %TEMP% 的 scoped_dir）：脚本自己按启动建删，允许崩溃残留
+temp_shots/
 
 # JiuwenSwarm runtime file operation logs
 .agent_history/

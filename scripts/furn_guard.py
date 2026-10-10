@@ -21,7 +21,9 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _tmpsweep import scratch, env_for, profile, drop, sweep  # noqa: E402
 
 MOD = r"D:\rim mod\FirstPerson3D"
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -38,15 +40,18 @@ GROUND = 0.006        # 离地多近算着地
 
 def fetch():
     """让检查页把全量部件清单写进 <pre id=partjson>，用 --dump-dom 取回来。"""
-    prof = tempfile.mkdtemp(prefix="furnguard-")
-    r = subprocess.run([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
-                        "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
-                        "--window-size=420,320", "--virtual-time-budget=40000",
-                        "--timeout=120000", "--user-data-dir=" + prof,
-                        "--dump-dom", URL],
-                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=200)
-    import shutil
-    shutil.rmtree(prof, ignore_errors=True)
+    rd = scratch("furnguard")
+    try:
+        r = subprocess.run([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
+                            "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
+                            "--window-size=420,320", "--virtual-time-budget=40000",
+                            "--timeout=120000", "--user-data-dir=" + profile(rd),
+                            "--dump-dom", URL],
+                           env=env_for(rd),
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=200)
+    finally:
+        drop(rd)
+        sweep()   # 兜底：收掉别处被杀时留下的沙盒/C 盘历史遗留
     html = r.stdout.decode("utf-8", "replace")
     i = html.find('<pre id="partjson">')
     if i < 0:

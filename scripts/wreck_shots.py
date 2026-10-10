@@ -7,6 +7,8 @@
 import os, subprocess, urllib.parse
 from PIL import Image, ImageDraw
 
+from _tmpsweep import scratch, env_for, profile, drop, sweep, sweep_mine  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "viewer", "shots")
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -19,13 +21,24 @@ ITEMS = ["ruinedtank", "crashedshippart", "ancientwarwalkershell",
 VIEWS = ["45°", "俯视", "主视·南", "侧视·东", "低角度"]
 
 os.makedirs(OUT, exist_ok=True)
+sweep()                       # 启动先清上一轮残留
 
 def shot(url, path):
+    # 每次启动一个 D 盘沙盒（profile + Chrome 自带的 scoped_dir 都在里面），用完整目录删。
+    # 旧注释以为"固定 profile 落在项目内"就能挡住 scoped_dir —— 实测挡不住：
+    # 指定 --user-data-dir 后 %TEMP% 里照样每次多一个 23~26MB 的 scoped_dir。
+    rd = scratch("wreckshot")
     args = [CHROME, "--headless=new", "--hide-scrollbars",
             "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
             f"--window-size={W},{H}", "--virtual-time-budget=6000",
+            "--user-data-dir=" + profile(rd),
             f"--screenshot={path}", url]
-    r = subprocess.run(args, capture_output=True)
+    try:
+        r = subprocess.run(args, env=env_for(rd), capture_output=True)
+    finally:
+        if not drop(rd):
+            print("  [leak] 沙盒没删干净: %s" % rd)
+        sweep()
     return os.path.exists(path) and os.path.getsize(path) > 2000
 
 def make_sheet(item, files):
@@ -55,3 +68,5 @@ for item in ITEMS:
     print("sheet", make_sheet(item, files))
 
 print("DONE fail=", fail)
+sweep_mine()                  # 收尾：先收本进程 drop() 没删掉的
+sweep()                       # 再收别处被杀时留下的老沙盒

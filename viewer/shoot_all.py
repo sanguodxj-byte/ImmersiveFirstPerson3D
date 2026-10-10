@@ -15,6 +15,9 @@ import urllib.parse
 
 from PIL import Image, ImageDraw
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+from _tmpsweep import scratch, env_for, profile, drop, sweep, sweep_mine  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 BASE = "http://127.0.0.1:8899/index.html"
@@ -51,12 +54,18 @@ def shoot(name, view):
     url = "%s?v=%s&bare=1&view=%s&form=%s" % (
         BASE, "%s-%s" % (int(time.time()), uuid.uuid4().hex[:8]),
         urllib.parse.quote(view), name)
+    rd = scratch("shootall")          # D 盘沙盒：profile 与 Chrome 自带的 scoped_dir 都在里面
     subprocess.run(
         [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
          "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
          "--window-size=%d,%d" % (W, H),
-         "--virtual-time-budget=5000", "--screenshot=" + path, url],
+         "--virtual-time-budget=5000",
+         "--user-data-dir=" + profile(rd),
+         "--screenshot=" + path, url],
+        env=env_for(rd),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not drop(rd):
+        print("  [leak] 沙盒没删干净: %s" % rd)
     return path if os.path.exists(path) and os.path.getsize(path) > 8000 else None
 
 
@@ -85,12 +94,14 @@ def contact_sheet(names, views, col_w=200):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    sweep()                  # 启动先清上一轮残留
     only = sys.argv[1:] or VIEWS
     views = [v for v in VIEWS if v in only] or only
     names = list(VARIANTS.keys())
 
     ok, bad = 0, []
     for nm in names:
+        sweep()                # 每个变体兜一次底（只动静置够久的，不碰并发在用的）
         for v in views:
             p = shoot(nm, v)
             if p:
@@ -107,6 +118,8 @@ def main():
         out = os.path.join(HERE, "_sheet_%s.png" % v.replace("·", "_"))
         sheet.save(out)
         print("对照图:", out)
+    sweep_mine()               # 收尾：先收本进程 drop() 没删掉的
+    sweep()                  # 再收别处被杀时留下的老沙盒
 
 
 if __name__ == "__main__":

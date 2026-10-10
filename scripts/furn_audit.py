@@ -5,18 +5,21 @@
 行 = 朝向 south/north/east/west；列 = 机位 45°/俯视/主视·南/侧视·东/低角度/贴脸。
 产物 docs/furniture/audit/<item>.png，供逐格目视判读（禁止用数值统计代替看图）。
 """
+import glob
+import hashlib
 import io
 import os
 import re
-import glob
-import shutil
 import subprocess
 import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _tmpsweep import (TMPROOT, scratch, env_for, profile, drop,  # noqa: E402
+                       sweep, sweep_mine, start_sweeper)
 
 MOD = r"D:\rim mod\FirstPerson3D"
 RAW = os.path.join(MOD, "docs", "furniture", "audit", "raw")
@@ -74,6 +77,52 @@ def cell(item, rot, view, empty=False):
     return os.path.join(RAW, "%s__%s__%s%s.png" % (item, rot, v, "_empty" if empty else ""))
 
 
+# 决定"这格能不能不重渲"的输入：取样表 / 检查页 / C# 几何 / 图集 / 本脚本。
+INPUTS = [os.path.join(MOD, "viewer", "furn_uv.json"),
+          os.path.join(MOD, "viewer", "furniture.html"),
+          os.path.join(MOD, "Source", "RimFirstPerson3D", "Furniture3D.cs"),
+          os.path.join(MOD, "1.6", "Textures", "FPS3D", "FurnitureAtlas.png"),
+          os.path.join(MOD, "scripts", "furn_audit.py")]
+FPH = os.path.join(RAW, ".inputs")
+
+
+def inputs_fp():
+    h = hashlib.sha1()
+    for p in INPUTS:
+        h.update(os.path.basename(p).encode())
+        try:
+            with open(p, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b"missing")
+    return h.hexdigest()
+
+
+def invalidate_cache():
+    """输入变了就作废全部缓存格。
+
+    必须做：模型格命中缓存直接复用，而空场景参考**每轮重渲**（见 shoot()）。
+    两边不同源，差分遮罩就是"旧模型 vs 新场景"，能凭空造出剪影断裂，
+    也能把真缺陷洗白。2026-10-11 那 4 格 floodlight/贴脸 假断裂正是这么来的
+    （模型格是 04:17 的旧图，参考是 05:53 新渲的）。"""
+    cur = inputs_fp()
+    old = io.open(FPH, encoding="utf-8").read().strip() if os.path.exists(FPH) else ""
+    if old == cur:
+        return "reuse"
+    n = 0
+    for p in glob.glob(os.path.join(RAW, "*.png")):
+        try:
+            os.remove(p)
+            n += 1
+        except OSError:
+            pass
+    os.makedirs(RAW, exist_ok=True)
+    io.open(FPH, "w", encoding="utf-8").write(cur)
+    print("  [cache] 输入变了（%s -> %s），作废 %d 格，全量重渲" % (
+          (old[:8] or "无"), cur[:8], n))
+    return "reset"
+
+
 def shoot(job):
     item, rot, view = job[:3]
     empty = len(job) > 3                           # 第 4 个元素 = 要渲空场景（?empty=1）
@@ -84,7 +133,11 @@ def shoot(job):
         return p, ("整幅空白（页面异常或模型没画出来）" if is_blank(p) else None)
     # profile 必须**每格一个**：多个 Chrome 共用一个 user-data-dir 会互相抢锁，
     # 结果是静默不出图（2026-10-10 实测 24 格里 21 格空手而归）。
-    prof = tempfile.mkdtemp(prefix="furnshot-")
+    # 沙盒落在 D 盘（temp_shots/）而不是 C 盘 %TEMP%：每次启动 Chrome 都往 %TEMP%
+    # 塞一个 23~26MB 的 scoped_dir，指定 --user-data-dir 也拦不住，720 格 = 16.5GB。
+    # 沙盒按启动独占，用完 drop() 整目录删，不靠"静置 N 秒后扫"跟写入抢时间。
+    rd = scratch()
+    prof = profile(rd)
     cmd = [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
            "--use-gl=swiftshader", "--enable-unsafe-swiftshader",
            "--window-size=%d,%d" % CELL, "--virtual-time-budget=25000",
@@ -93,10 +146,12 @@ def shoot(job):
            "--screenshot=" + p,
            url(item, rot, view) + ("&empty=1" if empty else "")]
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        subprocess.run(cmd, env=env_for(rd),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=SHOT_TIMEOUT_MS / 1000.0 + 40)
     finally:
-        shutil.rmtree(prof, ignore_errors=True)
+        if not drop(rd):                 # crashpad 攥着 .pma 时 drop 内部会重试
+            print("  [leak] 沙盒没删干净: %s" % rd)
     if not os.path.exists(p):
         return p, "没出图"
     return p, ("整幅空白（页面异常或模型没画出来）" if is_blank(p) else None)
@@ -185,13 +240,6 @@ def _save(im, path):
     return path
 
 
-def clean_scoped_tmp():
-    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
-    for pat in ("scoped_dir*", "furnshot-*", "shapeshot-*", "HeadlessChrome*"):
-        for d in glob.glob(os.path.join(tmp, pat)):
-            shutil.rmtree(d, ignore_errors=True)
-
-
 def overview():
     """总览：每件 x (45° / 低角度 / 俯视) 裁到模型近景，拼一张给人看整体观感。
     拼版表看的是逐格判读，这张看的是"摆在一起像不像一套家具"。"""
@@ -232,7 +280,8 @@ def js_check():
     skip = []
     for n, (attr, body) in enumerate(zip(kinds, blocks)):
         ext = "mjs" if "module" in attr else "js"
-        tmp = os.path.join(tempfile.gettempdir(), "furn_view_%d.%s" % (n, ext))
+        tmp = os.path.join(TMPROOT, "furn_view_%d.%s" % (n, ext))
+        os.makedirs(TMPROOT, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(body)
         try:
@@ -249,9 +298,49 @@ def js_check():
     return out
 
 
+def _cache_fixtures():
+    """缓存失效判据双向：输入没变必须复用（否则每轮全量重渲，闸门跑不动），
+    输入变了必须作废（否则拿旧模型格配新参考图，差分失真）。
+    夹具只动 TMPROOT 里的假输入，不碰仓库真文件。"""
+    global RAW, FPH, INPUTS
+    keep = (RAW, FPH, INPUTS)
+    out = []
+    rd = scratch("cachefx")
+    try:
+        RAW = os.path.join(rd, "raw")
+        FPH = os.path.join(RAW, ".inputs")
+        fake = os.path.join(rd, "input.txt")
+        INPUTS = [fake]
+        os.makedirs(RAW, exist_ok=True)
+        io.open(fake, "w", encoding="utf-8").write("v1")
+        io.open(os.path.join(RAW, "bed__south__45.png"), "w").write("x")
+        if invalidate_cache() != "reset":
+            out.append("cache-first: 首轮没有指纹，必须判 reset 并全量重渲")
+        if os.path.exists(os.path.join(RAW, "bed__south__45.png")):
+            out.append("cache-first: 判了 reset 却没删旧格，旧图还会进差分")
+        if invalidate_cache() != "reuse":
+            out.append("cache-same: 输入没变必须 reuse（否则白渲 720 格）")
+        io.open(fake, "w", encoding="utf-8").write("v2 改了取样表")
+        io.open(os.path.join(RAW, "bed__south__45.png"), "w").write("x")
+        if invalidate_cache() != "reset":
+            out.append("cache-drift: 输入变了却复用旧格（这轮假断裂就是这么来的）")
+        if os.path.exists(os.path.join(RAW, "bed__south__45.png")):
+            out.append("cache-drift: reset 了但旧格还在")
+        # 缺文件（别人正在改/图集没生成）不许静默 reuse
+        os.remove(fake)
+        io.open(FPH, "w", encoding="utf-8").write("whatever")
+        if invalidate_cache() != "reset":
+            out.append("cache-missing: 输入文件不见了却被当成没变")
+    finally:
+        RAW, FPH, INPUTS = keep
+        drop(rd)
+    return out
+
+
 def selftest():
-    """剪影判据必须双向：整块的要放行、真断的要抓住、只有 HUD 差异的要判 0 段。
-    不跑这一轮，"480 格无断裂"可能只是判据失灵。"""
+    """判据必须双向：整块的要放行、真断的要抓住、只有 HUD 差异的要判 0 段、
+    缓存该废的必须废、不该废的必须复用。
+    不跑这一轮，"720 格无断裂"可能只是判据失灵。返回缺陷消息列表。"""
     H, W = 500, 620
     solid = np.zeros((H, W), int)
     solid[200:400, 200:420] = 30
@@ -265,12 +354,13 @@ def selftest():
     got = [("solid", 1, len(bands(mk(solid)))),
            ("split", 2, len(bands(mk(cut)))),
            ("sentinel-only", 0, len(bands(mk(sent))))]
-    bad = [(n, w, g) for n, w, g in got if w != g]
+    bad = ["%s: 期望 %d 段，实得 %d 段" % (n, w, g) for n, w, g in got if w != g]
     # 哨兵检测本身也要双向：纯洋红必须数到，正常底色必须数不到
     mag_ok = int((np.abs(sent[..., None].repeat(3, 2)[y0:y1, x0:x1]
                          - np.array([255, 0, 255])).sum(axis=2) <= 24).sum())
     if mag_ok:
-        bad.append(("sentinel-detect", 1, mag_ok))     # 纯灰不算洋红：这里应为 0
+        bad.append("sentinel-detect: 纯灰底不应数到洋红哨兵，实得 %d 像素" % mag_ok)
+    bad += _cache_fixtures()
     return bad
 
 
@@ -282,12 +372,15 @@ def main():
         print("检查页 JS 未过 —— 不出图，先修页面")
         return 2
     bad_fx = selftest()
-    for n, w, g in bad_fx:
-        print("  [fixture] %s: 期望 %d 段，实得 %d 段" % (n, w, g))
+    for m in bad_fx:
+        print("  [fixture] " + m)
     if bad_fx:
         print("剪影夹具未通过 —— 判据本身不可信，拒绝给存量背书")
         return 2
-    clean_scoped_tmp()
+    sweep()                       # 进场收掉上一轮被杀时留下的沙盒/C 盘遗留
+    os.makedirs(RAW, exist_ok=True)
+    invalidate_cache()            # 输入变了就不许复用旧格
+    _stop = start_sweeper(interval=20, age_s=180)   # 兜底：只收没人认领的老沙盒
     os.makedirs(RAW, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
     jobs = [(i, r, v) for i in ITEMS for r in ROTS for v in VIEWS]
@@ -335,6 +428,9 @@ def main():
     print("结论:", "PASS %d 格全出图、剪影无断裂" % len(jobs) if ok else
           "FAIL 没出图 %d 格 / 剪影断裂 %d 格 / 缺取样区 %d 格"
           % (len(bad), len(split), len(miss)))
+    _stop.set()                 # 停掉兜底清扫线程
+    sweep_mine()                # 先收本进程 drop() 没删掉的（crashpad 攥句柄，实测 2%）
+    sweep()                     # 再收别处被杀时留下的老沙盒
     return 0 if ok else 1
 
 
