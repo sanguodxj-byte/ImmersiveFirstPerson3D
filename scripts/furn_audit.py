@@ -36,6 +36,18 @@ def url(item, rot, view):
     return "%s?item=%s&rot=%s&view=%s" % (PORT, item, rot, quote(view))
 
 
+def _crop_model(im):
+    """裁到模型本体：HUD 在顶部 80px，背景是固定深色。"""
+    a = np.asarray(im).astype(int)
+    m = (np.abs(a - np.array([28, 30, 38])).sum(axis=2) > 40)
+    m[:112, :] = False      # HUD 最高约 110px，裁掉免得混进近景
+    ys, xs = np.where(m)
+    if len(ys) == 0:
+        return im
+    return im.crop((max(0, xs.min() - 6), max(0, ys.min() - 6),
+                    min(im.width, xs.max() + 6), min(im.height, ys.max() + 6)))
+
+
 def is_blank(p):
     """页面抛异常时 HUD 会写 ERR，画面其余部分是纯背景 —— 判"没渲染出东西"。
     只看下半幅（模型必然占到的区域），阈值给足余量，不误伤大件/小件。"""
@@ -103,6 +115,35 @@ def clean_scoped_tmp():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def overview():
+    """总览：每件 x (45° / 低角度 / 俯视) 裁到模型近景，拼一张给人看整体观感。
+    拼版表看的是逐格判读，这张看的是"摆在一起像不像一套家具"。"""
+    views = ["45°", "低角度", "俯视"]
+    CW, CH, LBL = 400, 300, 22
+    sheet = Image.new("RGB", (CW * len(views) + 8 * (len(views) + 1),
+                              (CH + LBL) * len(ITEMS) + 8), (24, 26, 33))
+    d = ImageDraw.Draw(sheet)
+    try:
+        f = ImageFont.truetype(r"C:\Windows\Fonts\cons.ttf", 15)
+    except Exception:
+        f = ImageFont.load_default()
+    for r, it in enumerate(ITEMS):
+        for c, v in enumerate(views):
+            p = os.path.join(RAW, "%s__%s__%s.png" % (it, "south", v.replace("·", "_").replace("°", "")))
+            if not os.path.exists(p):
+                continue
+            x = 8 + c * (CW + 8)
+            y = 8 + r * (CH + LBL) + LBL
+            d.text((x, y - 17), "%s 南向 %s" % (it, v), fill=(200, 220, 240), font=f)
+            im = _crop_model(Image.open(p).convert("RGB"))
+            sc = min(CW / im.width, CH / im.height)
+            im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.LANCZOS)
+            sheet.paste(im, (x + (CW - im.width) // 2, y + (CH - im.height) // 2))
+    path = os.path.join(OUT, "overview.png")
+    sheet.save(path)
+    return path
+
+
 def main():
     clean_scoped_tmp()
     os.makedirs(RAW, exist_ok=True)
@@ -118,6 +159,7 @@ def main():
         print("  [blank] %s: %s" % (name, err))
     for i in ITEMS:
         print("sheet:", sheet(i))
+    print("overview:", overview())
     print("结论:", "PASS %d 格全出图" % len(jobs) if not bad else "FAIL %d 格没渲染出东西" % len(bad))
     return 0 if not bad else 1
 
