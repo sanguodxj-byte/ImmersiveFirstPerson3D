@@ -103,6 +103,33 @@ SPEC = {
     # ---- 线稿型（白面 + 黑框）：材质 = 白面本身，黑框全交给描边壳 ----
     # 白面是圆角的，所以按行分带、每带的 x 区间取该带各行最长不透明段的交集
     # （带内天然无洞）。分带坐标由 scripts/_furn_fit.py 试算给出。
+    # ---- 桌（台面边 edge / 台面 top / 画出来的腿条 front；腿的圆盖用 wood）----
+    "table1x2": {
+        "north": {"path": f"{F}/table1x2_north.png",
+                  "edge": (65, 64, 127, 72), "top": (65, 72, 127, 192),
+                  "front": (71, 192, 80, 207), "wood": (80, 90, 120, 170)},
+        "east": {"path": f"{F}/table1x2_east.png",
+                 "edge": (64, 64, 192, 72), "top": (65, 72, 191, 128),
+                 "front": (74, 128, 83, 143), "wood": (90, 80, 170, 120)},
+    },
+    "table2x2": {
+        "north": {"path": f"{F}/table2x2_north.png",
+                  "edge": (64, 64, 191, 72), "top": (65, 72, 191, 192),
+                  "front": (74, 192, 83, 207), "wood": (90, 100, 170, 180)},
+    },
+    "table2x4": {
+        "north": {"path": f"{F}/table2x4_north.png",
+                  "edge": (65, 64, 191, 72), "top": (65, 72, 191, 320),
+                  "front": (74, 320, 83, 335), "wood": (90, 120, 170, 300)},
+        "east": {"path": f"{F}/table2x4_east.png",
+                 "edge": (64, 64, 319, 72), "top": (65, 72, 319, 192),
+                 "front": (74, 192, 83, 207), "wood": (120, 90, 260, 180)},
+    },
+    "table3x3": {
+        "north": {"path": f"{F}/table3x3_north.png",
+                  "edge": (65, 64, 255, 72), "top": (65, 72, 255, 256),
+                  "front": (74, 256, 83, 271), "wood": (100, 110, 220, 240)},
+    },
     "armchair": {
         "south": {"path": f"{F}/armchair_south.png",
                   "top": (96, 81, 161, 110), "back": (91, 110, 166, 136),
@@ -212,7 +239,11 @@ def pack(items):
                           (x0, y0, x1, y1)))
     cells.sort(key=lambda c: -(c[2][2] - c[2][0]) * (c[2][3] - c[2][1]))
 
-    W = 256
+    # 宽度按最宽的一块自适应（2 的幂）：2x4 桌的台面带就有 254px 宽，写死 256 会溢出
+    widest = max((c[2][2] - c[2][0]) for c in cells) + 2 * PAD
+    W = 64
+    while W < widest:
+        W *= 2
     col, row_h, y = 0, 0, 0
     placed = []
     for key, path, (x0, y0, x1, y1) in cells:
@@ -225,8 +256,9 @@ def pack(items):
         placed.append((key, path, (x0, y0, x1, y1), (col, y, aw, ah)))
         row_h = max(row_h, ah)
         col += aw
-    H = y + row_h
-    H = ((H + 63) // 64) * 64
+    H = 64
+    while H < y + row_h:
+        H *= 2
     atlas = np.zeros((H, W, 4), np.uint8)
     stats = []
     for key, path, (x0, y0, x1, y1), (ax, ay, aw, ah) in placed:

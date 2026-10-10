@@ -98,15 +98,24 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 
 ## 4. 本批已落地 / 待办
 
-已落地（校验 0 缺陷，编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`
-（含 `wood` 干净木面区 + 圆柱/薄边配区）、`armchair`（线稿型分带首例）。
+已落地（`furn_uv_check` 0 缺陷、`furn_color_check` 材质像素零改写、240 格审核无剪影断裂、
+编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`（含 `wood` 干净木面区 +
+圆柱/薄边配区）、`armchair`（线稿型分带首例）、`table1x2` `table2x2` `table2x4` `table3x3`
+（台面 top / 台面边 edge / 画出来的腿条 front / 腿的圆盖 wood）。
+
+原型归类改成**配方表**：`Recipes[]` 一行 = defName 关键字 → (几何配方, 取样件名)。
+一个配方可服务多件（四张桌共用 `Arch.Table`），所以件名与配方必须分开；取样件在图集里
+没有区 = 不接管（走原立板回退），杜绝"整族接管却借用别件的像素"（bookcase 曾借 shelf 的区）。
+`AllRegions` 由 `scripts/furn_regions.py` 从 SPEC 机械生成，不手抄。
 
 待办，按优先级：
-1. **couch**：与 armchair 同类的圆角大白块，横带只能覆盖 ~96%，纵带（`_furn_fit.py pack`
-   的 V 模式）可到 99.4%，但扶手在两侧形成独立小块，要与 armchair 的扶手配区一起定。
-2. **diningchair**：圈背 + 椭圆坐垫 + 四条腿，白面被黑框切成互不相邻的小块，
-   横带/纵带都只能覆盖 ~97%，需要按连通块切区（下一件再补这块工具）。
-3. table1x2/2x2/2x4/3x3、bookcase、royalbed、hospitalbed、bedroll、sleepspot、
-   lampstanding、plantpot、column、walllamp、floodlight、stele、Royalty throne/drape。
-4. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
-5. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图。
+1. **couch**：横带 ~96%，纵带 99.4%（`_furn_fit.py pack` 已给坐标），但扶手在两侧形成
+   独立小块，要与 armchair 的扶手配区一起定。
+2. **bookcase / bookcasesmall / shelfsmall**：分带试算已 100%，可直接接。
+3. **diningchair**：圈背 + 椭圆坐垫 + 四条腿，白面被黑框切成互不相邻的小块，
+   横带/纵带都只能覆盖 ~97%（分带器对纯透明行直接判废），需要按连通块切区的工具。
+4. royalbed、hospitalbed、bedroll、sleepspot、doublebed 等床的变体（分带 90~97%，
+   枕头/床尾结构要单独配区）；lampstanding、plantpot、column、walllamp、floodlight、
+   stele、Royalty throne/drape。
+5. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
+6. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图；游戏内颜色比对。

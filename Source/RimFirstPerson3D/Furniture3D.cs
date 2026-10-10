@@ -26,7 +26,35 @@ namespace RimFirstPerson3D
     // def 只用于定位：占几格、朝向。
     public static class Furniture3D
     {
-        private enum Arch { Bed, Stool, Nightstand, Cabinet, ShelfUnit, Armchair }
+        private enum Arch { Bed, Stool, Nightstand, Cabinet, ShelfUnit, Armchair, Table }
+
+        /// <summary>一条配方：defName 关键字 -> 几何配方 + 取样件名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
+        private struct Recipe
+        {
+            public string[] keys;
+            public Arch arch;
+            public string item;
+            public Recipe(string[] keys, Arch arch, string item)
+            {
+                this.keys = keys; this.arch = arch; this.item = item;
+            }
+        }
+
+        // 加新件 = SPEC 加坐标 + 这里加一行。取样件在图集里没有区 = 不接管（走原立板回退），
+        // 免得"整族顺手接管了但用的是别件的像素"（bookcase 曾借 shelf 的区，就是这种错）。
+        private static readonly Recipe[] Recipes =
+        {
+            new Recipe(new[] { "table1x2" }, Arch.Table, "table1x2"),
+            new Recipe(new[] { "table2x2" }, Arch.Table, "table2x2"),
+            new Recipe(new[] { "table2x4" }, Arch.Table, "table2x4"),
+            new Recipe(new[] { "table3x3" }, Arch.Table, "table3x3"),
+            new Recipe(new[] { "endtable", "nightstand" }, Arch.Nightstand, "endtable"),
+            new Recipe(new[] { "armchair" }, Arch.Armchair, "armchair"),
+            new Recipe(new[] { "doublebed", "royalbed", "hospitalbed", "bed" }, Arch.Bed, "bed"),
+            new Recipe(new[] { "dresser", "cabinet" }, Arch.Cabinet, "dresser"),
+            new Recipe(new[] { "shelf" }, Arch.ShelfUnit, "shelf"),
+            new Recipe(new[] { "stool" }, Arch.Stool, "stool"),
+        };
 
         private class Built
         {
@@ -35,6 +63,16 @@ namespace RimFirstPerson3D
         }
 
         private static readonly Dictionary<int, Built> cache = new Dictionary<int, Built>();
+        private static readonly Dictionary<string, int> keyIds = new Dictionary<string, int>();
+
+        private static int KeyId(string k)
+        {
+            int id;
+            if (keyIds.TryGetValue(k, out id)) return id;
+            id = keyIds.Count;
+            keyIds[k] = id;
+            return id;
+        }
         private static Material mat;
         private static Texture2D atlas;
 
@@ -43,18 +81,33 @@ namespace RimFirstPerson3D
 
         // ---- 归类：只看 defName 关键字（def 不作尺寸依据）----
 
-        private static bool ArchOf(ThingDef d, out Arch arch)
+        private static bool RecipeOf(ThingDef d, out Arch arch, out string key)
         {
-            arch = Arch.Stool;
+            arch = Arch.Stool; key = null;
             if (d == null) return false;
             string n = (d.defName ?? "").ToLowerInvariant();
-            if (Has(n, "bed") && !Has(n, "bedroll")) { arch = Arch.Bed; return true; }
-            if (Has(n, "endtable", "nightstand")) { arch = Arch.Nightstand; return true; }
-            if (Has(n, "dresser", "cabinet")) { arch = Arch.Cabinet; return true; }
-            if (Has(n, "shelf", "bookcase")) { arch = Arch.ShelfUnit; return true; }
-            if (Has(n, "armchair")) { arch = Arch.Armchair; return true; }
-            if (Has(n, "stool")) { arch = Arch.Stool; return true; }
+            for (int i = 0; i < Recipes.Length; i++)
+            {
+                var r = Recipes[i];
+                if (!Has(n, r.keys)) continue;
+                if (!regionItems.Contains(r.item)) return false;   // 没有该件的区 -> 不接管
+                arch = r.arch; key = r.item; return true;
+            }
             return false;
+        }
+
+        /// <summary>图集表里出现过的取样件名（键的第一段）。</summary>
+        private static readonly HashSet<string> regionItems = BuildRegionItems();
+
+        private static HashSet<string> BuildRegionItems()
+        {
+            var set = new HashSet<string>();
+            foreach (var k in FurnitureUVGen.R.Keys)
+            {
+                int dot = k.IndexOf('.');
+                if (dot > 0) set.Add(k.Substring(0, dot));
+            }
+            return set;
         }
 
         private static bool Has(string s, params string[] keys)
@@ -71,8 +124,8 @@ namespace RimFirstPerson3D
             if (t.def.category != ThingCategory.Building) return false;
             if (t.def.Fillage == FillCategory.Full) return false;
             if (t is Building_Door) return false;
-            Arch a;
-            return ArchOf(t.def, out a);
+            Arch a; string k;
+            return RecipeOf(t.def, out a, out k);
         }
 
         // ---- 取样区 ----
@@ -83,28 +136,75 @@ namespace RimFirstPerson3D
         /// </summary>
         internal static readonly string[] AllRegions =
         {
-            "bed.south.top", "bed.south.front",
-            "bed.north.top", "bed.north.front",
-            "bed.east.top", "bed.east.front",
-            "stool.north.top", "stool.north.front",
-            "stool.east.top", "stool.east.front",
-            "endtable.south.top", "endtable.south.front",
-            "endtable.north.top", "endtable.north.front",
-            "endtable.east.top",
-            "dresser.south.top", "dresser.south.front",
-            "dresser.north.top", "dresser.north.front",
-            "dresser.east.top", "dresser.east.front",
-            "shelf.south.top", "shelf.south.front",
-            "shelf.north.top", "shelf.north.front",
-            "shelf.east.top", "shelf.east.front",
-            "bed.south.wood", "stool.north.wood", "endtable.south.wood",
-            "dresser.south.wood", "shelf.south.wood",
-            "armchair.south.top", "armchair.south.back", "armchair.south.front",
-            "armchair.south.wood",
-            "armchair.north.arml", "armchair.north.armr", "armchair.north.top",
-            "armchair.north.back", "armchair.north.wood",
-            "armchair.east.back", "armchair.east.arml", "armchair.east.top",
+            "armchair.east.arml",
+            "armchair.east.back",
+            "armchair.east.top",
             "armchair.east.wood",
+            "armchair.north.arml",
+            "armchair.north.armr",
+            "armchair.north.back",
+            "armchair.north.top",
+            "armchair.north.wood",
+            "armchair.south.back",
+            "armchair.south.front",
+            "armchair.south.top",
+            "armchair.south.wood",
+            "bed.east.front",
+            "bed.east.top",
+            "bed.north.front",
+            "bed.north.top",
+            "bed.south.front",
+            "bed.south.top",
+            "bed.south.wood",
+            "dresser.east.front",
+            "dresser.east.top",
+            "dresser.north.front",
+            "dresser.north.top",
+            "dresser.south.front",
+            "dresser.south.top",
+            "dresser.south.wood",
+            "endtable.east.top",
+            "endtable.north.front",
+            "endtable.north.top",
+            "endtable.south.front",
+            "endtable.south.top",
+            "endtable.south.wood",
+            "shelf.east.front",
+            "shelf.east.top",
+            "shelf.north.front",
+            "shelf.north.top",
+            "shelf.south.front",
+            "shelf.south.top",
+            "shelf.south.wood",
+            "stool.east.front",
+            "stool.east.top",
+            "stool.north.front",
+            "stool.north.top",
+            "stool.north.wood",
+            "table1x2.east.edge",
+            "table1x2.east.front",
+            "table1x2.east.top",
+            "table1x2.east.wood",
+            "table1x2.north.edge",
+            "table1x2.north.front",
+            "table1x2.north.top",
+            "table1x2.north.wood",
+            "table2x2.north.edge",
+            "table2x2.north.front",
+            "table2x2.north.top",
+            "table2x2.north.wood",
+            "table2x4.east.edge",
+            "table2x4.east.front",
+            "table2x4.east.top",
+            "table2x4.east.wood",
+            "table2x4.north.edge",
+            "table2x4.north.front",
+            "table2x4.north.top",
+            "table2x4.north.wood",
+            "table3x3.north.edge",
+            "table3x3.north.front",
+            "table3x3.north.top",
+            "table3x3.north.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -276,23 +376,8 @@ namespace RimFirstPerson3D
 
         // ---- 建模 ----
 
-        /// <summary>原型 -> 取样表里的键名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
-        private static string KeyOf(Arch a)
+        private static Built Build(Arch arch, string key, Rot4 rot, float w, float d)
         {
-            switch (a)
-            {
-                case Arch.Bed: return "bed";
-                case Arch.Stool: return "stool";
-                case Arch.Nightstand: return "endtable";
-                case Arch.Cabinet: return "dresser";
-                case Arch.Armchair: return "armchair";
-                default: return "shelf";
-            }
-        }
-
-        private static Built Build(Arch arch, Rot4 rot, float w, float d)
-        {
-            string key = KeyOf(arch);
             var m = new Model3D();
             var uvs = new List<UvSpec>();
             var xz = new Vector2(w, d);
@@ -430,6 +515,24 @@ namespace RimFirstPerson3D
                     });
                     uvs.Add(WoodUv(key, rot, xz));             // 3 = 腿（圆柱，三视图没画它们）
                     Legs(m, 3, w * 0.36f, Metrics3D.BaseboardHeight + 0.02f, Metrics3D.LegThickness);
+                    break;
+                }
+                case Arch.Table:
+                {
+                    // 台面（顶 = top 带，四周一圈 = edge 带）+ 四条腿（侧面用画出来的腿条，
+                    // 圆盖用 wood：圆柱的端面在平面图里根本没有对应像素）
+                    float th = Metrics3D.SlabThickness;
+                    float h = Metrics3D.TableHeight - th;              // 台面上沿 = TableHeight
+                    uvs.Add(UvNames(key, rot, xz, "top", "edge"));     // 1 = 台面
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, h, 0f),
+                        size = new Vector3(w - 0.04f, th, d - 0.04f),
+                        uv = 1
+                    });
+                    uvs.Add(UvNames(key, rot, xz, "wood", "front"));   // 2 = 腿
+                    Legs(m, 2, Mathf.Min(w, d) * 0.5f - 0.14f, h, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.Cabinet:
@@ -572,13 +675,14 @@ namespace RimFirstPerson3D
             }
         }
 
-        private static Built Get(Arch arch, Rot4 rot, float w, float d)
+        private static Built Get(Arch arch, string key, Rot4 rot, float w, float d)
         {
-            // 缓存键：原型 + 朝向 + 占格（w*64+d 在 64x64 内唯一，不会互相撞）
-            int ck = (((int)arch * 4 + rot.AsByte) * 64 + Mathf.RoundToInt(w * 10f)) * 64 + Mathf.RoundToInt(d * 10f);
+            // 缓存键：取样件 + 配方 + 朝向 + 占格（同一配方下不同件不能共用模型）
+            int ck = (((KeyId(key) * 8 + (int)arch) * 4 + rot.AsByte) * 64
+                      + Mathf.RoundToInt(w * 10f)) * 64 + Mathf.RoundToInt(d * 10f);
             Built b;
             if (cache.TryGetValue(ck, out b)) return b;
-            b = Build(arch, rot, w, d);
+            b = Build(arch, key, rot, w, d);
             cache[ck] = b;
             return b;
         }
@@ -599,13 +703,13 @@ namespace RimFirstPerson3D
             if (!Handles(t)) return false;
             var m = Mat;
             if (m == null) return false;
-            Arch arch;
-            if (!ArchOf(t.def, out arch)) return false;
+            Arch arch; string key;
+            if (!RecipeOf(t.def, out arch, out key)) return false;
             var occ = GenAdj.OccupiedRect(t);
             float w = Mathf.Max(0.3f, occ.Width), d = Mathf.Max(0.3f, occ.Height);
             var rot = t.Rotation;
             if (arch == Arch.Bed && rot == Rot4.West) rot = Rot4.East;   // 西向无独立图，按东向几何
-            var b = Get(arch, rot, w, d);
+            var b = Get(arch, key, rot, w, d);
             if (b == null || b.body == null) return false;
             var matrix = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
             Graphics.DrawMesh(b.body, matrix, m, 0);

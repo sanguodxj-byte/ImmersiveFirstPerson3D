@@ -53,7 +53,7 @@ def row_span(opaque, y):
     xs = np.where(opaque[y])[0]
     if len(xs) == 0:
         return None
-    best, a, p = (xs[0], xs[-1] + 1), xs[0], xs[0]
+    best, a, p = (xs[0], xs[0] + 1), xs[0], xs[0]   # 初值是一段长度 1，否则"首尾全跨"永远换不掉
     for x in xs[1:]:
         if x > p + 1:
             if (p + 1 - a) > (best[1] - best[0]):
