@@ -1,3 +1,4 @@
+// AI生成
 using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
@@ -95,6 +96,8 @@ namespace RimFirstPerson3D
             "shelf.south.top", "shelf.south.front",
             "shelf.north.top", "shelf.north.front",
             "shelf.east.top", "shelf.east.front",
+            "bed.south.wood", "stool.north.wood", "endtable.south.wood",
+            "dresser.south.wood", "shelf.south.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -159,6 +162,55 @@ namespace RimFirstPerson3D
             };
         }
 
+        /// <summary>
+        /// 干净木面区（SPEC 里每件声明一处 <c>wood</c>）：三视图没画到的面 ——
+        /// 圆柱的侧壁与顶盖 —— 取这块无笔画的实心木面，而不是把某个立面段糊上去。
+        /// </summary>
+        private static Vector4 WoodRegion(string arch, Rot4 rot)
+        {
+            return Region(arch, ViewOf(rot), "wood");
+        }
+
+        /// <summary>
+        /// 薄板件（台面/顶板）：顶面仍取当前朝向的俯视段，四周一圈立边取木面 ——
+        /// 立面段画的是门板抽屉，糊到 5cm 的板边上就是错的图案。
+        /// </summary>
+        private static UvSpec SlabUv(string arch, Rot4 rot, Vector2 xz)
+        {
+            var u = FaceUv(arch, rot, xz);
+            var w = WoodRegion(arch, rot);
+            u.side = w;
+            for (int i = 0; i < 4; i++) u.side4[i] = w;
+            return u;
+        }
+
+        /// <summary>
+        /// 端板（床头/床尾）：大面用立面段，左右那两条 8cm 窄边用木面 ——
+        /// 窄边在图里没有对应像素，硬拿立面段会被拉成横条纹。
+        /// longZ: 床的长轴沿 Z（朝南/北），此时窄边是 ±X。
+        /// </summary>
+        private static UvSpec EndPanelUv(string arch, Rot4 rot, Vector2 xz, bool longZ)
+        {
+            var u = FaceUv(arch, rot, xz);
+            var w = WoodRegion(arch, rot);
+            if (longZ) { u.side4[2] = w; u.side4[3] = w; }
+            else { u.side4[0] = w; u.side4[1] = w; }
+            return u;
+        }
+
+        private static UvSpec WoodUv(string arch, Rot4 rot, Vector2 xz)
+        {
+            var w = WoodRegion(arch, rot);
+            return new UvSpec
+            {
+                top = w,
+                side = w,
+                sideTileH = 0f,
+                sideTileW = 0f,
+                modelXZ = xz
+            };
+        }
+
         // ---- 建模 ----
 
         /// <summary>原型 -> 取样表里的键名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
@@ -213,11 +265,11 @@ namespace RimFirstPerson3D
                                    : (rot == Rot4.East) ? -1f : 1f;
                     float hbH = Metrics3D.BedHeadboardHeight - Metrics3D.BedFrameHeight;
                     float fbH = Metrics3D.FootboardHeight - Metrics3D.BedFrameHeight;
-                    uvs.Add(FaceUv(key, rot, xz));            // 1 = 端板
+                    uvs.Add(EndPanelUv(key, rot, xz, longZ));   // 1 = 端板
                     AddEndPanel(m, 1, longZ, thick, headSign, len, Metrics3D.BedFrameHeight, hbH);
-                    uvs.Add(FaceUv(key, rot, xz));            // 2 = 尾板
+                    uvs.Add(EndPanelUv(key, rot, xz, longZ));   // 2 = 尾板
                     AddEndPanel(m, 2, longZ, thick, -headSign, len, Metrics3D.BedFrameHeight, fbH);
-                    uvs.Add(FaceUv(key, rot, xz));            // 3 = 立柱
+                    uvs.Add(WoodUv(key, rot, xz));             // 3 = 立柱（圆柱，三视图没画它）
                     AddPosts(m, 3, w, d, Metrics3D.BedHeadboardHeight);
                     break;
                 }
@@ -225,7 +277,11 @@ namespace RimFirstPerson3D
                 {
                     float sh = Metrics3D.ChairSeatHeight;
                     float sw = Mathf.Min(0.44f, w * 0.6f);
-                    uvs.Add(FaceUv(key, rot, new Vector2(sw, sw)));   // 1 = 座面
+                    var seat = FaceUv(key, rot, new Vector2(sw, sw));
+                    // 座沿那一圈是竖直面，但三视图的立面段画的是腿，不是座沿 —— 用木面。
+                    // 圆柱的侧壁只认 side，顶盖仍走 top（座面本尊）。
+                    seat.side = WoodRegion(key, rot);
+                    uvs.Add(seat);                             // 1 = 座面
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
@@ -233,14 +289,14 @@ namespace RimFirstPerson3D
                         size = new Vector3(sw, Metrics3D.SlabThickness, sw),
                         uv = 1
                     });
-                    uvs.Add(FaceUv(key, rot, xz));            // 2 = 腿
+                    uvs.Add(WoodUv(key, rot, xz));             // 2 = 腿（圆柱，三视图没画它们）
                     Legs(m, 2, sw * 0.34f, sh, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.Nightstand:
                 {
                     float h = Metrics3D.NightstandHeight - Metrics3D.SlabThickness;
-                    uvs.Add(FaceUv(key, rot, xz));            // 1 = 台面
+                    uvs.Add(SlabUv(key, rot, xz));             // 1 = 台面
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
@@ -248,7 +304,7 @@ namespace RimFirstPerson3D
                         size = new Vector3(w * 0.92f, Metrics3D.SlabThickness, d * 0.92f),
                         uv = 1
                     });
-                    uvs.Add(FaceUv(key, rot, xz));            // 2 = 柜体+腿
+                    uvs.Add(FaceUv(key, rot, xz));            // 2 = 柜体
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
@@ -256,7 +312,8 @@ namespace RimFirstPerson3D
                         size = new Vector3(w * 0.78f, h - Metrics3D.BaseboardHeight, d * 0.72f),
                         noTop = true, uv = 2
                     });
-                    Legs(m, 2, w * 0.36f, Metrics3D.BaseboardHeight + 0.02f, Metrics3D.LegThickness);
+                    uvs.Add(WoodUv(key, rot, xz));             // 3 = 腿（圆柱，三视图没画它们）
+                    Legs(m, 3, w * 0.36f, Metrics3D.BaseboardHeight + 0.02f, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.Cabinet:
@@ -264,7 +321,7 @@ namespace RimFirstPerson3D
                 {
                     bool shelf = arch == Arch.ShelfUnit;
                     float h = shelf ? 0.85f : Metrics3D.CounterHeight;
-                    uvs.Add(FaceUv(key, rot, xz));            // 1 = 顶板
+                    uvs.Add(SlabUv(key, rot, xz));             // 1 = 顶板
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
@@ -272,10 +329,12 @@ namespace RimFirstPerson3D
                         size = new Vector3(w * 0.96f, Metrics3D.SlabThickness, d * 0.96f),
                         uv = 1
                     });
-                    uvs.Add(FaceUv(key, rot, xz));            // 2 = 箱体/层架
+                    // 柜体的大面用立面段（那就是门板/抽屉）；书架的层板与侧板是 5cm 薄板，
+                    // 它们四周的面在图里没有对应像素 —— 一律走木面，顶面仍取俯视段。
+                    uvs.Add(shelf ? SlabUv(key, rot, xz) : FaceUv(key, rot, xz));   // 2 = 箱体 / 层板·侧板
                     if (shelf)
                     {
-                        // 侧板 + 层板：三视图的立面段给侧板，俯视段给层板顶面
+                        // 侧板 + 层板：俯视段给层板顶面，立边与侧板各面用木面
                         for (int i = 0; i < 3; i++)
                         {
                             float y = h * (0.12f + i * 0.34f);
@@ -283,7 +342,7 @@ namespace RimFirstPerson3D
                             {
                                 kind = Prim.Box,
                                 pos = new Vector3(0f, y, 0f),
-                                size = new Vector3(w * 0.9f, Metrics3D.SlabThickness, d * 0.8f),
+                                size = new Vector3(w * 0.85f, Metrics3D.SlabThickness, d * 0.8f),
                                 uv = 2
                             });
                         }

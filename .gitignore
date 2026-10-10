@@ -1,3 +1,6 @@
 Source/**/obj/
 scripts/__pycache__/
 *.user
+
+# 家具审核台的 Chrome 临时 profile（若有人改回共享目录）
+docs/furniture/audit/.chrome-profile/

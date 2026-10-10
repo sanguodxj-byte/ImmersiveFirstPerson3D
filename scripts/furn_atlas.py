@@ -52,7 +52,7 @@ SPEC = {
     # 交界线 = 目视判读的"俯视段/立面段"分界（见 docs/furniture/uv/*.png 绿框）。
     "bed": {
         "south": {"path": f"{FB}/bed_south.png",
-                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125)},
+                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125), "wood": (55, 114, 75, 122)},
         "north": {"path": f"{FB}/bed_north.png",
                   "top": (33, 0, 95, 110), "front": (33, 110, 95, 125)},
         "east": {"path": f"{FB}/bed_east.png",
@@ -61,7 +61,7 @@ SPEC = {
     "stool": {
         "north": {"path": f"{F}/stool_north.png",
                   "top": (10, 20, 53, 45), "front": (12, 45, 17, 62),
-                  "discard": [(17, 45, 53, 64)]},
+                  "discard": [(17, 45, 53, 64)], "wood": (20, 25, 45, 40)},
         "east": {"path": f"{F}/stool_east.png",
                  "top": (17, 11, 45, 41), "front": (19, 41, 24, 60)},
     },
@@ -70,7 +70,7 @@ SPEC = {
                   "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
                   "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
                               (10, 33, 20, 39), (36, 33, 53, 40),
-                              (10, 40, 53, 64)]},
+                              (10, 40, 53, 64)], "wood": (14, 10, 30, 20)},
         "north": {"path": f"{F}/endtable_north.png",
                   "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
                   "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
@@ -83,7 +83,7 @@ SPEC = {
     },
     "dresser": {
         "south": {"path": f"{F}/dresser_south.png",
-                  "top": (0, 0, 128, 32), "front": (0, 32, 128, 64)},
+                  "top": (0, 0, 128, 32), "front": (0, 32, 128, 64), "wood": (10, 4, 60, 28)},
         "north": {"path": f"{F}/dresser_north.png",
                   "top": (0, 0, 128, 32), "front": (0, 32, 128, 64)},
         "east": {"path": f"{F}/dresser_east.png",
@@ -92,7 +92,7 @@ SPEC = {
     "shelf": {
         "south": {"path": f"{F}/shelf_south.png",
                   "top": (43, 28, 213, 78), "front": (43, 78, 213, 93),
-                  "discard": [(43, 93, 213, 99)]},
+                  "discard": [(43, 93, 213, 99)], "wood": (60, 35, 120, 70)},
         "north": {"path": f"{F}/shelf_north.png",
                   "top": (43, 34, 213, 78), "front": (43, 78, 213, 93),
                   "discard": [(43, 28, 213, 34), (43, 93, 213, 99)]},
@@ -241,6 +241,7 @@ def pack(items):
 def emit_cs(placed, atlas_size, path):
     W, H = atlas_size
     lines = [
+        "// AI生成",
         "// 自动生成 —— 由 scripts/furn_atlas.py 产出，请勿手改。",
         "// 键 = \"<原型>.<朝向>.<区段>\"，值 = 图集 UV (u0, v0, u1, v1)。",
         "// v 口径：Unity 纹理 v=0 在图像**底边**，故 v = 1 - y/H。",

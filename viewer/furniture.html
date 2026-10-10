@@ -41,7 +41,7 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 //
 // 顶面 <- 当前朝向那张图的俯视段；四个立面各取自己那张图的立面段。
 // ===========================================================================
-const VER = '1791581401';
+const VER = 'wood1';
 const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
   bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
   seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
@@ -101,6 +101,22 @@ function faceUv(arch, rot, xz){
            s4: [Region(arch, opp(v), 'front'), Region(arch, v, 'front'),
                 Region(arch, cross, 'front'), Region(arch, cross, 'front')],
            xz };
+}
+// 与 C# Furniture3D.WoodRegion/WoodUv/SlabUv 同口径：SPEC 里每件声明一处 wood（干净木面区），
+// 三视图没画到的面 —— 圆柱侧壁与顶盖、薄板四周一圈立边 —— 只能取它。
+const woodKey = (arch, rot) => {
+  for(const v of [viewOf(rot), 'south', 'north', 'east'])
+    if(R(`${arch}.${v}.wood`)) return `${arch}.${v}.wood`;
+  return null;
+};
+const wood = (arch, rot) => R(woodKey(arch, rot));
+function woodUv(arch, rot, xz){ const w = wood(arch, rot); return {top:w, s4:[w,w,w,w], xz}; }
+function slabUv(arch, rot, xz){ const u = faceUv(arch, rot, xz), w = wood(arch, rot); u.s4 = [w, w, w, w]; return u; }
+// 端板：大面用立面段，左右两条 8cm 窄边用木面（与 C# EndPanelUv 同口径）
+function endPanelUv(arch, rot, xz, longZ){
+  const u = faceUv(arch, rot, xz), w = wood(arch, rot);
+  if(longZ){ u.s4[2] = w; u.s4[3] = w; } else { u.s4[0] = w; u.s4[1] = w; }
+  return u;
 }
 
 // ---------------------------------------------------------------- 网格拼装
@@ -167,29 +183,31 @@ function build(item, rot){
   if(it.arch==='bed'){
     box(g,uv0,0,0,0, w-0.06,M.bedFrame,d-0.06);
     box(g,uv0,0,M.bedFrame,0, w-0.20,M.mattress,d-0.18);
-    const uvb = faceUv(it.arch, rot, [w,d]);
+    const uvb = endPanelUv(it.arch, rot, [w,d], longZ);
     endPanel(g,uvb,longZ,thick,headSign,len,M.bedFrame,M.headboard-M.bedFrame);
     endPanel(g,uvb,longZ,thick,-headSign,len,M.bedFrame,M.footboard-M.bedFrame);
-    const uvq = faceUv(it.arch, rot, [w,d]);
+    const uvq = woodUv(it.arch, rot, [w,d]);
     const r = M.leg*1.1;
     for(const sx of [-1,1]) for(const sz of [-1,1])
       cyl(g,uvq,sx*(w/2-r),sz*(d/2-r),0,M.headboard,r*2);
   } else if(it.arch==='stool'){
     const sw = Math.min(0.44, w*0.6);
-    cyl(g, faceUv(it.arch,rot,[sw,sw]), 0,0, M.seat, M.slab, sw);
-    legs(g, faceUv(it.arch,rot,[w,d]), sw*0.34, M.seat, M.leg);
+    const seat = faceUv(it.arch,rot,[sw,sw]);          // 顶盖 = 座面，侧壁（座沿一圈）= 木面
+    seat.s4[1] = wood(it.arch,rot);
+    cyl(g, seat, 0,0, M.seat, M.slab, sw);
+    legs(g, woodUv(it.arch,rot,[w,d]), sw*0.34, M.seat, M.leg);
   } else if(it.arch==='endtable'){
     const h = M.nightstand - M.slab;
-    box(g, faceUv(it.arch,rot,[w*0.92,d*0.92]), 0,h,0, w*0.92,M.slab,d*0.92);
+    box(g, slabUv(it.arch,rot,[w,d]), 0,h,0, w*0.92,M.slab,d*0.92);
     box(g, faceUv(it.arch,rot,[w,d]), 0,M.baseboard,0, w*0.78,h-M.baseboard,d*0.72);
-    legs(g, faceUv(it.arch,rot,[w,d]), w*0.36, M.baseboard+0.02, M.leg);
+    legs(g, woodUv(it.arch,rot,[w,d]), w*0.36, M.baseboard+0.02, M.leg);
   } else {
     const sh = it.arch==='shelf';
     const h = sh?0.85:M.counter;
-    box(g, faceUv(it.arch,rot,[w*0.96,d*0.96]), 0,h,0, w*0.96,M.slab,d*0.96);
-    const u = faceUv(it.arch,rot,[w,d]);
+    box(g, slabUv(it.arch,rot,[w,d]), 0,h,0, w*0.96,M.slab,d*0.96);
+    const u = sh ? slabUv(it.arch,rot,[w,d]) : faceUv(it.arch,rot,[w,d]);
     if(sh){
-      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.9,M.slab,d*0.8);
+      for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.85,M.slab,d*0.8);
       box(g,u,-w*0.45,h*0.5,0, M.slab,h,d*0.8);
       box(g,u, w*0.45,h*0.5,0, M.slab,h,d*0.8);
     } else box(g,u,0,0,0, w*0.9,h,d*0.8);
@@ -263,6 +281,7 @@ function hud(){
     `立面 北 <- ${opp(viewOf(ROT))}: ${fmt(f.s4[0])}<br>`+
     `立面 南 <- ${viewOf(ROT)}: ${fmt(f.s4[1])}<br>`+
     `立面 东/西 <- ${(viewOf(ROT)==='east'?'south':'east')}: ${fmt(f.s4[2])}<br>`+
+    `木面 圆柱/薄边 <- ${ITEMS[ITEM].arch}.${viewOf(ROT)}.wood: ${fmt(wood(ITEMS[ITEM].arch,ROT))}<br>`+
     `图集 ${uvJson.size[0]}x${uvJson.size[1]} · 黑笔画已补绘，描边=反绕壳<br>`+
     `拖拽旋转 · 滚轮缩放 · ←→ 切视角`;
 }

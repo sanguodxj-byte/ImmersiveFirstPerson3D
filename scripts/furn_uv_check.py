@@ -11,6 +11,8 @@
    （贴图所有像素都至少存在于一个面上。）
 4. 同一张图内的取样区**不得互相重叠**（重叠=同一像素当两个面用，属重复取样）。
 5. 生成的 UV 表与 C# 几何**必须双向对齐**：表里的键没人用 = 冗余；代码引用的键表里没有 = 断链。
+6. 每件必须声明一处 **wood**（无笔画的干净木面区）：圆柱侧壁/顶盖与薄板立边在三视图里
+   根本没有对应像素，它们的取样必须落在 wood 上，不许拿别的朝向的立面段糊。
 
 用法：
     python scripts/furn_uv_check.py            # 校验，非 0 退出码表示有缺陷
@@ -44,6 +46,8 @@ def check_item(item, spec=None):
     errs = []
     if item not in spec:
         return [("noitem", "规范里没有 " + item, "")]
+    # wood = 该件的"干净木面区"，圆柱/薄边这些三视图没画到的面全靠它，每件必须有且只有一处。
+    woods = [f"{view}.wood" for view, d in spec[item].items() if "wood" in d]
     for view, d in spec[item].items():
         path = d["path"]
         full = os.path.join(FA.TEX, path.replace("/", os.sep))
@@ -97,7 +101,8 @@ def check_item(item, spec=None):
                              f"透明占行 {hr[0]+y0}..{hr[-1]+y0} 列 {hc[0]+x0}..{hc[-1]+x0}"
                              f" -> 实心内区约 ({int(hc[0]+x0)},{int(hr[0]+y0)},"
                              f"{int(hc[-1]+x0+1)},{int(hr[-1]+y0+1)}) 之外"))
-            if cover[sub].any():
+            # wood 是从同一块表面上再取一份"干净样本"，允许落在别的区里
+            if name != "wood" and cover[sub].any():
                 errs.append(("overlap", f"{key}: 与同图其它取样区重叠", "拆开或合并"))
             cover[sub] = True
         # 覆盖：内容像素必须至少落在一个取样区里。两类豁免——
@@ -116,6 +121,9 @@ def check_item(item, spec=None):
             errs.append(("cover", f"{item}.{view}: {n}/{total} 内容像素无归属"
                                   f"（y {ys2.min()}..{ys2.max()}, x {xs2.min()}..{xs2.max()}）",
                          "扩区或补区"))
+    if not woods:
+        errs.append(("nowood", f"{item}: 没有声明 wood（干净木面区）",
+                     "圆柱侧壁/顶盖与薄板立边要取样，只能落在这块上"))
     return errs
 
 
@@ -196,21 +204,29 @@ def fixtures():
     P = os.path.basename(FX)
     # 内容区 = x/y ∈ [9,55]（第 8 与 56 行被描边内扩吃掉）
     # 全覆盖区 + 一个纯压在轮廓上的窄框 = 只该报 stroke
+    # 每例都带一处 wood（干净木面区，落在已覆盖的实心区内 -> 不改覆盖、不改重叠）
+    W = {"wood": (10, 10, 20, 20)}
     cases = [
-        ("fx-clean", {"south": {"path": P, "top": (9, 9, 56, 40),
-                                "front": (9, 40, 56, 56)}}, set()),
-        ("fx-stroke", {"south": {"path": P, "all": (9, 9, 56, 56),
-                                 "ring": (7, 7, 58, 9)}}, {"stroke"}),
+        ("fx-clean", {"south": dict({"path": P, "top": (9, 9, 56, 40),
+                                     "front": (9, 40, 56, 56)}, **W)}, set()),
+        # 与 fx-clean 同框但**不声明 wood**：圆柱/薄边无处取样，必须报 nowood
+        ("fx-nowood", {"south": {"path": P, "top": (9, 9, 56, 40),
+                                 "front": (9, 40, 56, 56)}}, {"nowood"}),
+        ("fx-stroke", {"south": dict({"path": P, "all": (9, 9, 56, 56),
+                                      "ring": (7, 7, 58, 9)},
+                                     **{"wood": (20, 20, 30, 30)})}, {"stroke"}),
         # 越界的区会被整块跳过，因此必然连带 cover —— 属预期的连锁报告，不是误报
-        ("fx-oob", {"south": {"path": P, "top": (9, 9, 56, 40),
-                              "bad": (9, 40, 56, 70)}}, {"oob", "cover"}),
-        ("fx-overlap", {"south": {"path": P, "a": (9, 9, 56, 48),
-                                  "b": (9, 40, 56, 56)}}, {"overlap"}),
-        ("fx-cover", {"south": {"path": P, "top": (20, 20, 40, 30)}}, {"cover"}),
-        ("fx-missing", {"south": {"path": "zz_none.png", "top": (1, 1, 2, 2)}}, {"missing"}),
+        ("fx-oob", {"south": dict({"path": P, "top": (9, 9, 56, 40),
+                                   "bad": (9, 40, 56, 70)}, **W)}, {"oob", "cover"}),
+        ("fx-overlap", {"south": dict({"path": P, "a": (9, 9, 56, 48),
+                                       "b": (9, 40, 56, 56)}, **W)}, {"overlap"}),
+        ("fx-cover", {"south": dict({"path": P, "top": (20, 20, 40, 30)},
+                                    **{"wood": (22, 22, 30, 28)})}, {"cover"}),
+        ("fx-missing", {"south": {"path": "zz_none.png", "top": (1, 1, 2, 2),
+                                  "wood": (1, 1, 2, 2)}}, {"missing"}),
         # 带缺口的图：两块取样区无重叠且覆盖全部"材质像素"，只该报 hole
-        ("fx-hole", {"south": {"path": os.path.basename(FXH), "top": (9, 9, 56, 40),
-                               "front": (9, 40, 56, 56)}}, {"hole"}),
+        ("fx-hole", {"south": dict({"path": os.path.basename(FXH), "top": (9, 9, 56, 40),
+                                    "front": (9, 40, 56, 56)}, **W)}, {"hole"}),
     ]
     out = []
     try:
