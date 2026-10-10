@@ -41,7 +41,7 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 //
 // 顶面 <- 当前朝向那张图的俯视段；四个立面各取自己那张图的立面段。
 // ===========================================================================
-const VER = 'cylfix1';
+const VER = 'arm1x1';
 const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
   bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
   seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
@@ -53,7 +53,7 @@ const ITEMS = {
   endtable: {arch:'endtable', w:1, d:1},
   dresser:  {arch:'dresser',  w:2, d:1},
   shelf:    {arch:'shelf',    w:2, d:1},
-  armchair: {arch:'armchair', w:2, d:2},
+  armchair: {arch:'armchair', w:1, d:1},   // Core def 无 <size> -> 1x1（占格查 def，别从贴图宽度反推）
 };
 
 const app = document.getElementById('app');
