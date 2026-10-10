@@ -314,7 +314,7 @@ namespace RimFirstPerson3D
                         pos = new Vector3(0f, 0f, 0f),
                         size = new Vector3(w - 0.06f, Metrics3D.BedFrameHeight, d - 0.06f),
                         noTop = true,
-                        uv = 0
+                        uv = 4        // 床架侧板 = 木面（见下）
                     };
                     m.parts.Add(frame);
                     m.parts.Add(new Part
@@ -334,6 +334,8 @@ namespace RimFirstPerson3D
                     AddEndPanel(m, 2, longZ, thick, -headSign, len, Metrics3D.BedFrameHeight, fbH);
                     uvs.Add(WoodUv(key, rot, xz));             // 3 = 立柱（圆柱，三视图没画它）
                     AddPosts(m, 3, w, d, rot, Metrics3D.BedHeadboardHeight, Metrics3D.FootboardHeight);
+                    // 4 = 床架侧板：0.4m 高的床架侧立面在三视图里根本没有（立面段只有 15px 的床尾栏）
+                    uvs.Add(WoodUv(key, rot, xz));
                     break;
                 }
                 case Arch.Stool:
@@ -349,7 +351,7 @@ namespace RimFirstPerson3D
                     {
                         kind = Prim.Cylinder,
                         pos = new Vector3(0f, sh, 0f),
-                        size = new Vector3(sw, Metrics3D.SlabThickness, sw),
+                        size = new Vector3(sw, Metrics3D.SeatCushionThickness, sw),
                         uv = 1
                     });
                     uvs.Add(WoodUv(key, rot, xz));             // 2 = 腿（圆柱，三视图没画它们）

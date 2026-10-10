@@ -330,14 +330,18 @@ namespace RimFirstPerson3D
         {
             float hw = s.x * 0.5f, hd = s.z * 0.5f, h = s.y;
             // 顶面：(-x,+z) -> (+x,+z) -> (+x,-z) -> (-x,-z)（项目内已验证的绕序）
-            var ta = new Vector3(-hw, h, hd);
-            var tb = new Vector3(hw, h, hd);
-            var tc = new Vector3(hw, h, -hd);
-            var td = new Vector3(-hw, h, -hd);
-            var r = TopRectFor(local, ta, tb, tc, td);
-            Quad(ta, tb, tc, td,
-                new Vector2(r.x, r.w), new Vector2(r.z, r.w),
-                new Vector2(r.z, r.y), new Vector2(r.x, r.y), m);
+            // noTop 的部件顶面埋在别的部件下面（床架埋在床垫下、柜体埋在台面下），不发这一面。
+            if (!p.noTop)
+            {
+                var ta = new Vector3(-hw, h, hd);
+                var tb = new Vector3(hw, h, hd);
+                var tc = new Vector3(hw, h, -hd);
+                var td = new Vector3(-hw, h, -hd);
+                var r = TopRectFor(local, ta, tb, tc, td);
+                Quad(ta, tb, tc, td,
+                    new Vector2(r.x, r.w), new Vector2(r.z, r.w),
+                    new Vector2(r.z, r.y), new Vector2(r.x, r.y), m);
+            }
             // 四个侧面（绕序沿用 BuildingLayer3D.MeshBuilderX 的既有写法）
             // dir: 0北 1南 2东 3西 —— 与 UvSpec.side4 的下标一致
             SideQuads(new Vector3(hw, 0, -hd), new Vector3(-hw, 0, -hd),
