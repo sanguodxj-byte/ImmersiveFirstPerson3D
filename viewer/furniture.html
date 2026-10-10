@@ -242,8 +242,9 @@ function build(item, rot){
     const u = sh ? slabUv(it.arch,rot,[w,d]) : faceUv(it.arch,rot,[w,d]);
     if(sh){
       for(let i=0;i<3;i++) box(g,u,0,h*(0.12+i*0.34),0, w*0.84,M.slab,d*0.78);
-      box(g,u,-w*0.45,h*0.5,0, M.slab,h,d*0.8);
-      box(g,u, w*0.45,h*0.5,0, M.slab,h,d*0.8);
+      // pos.y = 底面高度（与 C# Part 同口径），写 h*0.5 会让侧板悬在半空
+      box(g,u,-w*0.45,0,0, M.slab,h,d*0.8);
+      box(g,u, w*0.45,0,0, M.slab,h,d*0.8);
     } else box(g,u,0,0,0, w*0.9,h,d*0.8);
   }
   const geo = new THREE.BufferGeometry();
@@ -256,10 +257,13 @@ function build(item, rot){
 let ITEM='bed', ROT='south';
 const root = new THREE.Group(); scene.add(root);
 const grid = new THREE.GridHelper(12,24,0x4a5568,0x2e3446); grid.position.y=-0.003; scene.add(grid);
+const EMPTY = new URLSearchParams(location.search).get('empty') === '1';
+const FLAT = new URLSearchParams(location.search).get('flat') === '1';   // 差分/着色探针用
 function rebuild(){
   while(root.children.length) root.remove(root.children[0]);
+  if(EMPTY){ hud(); return; }        // 差分回路用：只画场景不画模型（?empty=1）
   const geo = build(ITEM, ROT);
-  root.add(new THREE.Mesh(geo, mat));
+  root.add(new THREE.Mesh(geo, FLAT ? new THREE.MeshNormalMaterial() : mat));
   // 描边：运行时用**沿平均法线外扩的反绕壳**（ModelBuilder.ToHull）。
   // 这里不能用整组 scale —— 那会把细件（立柱）按离原点的距离整体撑歪。
   // 检查页只需要看棱线是否落在正确的面上，故用 EdgesGeometry。

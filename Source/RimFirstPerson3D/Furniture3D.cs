@@ -464,17 +464,18 @@ namespace RimFirstPerson3D
                                 uv = 2
                             });
                         }
+                        // 侧板：Part.pos.y 是**底面**高度，写 h*0.5 会让整块板悬在半空
                         m.parts.Add(new Part
                         {
                             kind = Prim.Box,
-                            pos = new Vector3(-w * 0.45f, h * 0.5f, 0f),
+                            pos = new Vector3(-w * 0.45f, 0f, 0f),
                             size = new Vector3(Metrics3D.SlabThickness, h, d * 0.8f),
                             uv = 2
                         });
                         m.parts.Add(new Part
                         {
                             kind = Prim.Box,
-                            pos = new Vector3(w * 0.45f, h * 0.5f, 0f),
+                            pos = new Vector3(w * 0.45f, 0f, 0f),
                             size = new Vector3(Metrics3D.SlabThickness, h, d * 0.8f),
                             uv = 2
                         });

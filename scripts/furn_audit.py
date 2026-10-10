@@ -29,6 +29,7 @@ ITEMS = ["bed", "stool", "endtable", "dresser", "shelf", "armchair"]
 ROTS = ["south", "north", "east", "west"]
 VIEWS = ["45°", "俯视", "主视·南", "侧视·东", "低角度", "贴脸"]
 CELL = (620, 500)
+EMPTY = "__empty__"
 
 
 def url(item, rot, view):
@@ -58,10 +59,18 @@ def is_blank(p):
     return float(bg.mean()) > 0.98
 
 
+def cell(item, rot, view, empty=False):
+    v = view.replace("·", "_").replace("°", "")
+    return os.path.join(RAW, "%s__%s__%s%s.png" % (item, rot, v, "_empty" if empty else ""))
+
+
 def shoot(job):
-    item, rot, view = job
-    p = os.path.join(RAW, "%s__%s__%s.png" % (item, rot, view.replace("·", "_").replace("°", "")))
-    if os.path.exists(p) and os.path.getsize(p) > 8000:
+    item, rot, view = job[:3]
+    empty = len(job) > 3                           # 第 4 个元素 = 要渲空场景（?empty=1）
+    p = cell(item, rot, view, empty)
+    if empty:
+        pass                             # 参考图每次都重渲：场景/灯一改，缓存的参考就会污染差分
+    elif os.path.exists(p) and os.path.getsize(p) > 8000:
         return p, ("整幅空白（页面异常或模型没画出来）" if is_blank(p) else None)
     # profile 必须**每格一个**：多个 Chrome 共用一个 user-data-dir 会互相抢锁，
     # 结果是静默不出图（2026-10-10 实测 24 格里 21 格空手而归）。
@@ -71,7 +80,8 @@ def shoot(job):
            "--window-size=%d,%d" % CELL, "--virtual-time-budget=25000",
            "--timeout=%d" % SHOT_TIMEOUT_MS,
            "--user-data-dir=" + prof,
-           "--screenshot=" + p, url(item, rot, view)]
+           "--screenshot=" + p,
+           url(item, rot, view) + ("&empty=1" if empty else "")]
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=SHOT_TIMEOUT_MS / 1000.0 + 40)
@@ -80,6 +90,36 @@ def shoot(job):
     if not os.path.exists(p):
         return p, "没出图"
     return p, ("整幅空白（页面异常或模型没画出来）" if is_blank(p) else None)
+
+
+def model_mask(a, a0):
+    """差分遮罩：与同机位的空场景逐像素比，有差别的才是模型。
+    不能用"与背景色的色差" —— 家具上有近黑的暗面，会被当成背景，好好的模型被切成几段。"""
+    m = np.abs(a - a0).sum(axis=2) > 12
+    m[:205, :] = False                   # 顶部 HUD 文本块 + 三排按钮：参考图按默认件渲，
+                                         # 文字/高亮态与本格不同，会被差分抓成假段。
+                                         # 这 6 个机位里模型最低也从 y~205 起，切掉不伤判据。
+    m[455:500, 500:620] = False        # 右下角水印
+    return m
+
+
+MIN_BAND_PX = 800        # 小于这块面积的段 = 描边线/抗锯齿细行，不当一个"部件"
+
+
+def bands(m, min_px=25, gap=3):
+    """按行切成连续段，再按面积滤掉细行（描边线）。段数 >1 = 剪影断裂
+    （有部件悬空 / 被剔除 / 没接上）。真缺陷的量级是几千像素（书架侧板那次是 2429）。"""
+    on = m.sum(axis=1) >= min_px
+    out, y = [], 0
+    while y < len(on):
+        if on[y]:
+            y0 = y
+            while y < len(on) and (on[y] or on[y + 1:y + 1 + gap].any()):
+                y += 1
+            if int(m[y0:y].sum()) >= MIN_BAND_PX:
+                out.append((y0, y))
+        y += 1
+    return out
 
 
 def sheet(item):
@@ -157,11 +197,33 @@ def main():
                 bad.append((os.path.basename(p), err))
     for name, err in bad:
         print("  [blank] %s: %s" % (name, err))
+    # 剪影连通性：每个机位渲一张空场景，逐格差分后按行看有没有断成几截
+    for v in VIEWS:
+        shoot((EMPTY, EMPTY, v, True))
+    split = []
+    for v in VIEWS:
+        ev = cell(EMPTY, EMPTY, v, True)
+        if not os.path.exists(ev):
+            continue
+        e0 = np.asarray(Image.open(ev).convert("RGB")).astype(int)
+        for i in ITEMS:
+            for r in ROTS:
+                p = cell(i, r, v)
+                if not os.path.exists(p):
+                    continue
+                m = model_mask(np.asarray(Image.open(p).convert("RGB")).astype(int), e0)
+                n = len(bands(m))
+                if n > 1:
+                    split.append("%s/%s/%s 断成 %d 段" % (i, r, v, n))
+    for s_ in split:
+        print("  [split] " + s_)
     for i in ITEMS:
         print("sheet:", sheet(i))
     print("overview:", overview())
-    print("结论:", "PASS %d 格全出图" % len(jobs) if not bad else "FAIL %d 格没渲染出东西" % len(bad))
-    return 0 if not bad else 1
+    ok = not bad and not split
+    print("结论:", "PASS %d 格全出图、剪影无断裂" % len(jobs) if ok else
+          "FAIL 没出图 %d 格 / 剪影断裂 %d 格" % (len(bad), len(split)))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
