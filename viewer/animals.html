@@ -1,0 +1,452 @@
+<!-- AI生成 · 动物原型离线预览（与 Animal3D.cs 参数一一对应） -->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>动物原型预览</title>
+<style>
+  html,body{margin:0;height:100%;background:#20242c;font-family:Consolas,monospace;overflow:hidden}
+  #app{position:fixed;inset:0}
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.65;
+       background:rgba(0,0,0,.55);padding:9px 11px;border-radius:4px;z-index:9}
+  #hud b{color:#7fd1ff}
+  #sp{position:fixed;right:10px;top:8px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;
+      justify-content:flex-end;max-width:64vw}
+  #vw{position:fixed;right:10px;top:42px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
+         padding:5px 9px;font-size:12px;cursor:pointer}
+  button:hover{background:#3d465c}
+  button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<div id="sp"></div>
+<div id="vw"></div>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+// ============================================================
+//  与 Source/RimFirstPerson3D/Animal3D.cs 的 BuildModel() 逐项对应。
+//  约定（同 Model3D.cs）：
+//    · Part 的 pos.y = 该部件的**底面**高度（球体亦然，球心 = pos.y + size.y/2）
+//    · 部件先按 Euler(pitch, yaw, 0) 绕自身原点旋转，再平移到 pos
+//    · Unity 默认欧拉序为 ZXY -> three.js 用 'YXZ' 才等价（roll 恒为 0）
+//  尺寸 L 与 Animal3D 一致：L = 原版 drawSize × 0.72。预览统一 L=1，
+//  以便横向比较各原型的**形体比例**（比例才是本轮的验收点）。
+// ============================================================
+
+const parts = [];
+const add = (kind, pos, size, opt = {}) =>
+  parts.push({ kind, pos, size, yaw: opt.yaw || 0, pitch: opt.pitch || 0 });
+const Has = (s, ...ks) => ks.some(k => s.includes(k));
+
+function Legs4(L, fz, fx, h, r) {
+  const x = fx * L, z = fz * L;
+  add('cyl', [-x, 0, z], [r, h, r]);
+  add('cyl', [ x, 0, z], [r, h, r]);
+  add('cyl', [-x, 0, -z], [r, h, r]);
+  add('cyl', [ x, 0, -z], [r, h, r]);
+}
+function Ears(top, spread, r, h) {
+  add('cone', [top[0] - spread * 0.42, top[1] - h * 0.3, top[2]], [r * 2, h, r * 1.4], { pitch: -15, yaw: -20 });
+  add('cone', [top[0] + spread * 0.42, top[1] - h * 0.3, top[2]], [r * 2, h, r * 1.4], { pitch: -15, yaw: 20 });
+}
+
+function build(n, a, L) {
+  const bushyTail = Has(n, 'fox', 'wolf', 'cat', 'lynx', 'cougar', 'husky', 'labrador', 'terrier', 'warg', 'raccoon', 'squirrel');
+  const tailUp    = Has(n, 'cat', 'squirrel', 'monkey', 'terrier');
+  const antlers   = Has(n, 'deer', 'elk', 'caribou', 'moose');
+  const horns     = Has(n, 'ibex', 'goat', 'bison', 'yak', 'cow', 'ox', 'thrumbo', 'muffalo');
+  const tusks     = Has(n, 'elephant', 'boar', 'wildboar', 'mastodon', 'walrus');
+
+  switch (a) {
+    case 'Blob': case 'LongNeck': {
+      const bl = .76 * L, bh = .60 * L, bw = .62 * L, legH = .10 * L;
+      Legs4(L, .26, .22, legH, .09 * L);
+      add('sph', [0, legH, -.02 * L], [bw, bh, bl]);
+      add('sph', [0, legH - .02 * L, -.02 * L], [bw * 1.08, bh * .42, bl * 1.06]);
+      if (a === 'LongNeck') {
+        const neckL = .42 * L;
+        add('cyl', [0, legH + bh * .62, bl * .30], [.20 * L, neckL, .20 * L], { pitch: 40 });
+        const hp = [0, legH + bh * .62 + neckL * .77, bl * .30 + neckL * .64];
+        const hr = .30 * L;
+        add('sph', [hp[0], hp[1] - hr * .5, hp[2]], [hr * .9, hr, hr * 1.15]);
+        add('sph', [hp[0], hp[1] - hr * .45, hp[2] + hr * .55], [hr * .55, hr * .5, hr * .6]);
+        if (n.includes('thrumbo')) add('cone', [hp[0], hp[1] + hr * .25, hp[2] + hr * .3], [.10 * L, .42 * L, .10 * L], { pitch: 25 });
+        Ears([hp[0], hp[1] + hr * .3, hp[2]], hr * .9, .07 * L, .12 * L);
+      } else {
+        const hr = .34 * L, hp = [0, legH + bh * .18, bl * .46];
+        add('sph', hp, [hr * .85, hr * 1.15, hr * .95]);
+        if (horns) {
+          add('cone', [hp[0] - hr * .35, hp[1] + hr, hp[2]], [.07 * L, .16 * L, .07 * L], { pitch: -20, yaw: -25 });
+          add('cone', [hp[0] + hr * .35, hp[1] + hr, hp[2]], [.07 * L, .16 * L, .07 * L], { pitch: -20, yaw: 25 });
+        }
+      }
+      add('cone', [0, legH + bh * .5, -bl * .46], [.10 * L, .16 * L, .10 * L], { pitch: -140 });
+      break;
+    }
+    case 'Pachyderm': {
+      const bl = .74 * L, bh = .58 * L, bw = .56 * L, legH = .22 * L;
+      Legs4(L, .24, .24, legH + .08 * L, .12 * L);
+      add('sph', [0, legH, -.04 * L], [bw, bh, bl]);
+      const hr = .36 * L, hp = [0, legH + bh * .30, bl * .46];
+      add('sph', hp, [hr * .95, hr * .95, hr]);
+      if (Has(n, 'elephant', 'mastodon')) {
+        add('cyl', [hp[0], hp[1] + hr * .35, hp[2] + hr * .42], [.11 * L, .46 * L, .11 * L], { pitch: 150 });
+        add('box', [hp[0] - hr * .55, hp[1] + hr * .25, hp[2] - hr * .1], [.05 * L, .30 * L, .26 * L], { yaw: 20 });
+        add('box', [hp[0] + hr * .55, hp[1] + hr * .25, hp[2] - hr * .1], [.05 * L, .30 * L, .26 * L], { yaw: -20 });
+      }
+      if (n.includes('rhino')) add('cone', [hp[0], hp[1] + hr * .55, hp[2] + hr * .45], [.09 * L, .26 * L, .09 * L], { pitch: 35 });
+      if (tusks) {
+        add('cone', [hp[0] - hr * .22, hp[1] + hr * .15, hp[2] + hr * .4], [.05 * L, .22 * L, .05 * L], { pitch: 70 });
+        add('cone', [hp[0] + hr * .22, hp[1] + hr * .15, hp[2] + hr * .4], [.05 * L, .22 * L, .05 * L], { pitch: 70 });
+      }
+      add('cone', [0, legH + bh * .55, -bl * .46], [.07 * L, .22 * L, .07 * L], { pitch: -150 });
+      break;
+    }
+    case 'Shell': {
+      const sl = .72 * L, sh = .32 * L, sw = .62 * L, legH = .06 * L;
+      Legs4(L, .30, .26, legH + .05 * L, .08 * L);
+      add('sph', [0, legH, 0], [sw, sh, sl]);
+      add('sph', [0, legH + sh * .5, 0], [sw * .9, sh * .9, sl * .9]);
+      const hr = .16 * L;
+      add('sph', [0, legH + .02 * L, sl * .46], [hr, hr * .9, hr * 1.2]);
+      add('cone', [0, legH + .04 * L, -sl * .46], [.06 * L, .12 * L, .06 * L], { pitch: -110 });
+      break;
+    }
+    case 'Reptile': {
+      const frog = Has(n, 'frog', 'toad');
+      const bl = (frog ? .46 : .62) * L, bh = (frog ? .30 : .22) * L, bw = (frog ? .44 : .34) * L, legH = .10 * L;
+      const lx = .13 * L, lz = (frog ? .14 : .20) * L, ll = (frog ? .20 : .16) * L, lr = .05 * L;
+      add('cyl', [-lx, .14 * L,  lz], [lr, ll, lr], { yaw: -90, pitch: 115 });
+      add('cyl', [ lx, .14 * L,  lz], [lr, ll, lr], { yaw:  90, pitch: 115 });
+      add('cyl', [-lx, .14 * L, -lz], [lr, ll, lr], { yaw: -90, pitch: 115 });
+      add('cyl', [ lx, .14 * L, -lz], [lr, ll, lr], { yaw:  90, pitch: 115 });
+      add('sph', [0, legH, -.02 * L], [bw, bh, bl]);
+      const hr = (frog ? .26 : .20) * L, hp = [0, legH + bh * (frog ? .45 : .35), bl * .46];
+      add('sph', hp, [hr * .9, hr * .7, hr * 1.1]);
+      add('sph', [hp[0], hp[1] - hr * .05, hp[2] + hr * .55], [hr * .55, hr * .4, hr * .5]);
+      if (!frog) {
+        for (let i = 0; i < 4; i++) add('cone', [0, legH + bh * .85, (-.18 + i * .12) * L], [.05 * L, .10 * L, .05 * L]);
+        for (let i = 0; i < 3; i++) add('sph', [0, legH + bh * .4, (-.44 - i * .17) * L], [(.18 - i * .045) * L, (.13 - i * .03) * L, .22 * L]);
+      }
+      break;
+    }
+    case 'Insect': {
+      const ab = .46 * L, th = .30 * L, legH = .14 * L;
+      add('sph', [0, legH, -.20 * L], [ab * .9, ab * .75, ab]);
+      add('sph', [0, legH + .02 * L, .22 * L], [th * .95, th * .85, th]);
+      for (let i = 0; i < 3; i++) {
+        const z = (.20 - i * .18) * L;
+        add('cyl', [-.10 * L, .19 * L, z], [.035 * L, .30 * L, .035 * L], { yaw: -90, pitch: 130 });
+        add('cyl', [ .10 * L, .19 * L, z], [.035 * L, .30 * L, .035 * L], { yaw: 90, pitch: 130 });
+      }
+      add('cone', [-.06 * L, legH + .05 * L, .36 * L], [.04 * L, .16 * L, .04 * L], { pitch: 80, yaw: 15 });
+      add('cone', [ .06 * L, legH + .05 * L, .36 * L], [.04 * L, .16 * L, .04 * L], { pitch: 80, yaw: -15 });
+      break;
+    }
+    case 'Serpent': {
+      add('sph', [0, 0, 0], [.62 * L, .18 * L, .60 * L]);
+      add('sph', [.06 * L, .10 * L, -.04 * L], [.44 * L, .14 * L, .42 * L]);
+      const neckL = .42 * L;
+      add('cyl', [0, .12 * L, .12 * L], [.11 * L, neckL, .11 * L], { pitch: 18 });
+      const hp = [0, .12 * L + neckL * .95, .12 * L + neckL * .31];
+      add('sph', [hp[0], hp[1] - .06 * L, hp[2]], [.14 * L, .12 * L, .20 * L]);
+      add('box', [hp[0], hp[1] - .10 * L, hp[2] - .02 * L], [.22 * L, .14 * L, .03 * L]);
+      break;
+    }
+    case 'Bird': case 'TallBird': {
+      const tall = a === 'TallBird';
+      const bl = (tall ? .52 : .46) * L, bh = (tall ? .46 : .40) * L, bw = .40 * L;
+      const legH = (tall ? .42 : .14) * L, legR = (tall ? .045 : .03) * L;
+      add('cyl', [-.08 * L, 0, -.02 * L], [legR, legH + .06 * L, legR]);
+      add('cyl', [ .08 * L, 0, -.02 * L], [legR, legH + .06 * L, legR]);
+      add('sph', [0, legH, 0], [bw, bh, bl]);
+      const neckL = (tall ? .46 : .14) * L;
+      add('cyl', [0, legH + bh * .70, bl * .28], [(tall ? .09 : .12) * L, neckL, (tall ? .09 : .12) * L], { pitch: tall ? 12 : 35 });
+      const hr = (tall ? .16 : .18) * L;
+      const hp = [0, legH + bh * .70 + neckL * (tall ? .95 : .8), bl * .28 + neckL * (tall ? .2 : .55)];
+      add('sph', [hp[0], hp[1] - hr * .4, hp[2]], [hr, hr * .95, hr * 1.05]);
+      add('cone', [hp[0], hp[1] - hr * .15, hp[2] + hr * .5], [.06 * L, .14 * L, .06 * L], { pitch: 95 });
+      if (Has(n, 'chicken', 'turkey')) add('box', [hp[0], hp[1] + hr * .5, hp[2]], [.03 * L, .10 * L, .14 * L]);
+      add('box', [0, legH + bh * .55, -bl * .42], [.22 * L, .06 * L, .26 * L], { pitch: -35 });
+      break;
+    }
+    case 'Primate': {
+      const bl = .46 * L, bh = .44 * L, bw = .38 * L, legH = .18 * L;
+      Legs4(L, .22, .18, legH + .06 * L, .06 * L);
+      add('sph', [0, legH, 0], [bw, bh, bl]);
+      const hr = .30 * L, hp = [0, legH + bh * .62, bl * .34];
+      add('sph', hp, [hr, hr, hr]);
+      Ears([hp[0], hp[1] + hr * .45, hp[2]], hr, .06 * L, .08 * L);
+      add('cyl', [0, legH + bh * .5, -bl * .44], [.05 * L, .48 * L, .05 * L], { pitch: -40 });
+      break;
+    }
+    default: { // Quad / Slender / Stocky / Rodent
+      const slender = a === 'Slender', stocky = a === 'Stocky', rodent = a === 'Rodent';
+      const bl = (rodent ? .56 : .64) * L;
+      const bh = (stocky ? .42 : rodent ? .36 : .34) * L;
+      const bw = (stocky ? .36 : .30) * L;
+      const legH = (slender ? .32 : stocky ? .20 : rodent ? .10 : .22) * L;
+      const legR = (slender ? .045 : stocky ? .08 : .05) * L;
+      Legs4(L, .24, .12, legH + .08 * L, legR);
+      add('sph', [0, legH, 0], [bw, bh, bl]);
+      const neckL = (slender ? .22 : .10) * L, hr = (rodent ? .26 : .22) * L;
+      const np = [0, legH + bh * .62, bl * .36];
+      add('cyl', np, [.14 * L, neckL, .14 * L], { pitch: slender ? 38 : 55 });
+      const hp = [np[0], np[1] + neckL * (slender ? .78 : .57) - hr * .2, np[2] + neckL * (slender ? .62 : .82)];
+      add('sph', hp, [hr * .95, hr, hr * 1.05]);
+      add('sph', [hp[0], hp[1] + hr * .15, hp[2] + hr * .55], [hr * .55, hr * .48, hr * .6]);
+      Ears([hp[0], hp[1] + hr * .85, hp[2] - hr * .1], hr * .9, (rodent ? .07 : .06) * L, (rodent ? .14 : .11) * L);
+      if (antlers) {
+        add('cone', [hp[0] - hr * .3, hp[1] + hr * .95, hp[2] - hr * .1], [.05 * L, .30 * L, .05 * L], { pitch: -25, yaw: -35 });
+        add('cone', [hp[0] + hr * .3, hp[1] + hr * .95, hp[2] - hr * .1], [.05 * L, .30 * L, .05 * L], { pitch: -25, yaw: 35 });
+      } else if (horns) {
+        add('cone', [hp[0] - hr * .3, hp[1] + hr * .9, hp[2] - hr * .1], [.05 * L, .18 * L, .05 * L], { pitch: -35, yaw: -20 });
+        add('cone', [hp[0] + hr * .3, hp[1] + hr * .9, hp[2] - hr * .1], [.05 * L, .18 * L, .05 * L], { pitch: -35, yaw: 20 });
+      }
+      if (tusks) {
+        add('cone', [hp[0] - hr * .25, hp[1] + hr * .05, hp[2] + hr * .6], [.04 * L, .12 * L, .04 * L], { pitch: 60 });
+        add('cone', [hp[0] + hr * .25, hp[1] + hr * .05, hp[2] + hr * .6], [.04 * L, .12 * L, .04 * L], { pitch: 60 });
+      }
+      const tp = [0, legH + bh * .55, -bl * .46];
+      if (bushyTail) add('sph', [tp[0], tp[1] + (tailUp ? .10 : -.04) * L, tp[2] - .14 * L], [.14 * L, .14 * L, .34 * L], { pitch: tailUp ? 50 : -20 });
+      else add('cyl', tp, [.04 * L, (rodent ? .30 : .22) * L, .04 * L], { pitch: tailUp ? -30 : -145 });
+      break;
+    }
+  }
+}
+
+// 原型归类（与 Animal3D.ArchOf 同序）
+function archOf(n) {
+  if (Has(n, 'thrumbo', 'alpaca', 'dromedary', 'camel', 'giraffe', 'llama')) return 'LongNeck';
+  if (Has(n, 'muffalo', 'bison', 'yak', 'megasloth', 'sheep', 'mammoth', 'alope', 'muskox', 'seal', 'walrus')) return 'Blob';
+  if (Has(n, 'elephant', 'rhino', 'hippo', 'mastodon')) return 'Pachyderm';
+  if (Has(n, 'tortoise', 'turtle', 'armadillo', 'crab', 'snail', 'slug')) return 'Shell';
+  if (Has(n, 'iguana', 'lizard', 'gecko', 'skink', 'monitor', 'komodo', 'alligator', 'croc', 'gator', 'frog', 'toad', 'salamander', 'newt')) return 'Reptile';
+  if (Has(n, 'spider', 'scarab', 'spelopede', 'insect', 'beetle', 'megaworm')) return 'Insect';
+  if (Has(n, 'cobra', 'snake', 'serpent', 'viper')) return 'Serpent';
+  if (Has(n, 'emu', 'ostrich', 'cassowary', 'flamingo', 'heron', 'crane', 'stork')) return 'TallBird';
+  if (Has(n, 'chicken', 'duck', 'goose', 'turkey', 'bird', 'parrot', 'pigeon', 'toucan', 'crow', 'macaw', 'peacock', 'penguin', 'quail', 'sparrow', 'swan', 'vulture', 'raven', 'owl', 'eagle', 'hawk')) return 'Bird';
+  if (Has(n, 'monkey', 'ape', 'chimp', 'gorilla', 'dryad', 'baboon')) return 'Primate';
+  if (Has(n, 'rat', 'squirrel', 'chinchilla', 'guineapig', 'hare', 'rabbit', 'boomrat', 'capybara', 'beaver', 'raccoon', 'hamster', 'vole', 'porcupine', 'prairie')) return 'Rodent';
+  if (Has(n, 'horse', 'donkey', 'deer', 'caribou', 'elk', 'gazelle', 'ibex', 'goat', 'antelope', 'moose')) return 'Slender';
+  if (Has(n, 'bear', 'warg', 'boar', 'pig', 'cow', 'ox', 'wildboar', 'husky', 'labrador', 'badger', 'panda', 'wolverine')) return 'Stocky';
+  return 'Quad';
+}
+
+// 原版 approx drawSize（格），用于把 L 还原成真实体量对比
+const SPECIES = [
+  ['muffalo',      2.5], ['thrumbo',     4.0], ['elephant',    3.8],
+  ['cow',          2.0], ['horse',       2.2], ['bear',        1.6],
+  ['wolf_timber',  1.1], ['cat',         0.6], ['squirrel',    0.4],
+  ['hare',         0.5], ['chicken',     0.4], ['ostrich',     1.6],
+  ['tortoise',     0.9], ['megaspider',  0.8], ['cobra',       1.4],
+  ['monkey',       0.7], ['deer',        1.7], ['alpaca',      1.6],
+  ['alligator',    1.6], ['monitorlizard',1.2], ['bullfrog',    0.5],
+  ['armadillo',    0.7], ['mastodon',    3.6], ['gorilla',     1.3],
+  ['flamingo',     1.1], ['penguin',     0.6], ['boomalope',   2.4],
+];
+
+const COL = {
+  Blob:0xb9a98a, LongNeck:0xd8d2c4, Pachyderm:0x9a9a9a, Shell:0x7d6a4a,
+  Insect:0x5a4a3a, Serpent:0x8a8a6a, Bird:0xe8e8e0, TallBird:0xd8c8b0,
+  Primate:0x8a7a68, Quad:0xa08a6a, Slender:0xb59a74, Stocky:0x6a5a4a, Rodent:0x9a8a7a, Reptile:0x6a8a4a,
+};
+
+// ---------------------------------------------------------------- three
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1);
+renderer.setClearColor(0x20242c, 1);
+app.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x20242c);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.02, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+scene.add(new THREE.AmbientLight(0xffffff, 0.66));
+const L1 = new THREE.DirectionalLight(0xffffff, 0.62); L1.position.set(3, 6, 4); scene.add(L1);
+const L2 = new THREE.DirectionalLight(0xffffff, 0.26); L2.position.set(-4, 3, -3); scene.add(L2);
+
+const grid = new THREE.GridHelper(24, 24, 0x4a5568, 0x2e3446);
+grid.position.y = -0.002; scene.add(grid);
+
+// 单位参考盒（1 格 = 1 米）——挂在 root 上，随模型一起切换/销毁，避免累积
+function refBox(parent, x) {
+  const g = new THREE.BoxGeometry(1, 1, 1);
+  const m = new THREE.MeshLambertMaterial({ color: 0x3a4a5a, transparent: true, opacity: 0.35 });
+  const b = new THREE.Mesh(g, m); b.position.set(x, 0.5, 0); parent.add(b);
+  const e = new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0x6a8aa8 }));
+  e.position.copy(b.position); parent.add(e);
+}
+
+const OUTLINE = 0x14161c;
+function addPart(root, p) {
+  const [w, h, d] = p.size;
+  let geo;
+  if (p.kind === 'box') geo = new THREE.BoxGeometry(1, 1, 1);
+  else if (p.kind === 'cyl') geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
+  else if (p.kind === 'cone') geo = new THREE.ConeGeometry(0.5, 1, 14);
+  else geo = new THREE.SphereGeometry(0.5, 14, 10);
+  const mat = new THREE.MeshLambertMaterial({ color: p.color, flatShading: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.scale.set(w, h, d);
+  mesh.position.set(0, h * 0.5, 0);
+  const grp = new THREE.Group();
+  // Unity Quaternion.Euler(x=pitch, y=yaw, z=0) 默认 ZXY 序；roll=0 时等价 YXZ
+  grp.rotation.order = 'YXZ';
+  grp.rotation.set(THREE.MathUtils.degToRad(p.pitch), THREE.MathUtils.degToRad(p.yaw), 0);
+  grp.position.set(p.pos[0], p.pos[1], p.pos[2]);
+  grp.add(mesh);
+  // 描边壳（背面外扩）
+  const om = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }));
+  om.scale.set(w * 1.05 + 0.02, h * 1.03 + 0.02, d * 1.05 + 0.02);
+  om.position.set(0, h * 0.5, 0);
+  const og = new THREE.Group();
+  og.rotation.order = 'YXZ';
+  og.rotation.set(grp.rotation.x, grp.rotation.y, 0);
+  og.position.set(p.pos[0], p.pos[1], p.pos[2]);
+  og.add(om);
+  root.add(og); root.add(grp);
+}
+
+let root = null, curL = 1;
+function show(name) {
+  if (root) { scene.remove(root); root.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
+  root = new THREE.Group(); scene.add(root);
+  parts.length = 0;
+  const entry = SPECIES.find(s => s[0] === name);
+  const drawSize = entry ? entry[1] : 1.0;
+  const L = drawSize * 0.72;           // 与 Animal3D 一致
+  curL = L;
+  const a = archOf(name);
+  build(name, a, L);
+  const col = COL[a] || 0xa08a6a;
+  for (const p of parts) { p.color = col; addPart(root, p); }
+  refBox(root, -L - 0.9);
+  draw(name, a, L, parts.length);
+}
+
+// ---------------------------------------------------------------- 视图
+const VIEWS = {
+  '侧视·东': { off: [ 1.0, 0.42, 0.0] },
+  '主视·南': { off: [ 0.0, 0.42,-1.0] },
+  '后视·北': { off: [ 0.0, 0.42, 1.0] },
+  '俯视':    { off: [ 0.02, 1.0, 0.02] },
+  '45°':     { off: [ 0.8, 0.55,-0.8] },
+};
+const bar = document.getElementById('sp'), vbar = document.getElementById('vw');
+const hud = document.getElementById('hud');
+let curSp = 'muffalo', curV = '侧视·东';
+// 取景：按已知的 L 定框，不依赖包围盒探测（headless 下 Box3 探测曾使首帧抛错、
+// 渲染循环根本没起来）。中心取身高的 0.45L，半径随 L 线性放大。
+function focus() {
+  const c = new THREE.Vector3(0, 0.45 * curL, 0);
+  const r = Math.max(1.6 * curL, 1.3) * 2.0;
+  const o = VIEWS[curV].off;
+  camera.position.set(c.x + o[0] * r, c.y + o[1] * r, c.z + o[2] * r);
+  controls.target.copy(c); controls.update();
+}
+function setView(k) { curV = k; [...vbar.children].forEach(b => b.classList.toggle('on', b.dataset.v === k)); focus(); draw(); }
+Object.keys(VIEWS).forEach(k => {
+  const b = document.createElement('button'); b.textContent = k; b.dataset.v = k; b.onclick = () => setView(k); vbar.appendChild(b);
+});
+const q = new URLSearchParams(location.search);
+if (q.get('species')) curSp = q.get('species');
+SPECIES.forEach(([n]) => {
+  const b = document.createElement('button'); b.textContent = n; b.dataset.s = n;
+  b.onclick = () => { curSp = n; [...bar.children].forEach(x => x.classList.toggle('on', x.dataset.s === n)); show(curSp); setView(curV); };
+  bar.appendChild(b);
+});
+if (VIEWS[q.get('view')]) curV = q.get('view');
+addEventListener('keydown', e => {
+  const ks = Object.keys(VIEWS), i = ks.indexOf(curV);
+  if (e.key === 'ArrowRight') setView(ks[(i + 1) % ks.length]);
+  if (e.key === 'ArrowLeft') setView(ks[(i - 1 + ks.length) % ks.length]);
+});
+let last = null;
+function draw(name, a, L, n) {
+  hud.innerHTML =
+    `<b>${name}</b> · 原型 <b>${a}</b><br>` +
+    `L = drawSize(${(SPECIES.find(s => s[0] === name)?.[1] ?? 1).toFixed(2)}) × 0.72 = ${L.toFixed(3)} 格<br>` +
+    `部件数 <b>${n}</b> · 网格 3x3 每格 1 米 · 左侧半透明盒 = 1 米参考<br>` +
+    `约定：pos.y = 部件底面 · 旋转 Euler(pitch,yaw,0)，three 用 'YXZ' 等价 Unity ZXY<br>` +
+    `← → 切视角 · 拖拽旋转 · 滚轮缩放`;
+}
+// 渲染循环先于首次 show() 启动，且对 root 判空：任何后续取景/构建异常都不能
+// 让画面停在空白。自动摆头只在 ?spin=1 时开启（截图验收要的是正侧视，不能歪）。
+let t = 0, manual = false;
+const SPIN = q.get('spin') === '1';
+controls.addEventListener('start', () => { manual = true; });
+function loop() {
+  requestAnimationFrame(loop); controls.update();
+  if (SPIN && root && !manual) { t += 0.004; root.rotation.y = Math.sin(t) * 0.5; }
+  renderer.render(scene, camera);
+}
+loop();
+try { show(curSp); } catch (e) { console.error('show failed', e); }
+try { setView(curV); } catch (e) { console.error('setView failed', e); }
+[...bar.children].forEach(x => x.classList.toggle('on', x.dataset.s === curSp));
+
+// ---- 结构自检（?report=1）----
+// 逐只打印：部件数 / 网格数 / 三角数 / 包围盒（米）/ UV 范围。
+// 用途：无头环境里我看不到图，这是唯一能核验下面两件事的通道 ——
+//   1) 描边壳是否真的被建出来（meshes > parts），且比本体大（bbox 被 inflate 撑开）；
+//   2) UV 是否真的落在贴图中央方块内（AnimalTextureFill），而不是采到黑边。
+// 注意：它检查的是**模型定义**，不是渲染结果，不能替代肉眼验收；
+// 截图（shots/animal_*.png）仍然留给老板看。
+if (q.get('report') === '1') {
+  const lines = [];
+  for (const [name, ds, arch] of SPECIES) {
+    try { show(name); } catch (e) { lines.push(name + ' SHOW-FAIL ' + e.message); continue; }
+    let tri = 0, meshes = 0;
+    const uvs = [];
+    root.traverse(o => {
+      if (!o.geometry) return;
+      meshes++;
+      const ix = o.geometry.index, pos = o.geometry.attributes.position;
+      tri += ix ? ix.count / 3 : (pos ? pos.count / 3 : 0);
+      const a = o.geometry.attributes.uv;
+      if (a) {
+        let u0 = 9, u1 = -9, v0 = 9, v1 = -9;
+        for (let i = 0; i < a.count; i++) {
+          u0 = Math.min(u0, a.getX(i)); u1 = Math.max(u1, a.getX(i));
+          v0 = Math.min(v0, a.getY(i)); v1 = Math.max(v1, a.getY(i));
+        }
+        uvs.push('[' + u0.toFixed(2) + ',' + u1.toFixed(2) + ']x[' + v0.toFixed(2) + ',' + v1.toFixed(2) + ']');
+      }
+    });
+    let bb = 'n/a';
+    try {
+      const b = new THREE.Box3().setFromObject(root);
+      const c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3());
+      bb = s.x.toFixed(2) + 'x' + s.y.toFixed(2) + 'x' + s.z.toFixed(2)
+         + '@(' + c.x.toFixed(2) + ',' + c.y.toFixed(2) + ',' + c.z.toFixed(2) + ')';
+    } catch (e) { bb = 'BOXFAIL ' + e.message; }
+    lines.push(name + ' | ' + arch + ' | L=' + (ds * 0.72).toFixed(2) + 'm | parts=' + parts.length
+      + ' meshes=' + meshes + (meshes > parts.length ? '(+hull)' : '(NO-HULL)')
+      + ' | tris=' + Math.round(tri) + ' | bbox ' + bb + ' | uv ' + (uvs[0] || '-'));
+  }
+  const pre = document.createElement('pre');
+  pre.id = 'report';
+  pre.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:20;font:11px/1.35 Consolas,monospace;color:#bcd;background:rgba(0,0,0,.55);padding:8px;white-space:pre';
+  pre.textContent = lines.join('\n');
+  // 同时逐行打到控制台：headless 下 --enable-logging=stderr 能把它当文本捞出来
+  for (const l of lines) console.log('FP3D| ' + l);
+  document.body.appendChild(pre);
+  try { show(curSp); setView(curV); } catch (e) { console.error(e); }
+}
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); draw();
+});
+window.__show = n => { curSp = n; show(n); setView(curV); };
+window.__view = setView;
+window.__stopSpin = () => { manual = true; root.rotation.y = 0; };
+</script>
+</body>
+</html>

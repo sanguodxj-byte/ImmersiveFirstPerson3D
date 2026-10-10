@@ -1,0 +1,5 @@
+# AI生成
+D:/rim mod/FirstPerson3D/Source/RimFirstPerson3D/BuildingLayer3D.cs:184:            if (Furniture3D.Handles(t)) return;
+D:/rim mod/FirstPerson3D/Source/RimFirstPerson3D/BuildingLayer3D.cs:242:            if (!Furniture3D.Enabled) return;
+D:/rim mod/FirstPerson3D/Source/RimFirstPerson3D/BuildingLayer3D.cs:251:                    if (!Furniture3D.Handles(t)) continue;
+D:/rim mod/FirstPerson3D/Source/RimFirstPerson3D/BuildingLayer3D.cs:254:                    Furniture3D.TryDraw(t, new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z));

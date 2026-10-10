@@ -15,6 +15,10 @@ import furn_atlas as FA          # noqa: E402
 import furn_uv_check as CK       # noqa: E402
 
 F = "Core/textures/things/building/furniture"
+FB = F + "/bed"
+
+BEDFAM = ("doublebed", "royalbed", "hospitalbed", "bedroll", "bedrolldouble",
+          "sleepspot", "doublesleepspot")
 
 DRAFT = {
     "armchair": {
@@ -39,6 +43,9 @@ DRAFT = {
     "diningchair": {v: {"path": f"{F}/diningchair_%s.png" % v}
                     for v in ("south", "north", "east")},
 }
+for _it in BEDFAM:
+    DRAFT[_it] = {v: {"path": f"{FB}/{_it}_{v}.png"}
+                  for v in ("south", "north", "east")}
 
 
 def band_ink(src, r):
@@ -67,12 +74,17 @@ def row_span(opaque, y):
 
 def fit_bands(src, k=3, vert=False):
     """把图切成 k 条横向带：每条带的 x 区间 = 该带各行最长不透明段的交集，
-    目标 = 覆盖内容像素最多。返回 (带列表, 覆盖率)。vert=True 先转置再切（宽体件用）。"""
+    目标 = 覆盖内容像素最多。返回 (带列表, 覆盖率)。vert=True 先转置再切（宽体件用）。
+    只在**内容包围盒**内切带：源图四周的透明边距不是床板，切进去会得到全 None 的带。"""
     if vert:
         src = np.transpose(src, (1, 0, 2))
     ct = CK.content_mask(src)
     op = src[:, :, 3] >= 128
     H, W = ct.shape
+    rows = np.where(ct.any(axis=1))[0]
+    if len(rows) == 0:
+        return [], 0.0
+    rlo, rhi = int(rows[0]), int(rows[-1]) + 1
     spans = [row_span(op, y) for y in range(H)]
     total = int(ct.sum())
 
@@ -92,9 +104,12 @@ def fit_bands(src, k=3, vert=False):
         return (x0, a, x1, b, n)
 
     import itertools
+    cand = list(range(rlo + 4, rhi - 3, 4))
+    if len(cand) < k - 1:
+        return [], 0.0
     best = None
-    for cuts in itertools.combinations(range(8, H - 8, 8), k - 1):
-        bnd = (0,) + cuts + (H,)
+    for cuts in itertools.combinations(cand, k - 1):
+        bnd = (rlo,) + cuts + (rhi,)
         segs = [seg(bnd[i], bnd[i + 1]) for i in range(k)]
         if any(s is None for s in segs):
             continue
@@ -113,8 +128,12 @@ def main():
     if "pack" in sys.argv:
         for item in (sys.argv[2:] or DRAFT):
             for view, d in DRAFT[item].items():
-                src = FA.load(d["path"])
-                for k in (3, 4):
+                try:
+                    src = FA.load(d["path"])
+                except Exception as e:
+                    print(f"{item}.{view} 读图失败 {e}")
+                    continue
+                for k in (2, 3, 4):
                     for vert in (False, True):
                         bs, cov = fit_bands(src, k, vert)
                         print(f"{item}.{view} k={k}{'V' if vert else 'H'} "
