@@ -150,6 +150,13 @@ def check_atlas():
     return errs
 
 
+def dup_names(seg):
+    """SPEC 字面量文本里重复出现的顶层件名。Python dict 会静默只留最后一份，
+    前一份等于没写 —— 不查就会拿着旧坐标当真源。"""
+    names = re.findall(r'^    "([a-z0-9]+)": \{', seg, re.M)
+    return sorted({n for n in names if names.count(n) > 1})
+
+
 def check_code_alignment():
     """生成表 <-> C# 几何 双向对齐。"""
     errs = []
@@ -157,9 +164,24 @@ def check_code_alignment():
     csdir = os.path.join(FA.MOD, "Source", "RimFirstPerson3D")
     if not os.path.exists(gen):
         return [("nogt", "缺 FurnitureUVGen.cs，先跑 furn_atlas.py", "")]
+    # SPEC 是字面量 dict：同名键写两遍时 Python 静默只留最后一份，前一份等于不存在。
+    src = open(os.path.join(FA.MOD, "scripts", "furn_atlas.py"), encoding="utf-8").read()
+    seg = src[src.index("SPEC = {"):src.index("\nVIEWS_ORDER")]
+    for n in dup_names(seg):
+        errs.append(("dupkey", f"SPEC 里 {n} 写了多次，只有最后一份生效", "删掉重复块"))
     text = open(gen, encoding="utf-8").read()
-    KEY = r'"([a-z0-9]+\.[a-z]+\.[a-z]+)"'
+    # 键必须三段、每段以字母开头：否则 "0.2.0" 这类版本号会被当成取样区误报。
+    KEY = r'"([a-z][a-z0-9]*\.[a-z][a-z0-9]*\.[a-z][a-z0-9]*)"'
     keys = set(re.findall(KEY, text))
+    # 区段名带大写/下划线时，上面的正则整条匹配不上 -> 该键对账时隐形。先堵住这个洞。
+    for item, views in FA.SPEC.items():
+        for view, d in views.items():
+            for name in d:
+                if name in ("path", "discard"):
+                    continue
+                if not re.fullmatch(r"[a-z][a-z0-9]*", name):
+                    errs.append(("badkey", f"{item}.{view}.{name}: 区段名不是小写字母数字",
+                                 "改名，否则它逃过表<->代码对账"))
     used = set()
     for fn in sorted(os.listdir(csdir)):
         if not fn.endswith(".cs") or fn == "FurnitureUVGen.cs":
@@ -235,6 +257,12 @@ def fixtures():
             out.append((name, want, got))
     finally:
         FA.TEX = real_tex
+    # 顶层件名重复：该报的报（bed 写两遍），不该报的不报（各写一遍）
+    out.append(("fx-dupkey", ["bed"],
+                dup_names('SPEC = {\n    "bed": {\n    },\n    "bed": {\n    },\n'
+                          '    "stool": {\n    },\n}')))
+    out.append(("fx-dupkey-clean", [],
+                dup_names('SPEC = {\n    "bed": {\n    },\n    "stool": {\n    },\n}')))
     return out
 
 

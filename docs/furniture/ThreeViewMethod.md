@@ -23,6 +23,10 @@
 
 原版没画满三向的（如 stool 只有 east/north），按 south→north→east 顺序回退。
 
+**远端约定**：图里上部那块是"背对镜头的一端"——床的枕头、椅的靠背都在这一端。运行时用
+`Furniture3D.BackSign(rot)` 取它在模型长轴上的符号（南=+Z，北=-Z，东=-X，西=+X）。
+2026-10-10 修正：南向/北向的床头板与床尾板此前放反了。
+
 **不要**把整张贴图糊到六个面上（那是本 mod 之前的立板回退，第一人称下就是错的）。
 **不要**反推"美术相机俯角"再套公式：贴图是画出来的，不是投影出来的，
 不同图之间比例互不自洽（实测同一柜体的立面在南/东图里 29px vs 32px，
@@ -47,6 +51,10 @@
    座沿）和薄板四周一圈立边（台面/顶板 5cm 厚的边）**在图里根本没有对应像素**。
    这些面一律取 `wood`，不许拿别的朝向的立面段糊（`nowood` 报错）。
    `wood` 允许与 top/front 区重叠（它是同一块表面上再取一份干净样本），其它区之间仍不得重叠。
+9. **线稿型（白面 + 黑框，如 armchair）**：这类图没有"俯视段/立面段"之分，整件是一块圆角
+   白面。按行分带切 `top`/`back`/`front`/`arml`/`armr`，每带的 x 区间 = 该带各行最长不透明段
+   的交集（带内天然无洞）；板件边棱与圆柱仍走 `wood`。运行时用 `UvNames`/`PanelUv` 点名配区，
+   缺某朝向的某条带时按 south→north→east 回退。
 
 ## 2. 单一真源与产物
 
@@ -60,6 +68,8 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 ```
 
 判读用的放大对照表：`scripts/furn_views.py`（三视图并排 + 像素网格 + 行列刻度）。
+线稿型（圆角大白块）的分带坐标：`scripts/_furn_fit.py pack <件>` —— 按行/列求"无洞最长
+不透明段的交集带"，机器给候选、人判语义，别拿它代替看图。
 
 ## 3. 建模内核用法（`Model3D` / `ModelBuilder`）
 
@@ -77,12 +87,14 @@ Source/.../Furniture3D.cs 运行时：def→原型归类 + 基本体拼装 + 按
 ## 4. 本批已落地 / 待办
 
 已落地（校验 0 缺陷，编译 0 错 0 警）：`bed` `stool` `endtable` `dresser` `shelf`
-（含 `wood` 干净木面区 + 圆柱/薄边配区）。
+（含 `wood` 干净木面区 + 圆柱/薄边配区）、`armchair`（线稿型分带首例）。
 
 待办，按优先级：
-1. **diningchair / armchair / couch**：线稿型，座面靠背都是"白面 + 黑框"，
-   需要把笔画与材质分离后再定内区（本批已移出 SPEC，不是被跳过校验）。
-2. table1x2/2x2/2x4/3x3、bookcase、royalbed、hospitalbed、bedroll、sleepspot、
+1. **couch**：与 armchair 同类的圆角大白块，横带只能覆盖 ~96%，纵带（`_furn_fit.py pack`
+   的 V 模式）可到 99.4%，但扶手在两侧形成独立小块，要与 armchair 的扶手配区一起定。
+2. **diningchair**：圈背 + 椭圆坐垫 + 四条腿，白面被黑框切成互不相邻的小块，
+   横带/纵带都只能覆盖 ~97%，需要按连通块切区（下一件再补这块工具）。
+3. table1x2/2x2/2x4/3x3、bookcase、royalbed、hospitalbed、bedroll、sleepspot、
    lampstanding、plantpot、column、walllamp、floodlight、stele、Royalty throne/drape。
-3. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
-4. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图。
+4. 家具模型并入 chunk 合批（当前逐件 `DrawMesh`，与 Animal3D 同路）。
+5. 实机验证（GABS）：第一人称近看 + 三向旋转，确认四立面各取其图。

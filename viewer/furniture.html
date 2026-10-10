@@ -41,10 +41,11 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 //
 // 顶面 <- 当前朝向那张图的俯视段；四个立面各取自己那张图的立面段。
 // ===========================================================================
-const VER = 'wood1';
+const VER = 'armchair1';
 const M = {   // Metrics3D 镜像（改这里必须同步改 Metrics3D.cs）
   bedFrame:0.40, mattress:0.15, headboard:1.05, footboard:0.55, headThk:0.08,
   seat:0.45, slab:0.05, leg:0.07, nightstand:0.55, baseboard:0.10, counter:0.95,
+  armSeat:0.42, armBack:0.85, armArm:0.62, uph:0.16,
 };
 const ITEMS = {
   bed:      {arch:'bed',   w:1, d:2},
@@ -52,6 +53,7 @@ const ITEMS = {
   endtable: {arch:'endtable', w:1, d:1},
   dresser:  {arch:'dresser',  w:2, d:1},
   shelf:    {arch:'shelf',    w:2, d:1},
+  armchair: {arch:'armchair', w:2, d:2},
 };
 
 const app = document.getElementById('app');
@@ -119,6 +121,19 @@ function endPanelUv(arch, rot, xz, longZ){
   return u;
 }
 
+// 线稿型软包件：顶面/立面各点一条白面带（与 C# UvNames/PanelUv/BackSign 同口径）
+function uvNames(arch, rot, xz, tr, sr){
+  const v = viewOf(rot), t = Region(arch, v, tr), s = Region(arch, v, sr);
+  return {top:t, s4:[s,s,s,s], xz};
+}
+function panelUv(arch, rot, xz, face, longZ){
+  const v = viewOf(rot), t = Region(arch, v, 'top'), s = Region(arch, v, face), w = wood(arch, rot);
+  const s4 = [s, s, s, s];
+  if(longZ){ s4[2] = w; s4[3] = w; } else { s4[0] = w; s4[1] = w; }
+  return {top:t, s4, xz};
+}
+const backSign = r => (r==='south' ? 1 : r==='north' ? -1 : r==='east' ? -1 : 1);
+
 // ---------------------------------------------------------------- 网格拼装
 // dir: 0北(-Z) 1南(+Z) 2东(+X) 3西(-X)
 function G(){ return {pos:[],uvs:[],idx:[]}; }
@@ -179,7 +194,7 @@ function build(item, rot){
   const w = it.w, d = it.d;
   const longZ = (rot==='north'||rot==='south');
   const len = longZ?d:w, thick = longZ?w:d;
-  const headSign = rot==='north'?1: rot==='south'?-1: rot==='east'?-1:1;
+  const headSign = backSign(rot);
   if(it.arch==='bed'){
     box(g,uv0,0,0,0, w-0.06,M.bedFrame,d-0.06);
     box(g,uv0,0,M.bedFrame,0, w-0.20,M.mattress,d-0.18);
@@ -201,6 +216,17 @@ function build(item, rot){
     box(g, slabUv(it.arch,rot,[w,d]), 0,h,0, w*0.92,M.slab,d*0.92);
     box(g, faceUv(it.arch,rot,[w,d]), 0,M.baseboard,0, w*0.78,h-M.baseboard,d*0.72);
     legs(g, woodUv(it.arch,rot,[w,d]), w*0.36, M.baseboard+0.02, M.leg);
+  } else if(it.arch==='armchair'){
+    const sh=M.armSeat, t=M.uph, bs=backSign(rot);
+    box(g, uvNames(it.arch,rot,[w,d],'top','front'), 0,0,0, w*0.9,sh,d*0.86);
+    const ub = panelUv(it.arch,rot,[w,d],'back', longZ);
+    if(longZ) box(g,ub,0,sh,bs*(d/2-t/2), w*0.98,M.armBack-sh,t);
+    else      box(g,ub,bs*(w/2-t/2),sh,0, t,M.armBack-sh,d*0.98);
+    for(let i=0;i<2;i++){
+      const sgn = i? 1 : -1, ua = panelUv(it.arch,rot,[w,d], i?'armr':'arml', longZ);
+      if(longZ) box(g,ua,sgn*(w/2-t/2),0,0, t,M.armArm,d*0.8);
+      else      box(g,ua,0,0,sgn*(d/2-t/2), w*0.8,M.armArm,t);
+    }
   } else {
     const sh = it.arch==='shelf';
     const h = sh?0.85:M.counter;

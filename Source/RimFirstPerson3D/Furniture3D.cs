@@ -26,7 +26,7 @@ namespace RimFirstPerson3D
     // def 只用于定位：占几格、朝向。
     public static class Furniture3D
     {
-        private enum Arch { Bed, Stool, Nightstand, Cabinet, ShelfUnit }
+        private enum Arch { Bed, Stool, Nightstand, Cabinet, ShelfUnit, Armchair }
 
         private class Built
         {
@@ -52,6 +52,7 @@ namespace RimFirstPerson3D
             if (Has(n, "endtable", "nightstand")) { arch = Arch.Nightstand; return true; }
             if (Has(n, "dresser", "cabinet")) { arch = Arch.Cabinet; return true; }
             if (Has(n, "shelf", "bookcase")) { arch = Arch.ShelfUnit; return true; }
+            if (Has(n, "armchair")) { arch = Arch.Armchair; return true; }
             if (Has(n, "stool")) { arch = Arch.Stool; return true; }
             return false;
         }
@@ -98,6 +99,12 @@ namespace RimFirstPerson3D
             "shelf.east.top", "shelf.east.front",
             "bed.south.wood", "stool.north.wood", "endtable.south.wood",
             "dresser.south.wood", "shelf.south.wood",
+            "armchair.south.top", "armchair.south.back", "armchair.south.front",
+            "armchair.south.wood",
+            "armchair.north.arml", "armchair.north.armr", "armchair.north.top",
+            "armchair.north.back", "armchair.north.wood",
+            "armchair.east.back", "armchair.east.arml", "armchair.east.top",
+            "armchair.east.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -211,6 +218,62 @@ namespace RimFirstPerson3D
             };
         }
 
+        /// <summary>
+        /// 线稿型家具（白面 + 黑框）用：顶面与各立面各自点名要哪条白面带。
+        /// 这类贴图没有"俯视段/立面段"之分，一件东西上能分出 3~5 条互不相邻的白面。
+        /// </summary>
+        private static UvSpec UvNames(string arch, Rot4 rot, Vector2 xz,
+            string topRegion, string sideRegion)
+        {
+            string v = ViewOf(rot);
+            var t = Region(arch, v, topRegion);
+            var s = Region(arch, v, sideRegion);
+            return new UvSpec
+            {
+                top = t,
+                side = s,
+                side4 = new[] { s, s, s, s },
+                sideTileH = 0f,
+                sideTileW = 0f,
+                modelXZ = xz
+            };
+        }
+
+        /// <summary>
+        /// "背对镜头的那一端"在模型长轴上的符号：三视图的镜头在该件朝向的那一侧，
+        /// 所以图里远端（枕头/椅背所在）= 反向。
+        /// </summary>
+        private static float BackSign(Rot4 rot)
+        {
+            if (rot == Rot4.South) return 1f;
+            if (rot == Rot4.North) return -1f;
+            return rot == Rot4.East ? -1f : 1f;
+        }
+
+        /// <summary>
+        /// 软包板件（靠背/扶手）：大面用该件自己的白面带，两条边棱用木面 ——
+        /// 三视图里板件的边棱同样没有对应像素。longZ 决定边棱落在哪个轴。
+        /// </summary>
+        private static UvSpec PanelUv(string arch, Rot4 rot, Vector2 xz, string face)
+        {
+            string v = ViewOf(rot);
+            var t = Region(arch, v, "top");
+            var s = Region(arch, v, face);
+            var w = WoodRegion(arch, rot);
+            var s4 = new[] { s, s, s, s };
+            if (rot == Rot4.North || rot == Rot4.South) { s4[2] = w; s4[3] = w; }
+            else { s4[0] = w; s4[1] = w; }
+            return new UvSpec
+            {
+                top = t,
+                side = s,
+                side4 = s4,
+                sideTileH = 0f,
+                sideTileW = 0f,
+                modelXZ = xz
+            };
+        }
+
         // ---- 建模 ----
 
         /// <summary>原型 -> 取样表里的键名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
@@ -222,6 +285,7 @@ namespace RimFirstPerson3D
                 case Arch.Stool: return "stool";
                 case Arch.Nightstand: return "endtable";
                 case Arch.Cabinet: return "dresser";
+                case Arch.Armchair: return "armchair";
                 default: return "shelf";
             }
         }
@@ -260,9 +324,8 @@ namespace RimFirstPerson3D
                         size = new Vector3(w - 0.20f, Metrics3D.MattressThickness, d - 0.18f),
                         uv = 0
                     });
-                    // 头/尾板：床头在"背对镜头"的一端由朝向决定（_south 图里枕头在远端）
-                    float headSign = (rot == Rot4.North) ? 1f : (rot == Rot4.South) ? -1f
-                                   : (rot == Rot4.East) ? -1f : 1f;
+                    // 头/尾板：_south 图里枕头在远端（+Z），_north 图里在 -Z —— 见 BackSign
+                    float headSign = BackSign(rot);
                     float hbH = Metrics3D.BedHeadboardHeight - Metrics3D.BedFrameHeight;
                     float fbH = Metrics3D.FootboardHeight - Metrics3D.BedFrameHeight;
                     uvs.Add(EndPanelUv(key, rot, xz, longZ));   // 1 = 端板
@@ -291,6 +354,56 @@ namespace RimFirstPerson3D
                     });
                     uvs.Add(WoodUv(key, rot, xz));             // 2 = 腿（圆柱，三视图没画它们）
                     Legs(m, 2, sw * 0.34f, sh, Metrics3D.LegThickness);
+                    break;
+                }
+                case Arch.Armchair:
+                {
+                    // 线稿型软包椅：整件是"白面 + 黑框"，没有俯视段/立面段之分。
+                    // 座面/靠背/两扶手各点一条白面带，板件的边棱与腿用木面。
+                    float sh = Metrics3D.ArmchairSeatHeight;
+                    float t = Metrics3D.UpholsteryThickness;
+                    float bs = BackSign(rot);
+                    uvs.Add(UvNames(key, rot, xz, "top", "front"));    // 1 = 箱体
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, 0f, 0f),
+                        size = new Vector3(w * 0.9f, sh, d * 0.86f),
+                        uv = 1
+                    });
+                    uvs.Add(PanelUv(key, rot, xz, "back"));             // 2 = 靠背
+                    m.parts.Add(longZ
+                        ? new Part
+                        {
+                            kind = Prim.Box, uv = 2,
+                            pos = new Vector3(0f, sh, bs * (d * 0.5f - t * 0.5f)),
+                            size = new Vector3(w * 0.98f, Metrics3D.ArmchairBackHeight - sh, t)
+                        }
+                        : new Part
+                        {
+                            kind = Prim.Box, uv = 2,
+                            pos = new Vector3(bs * (w * 0.5f - t * 0.5f), sh, 0f),
+                            size = new Vector3(t, Metrics3D.ArmchairBackHeight - sh, d * 0.98f)
+                        });
+                    uvs.Add(PanelUv(key, rot, xz, "arml"));              // 3 = 扶手 A
+                    uvs.Add(PanelUv(key, rot, xz, "armr"));              // 4 = 扶手 B
+                    for (int i = 0; i < 2; i++)
+                    {
+                        float sgn = i == 0 ? -1f : 1f;
+                        m.parts.Add(longZ
+                            ? new Part
+                            {
+                                kind = Prim.Box, uv = 3 + i,
+                                pos = new Vector3(sgn * (w * 0.5f - t * 0.5f), 0f, 0f),
+                                size = new Vector3(t, Metrics3D.ArmchairArmHeight, d * 0.8f)
+                            }
+                            : new Part
+                            {
+                                kind = Prim.Box, uv = 3 + i,
+                                pos = new Vector3(0f, 0f, sgn * (d * 0.5f - t * 0.5f)),
+                                size = new Vector3(w * 0.8f, Metrics3D.ArmchairArmHeight, t)
+                            });
+                    }
                     break;
                 }
                 case Arch.Nightstand:

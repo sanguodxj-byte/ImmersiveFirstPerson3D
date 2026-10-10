@@ -1,6 +1,6 @@
 # AI生成
 # -*- coding: utf-8 -*-
-"""家具全角度全变体视觉审核：120 张渲染 -> 每件一张 4x6 拼版表。
+"""家具全角度全变体视觉审核：每件 4 朝向 x 6 机位 -> 每件一张 4x6 拼版表。
 
 行 = 朝向 south/north/east/west；列 = 机位 45°/俯视/主视·南/侧视·东/低角度/贴脸。
 产物 docs/furniture/audit/<item>.png，供逐格目视判读（禁止用数值统计代替看图）。
@@ -25,7 +25,7 @@ PORT = "http://127.0.0.1:8899/furniture.html"
 WORKERS = int(os.environ.get("FURN_AUDIT_WORKERS", "2"))
 SHOT_TIMEOUT_MS = 90000
 
-ITEMS = ["bed", "stool", "endtable", "dresser", "shelf"]
+ITEMS = ["bed", "stool", "endtable", "dresser", "shelf", "armchair"]
 ROTS = ["south", "north", "east", "west"]
 VIEWS = ["45°", "俯视", "主视·南", "侧视·东", "低角度", "贴脸"]
 CELL = (620, 500)
@@ -118,7 +118,7 @@ def main():
         print("  [blank] %s: %s" % (name, err))
     for i in ITEMS:
         print("sheet:", sheet(i))
-    print("结论:", "PASS 120 格全出图" if not bad else "FAIL %d 格没渲染出东西" % len(bad))
+    print("结论:", "PASS %d 格全出图" % len(jobs) if not bad else "FAIL %d 格没渲染出东西" % len(bad))
     return 0 if not bad else 1
 
 
