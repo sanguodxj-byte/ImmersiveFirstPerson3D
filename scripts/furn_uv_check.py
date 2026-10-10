@@ -203,6 +203,18 @@ FX = os.path.join(FA.MOD, "docs", "furniture", "_fx_box.png")
 FXH = os.path.join(FA.MOD, "docs", "furniture", "_fx_hole.png")   # 带透明缺口的版本
 
 
+def _save_if_changed(im, path):
+    """内容没变就不写盘：否则每跑一次校验器就把夹具图改一遍，工作树永远脏。"""
+    import io
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    data = buf.getvalue()
+    if os.path.exists(path) and open(path, "rb").read() == data:
+        return
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 def make_fixture_png():
     a = np.zeros((64, 64, 4), np.uint8)
     a[8:57, 8:57] = (200, 200, 200, 255)
@@ -212,10 +224,10 @@ def make_fixture_png():
     a[57, 7:58] = (10, 10, 10, 255)
     a[32, 16:49] = (10, 10, 10, 255)
     os.makedirs(os.path.dirname(FX), exist_ok=True)
-    Image.fromarray(a, "RGBA").save(FX)
+    _save_if_changed(Image.fromarray(a, "RGBA"), FX)
     b = a.copy()
     b[44:56, 40:56] = (0, 0, 0, 0)          # 12x16 透明缺口 -> 触发 hole
-    Image.fromarray(b, "RGBA").save(FXH)
+    _save_if_changed(Image.fromarray(b, "RGBA"), FXH)
 
 
 def fixtures():
