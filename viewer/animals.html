@@ -1,21 +1,21 @@
-<!-- AI生成 · 动物原型离线预览（与 Animal3D.cs 参数一一对应） -->
+<!-- AI生成 · 动物三视图贴图取样与 3D 解剖重构预览（与 Animal3D.cs 一一对应） -->
 <!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>动物原型预览</title>
+<title>动物建模预览</title>
 <style>
   html,body{margin:0;height:100%;background:#20242c;font-family:Consolas,monospace;overflow:hidden}
   #app{position:fixed;inset:0}
-  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.65;
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.6;
        background:rgba(0,0,0,.55);padding:9px 11px;border-radius:4px;z-index:9}
   #hud b{color:#7fd1ff}
-  #sp{position:fixed;right:10px;top:8px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;
-      justify-content:flex-end;max-width:64vw}
-  #vw{position:fixed;right:10px;top:42px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  #sp{position:fixed;right:10px;top:42px;z-index:9;display:flex;gap:5px;flex-wrap:wrap;
+      justify-content:flex-end;max-width:68vw}
+  #vw{position:fixed;right:10px;top:8px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
   button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
-         padding:5px 9px;font-size:12px;cursor:pointer}
+         padding:4px 8px;font-size:12px;cursor:pointer}
   button:hover{background:#3d465c}
   button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
 </style>
@@ -23,430 +23,1659 @@
 <body>
 <div id="app"></div>
 <div id="hud"></div>
-<div id="sp"></div>
 <div id="vw"></div>
+<div id="sp"></div>
+<script>
+addEventListener('error', function(e){
+  const h = document.getElementById('hud');
+  if (h) h.textContent = 'ERR ' + e.message + ' @' + String(e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+</script>
 <script type="module">
 import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 
-// ============================================================
-//  与 Source/RimFirstPerson3D/Animal3D.cs 的 BuildModel() 逐项对应。
-//  约定（同 Model3D.cs）：
-//    · Part 的 pos.y = 该部件的**底面**高度（球体亦然，球心 = pos.y + size.y/2）
-//    · 部件先按 Euler(pitch, yaw, 0) 绕自身原点旋转，再平移到 pos
-//    · Unity 默认欧拉序为 ZXY -> three.js 用 'YXZ' 才等价（roll 恒为 0）
-//  尺寸 L 与 Animal3D 一致：L = 原版 drawSize × 0.72。预览统一 L=1，
-//  以便横向比较各原型的**形体比例**（比例才是本轮的验收点）。
-// ============================================================
+// ===========================================================================
+// 动物程序化 3D 建模检查页（与 Source/RimFirstPerson3D/Animal3D.cs 逐项同源）
+//
+// 1. 材质与分色：只从 ./animal_uv.json 与 ./animal_atlas.png 读取（由
+//    scripts/animal_atlas.py 从原版 _east / _south / _north 三视图及遮罩提取）：
+//      0=coat, 1=belly, 2=head, 3=limb, 4=detail, 5=eye
+// 2. 几何与描边壳：直接复刻 Model3D.cs 的 ModelBuilder（AddBox / AddCylinder 含
+//    taper 锥度 / AddSphere / ToHull 逐部件法线平均外扩反绕壳）与 Animal3D.cs
+//    的 19 类解剖配方。
+// ===========================================================================
+const VER = 'rebuild1';
+const UV_COAT = 0, UV_BELLY = 1, UV_HEAD = 2, UV_LIMB = 3, UV_DETAIL = 4, UV_EYE = 5;
+const REGIONS = ['coat', 'belly', 'head', 'limb', 'detail', 'eye'];
 
-const parts = [];
-const add = (kind, pos, size, opt = {}) =>
-  parts.push({ kind, pos, size, yaw: opt.yaw || 0, pitch: opt.pitch || 0 });
+const uvJson = await (await fetch('./animal_uv.json?' + VER)).json();
+const tex = await new Promise((resolve) => {
+  new THREE.TextureLoader().load('./animal_atlas.png?' + VER, t => resolve(t), undefined, () => resolve(null));
+});
+if (tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.flipY = false;
+}
+const matAtlas = new THREE.MeshLambertMaterial({ map: tex, side: THREE.FrontSide });
+const matHull  = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+
+const MISSING = new Set();
+function getUvRect(spKey, regIdx) {
+  const rName = REGIONS[regIdx] || 'coat';
+  const key = `${spKey}.${rName}`;
+  const a = uvJson.uv[key];
+  if (!a) {
+    MISSING.add(key);
+    return [0.42, 0.42, 0.58, 0.58];
+  }
+  // animal_uv.json 为 Unity 口径 [u0, v0, u1, v1]（v=1-y/H）；flipY=false 下翻回 [u0, 1-v1, u1, 1-v0]
+  return [a[0], 1 - a[3], a[2], 1 - a[1]];
+}
+
 const Has = (s, ...ks) => ks.some(k => s.includes(k));
 
-function Legs4(L, fz, fx, h, r) {
-  const x = fx * L, z = fz * L;
-  add('cyl', [-x, 0, z], [r, h, r]);
-  add('cyl', [ x, 0, z], [r, h, r]);
-  add('cyl', [-x, 0, -z], [r, h, r]);
-  add('cyl', [ x, 0, -z], [r, h, r]);
-}
-function Ears(top, spread, r, h) {
-  add('cone', [top[0] - spread * 0.42, top[1] - h * 0.3, top[2]], [r * 2, h, r * 1.4], { pitch: -15, yaw: -20 });
-  add('cone', [top[0] + spread * 0.42, top[1] - h * 0.3, top[2]], [r * 2, h, r * 1.4], { pitch: -15, yaw: 20 });
+export function archOf(n) {
+  if (Has(n, 'thrumbo')) return 'Thrumbo';
+  if (Has(n, 'boomalope', 'toxalope')) return 'SacUngulate';
+  if (Has(n, 'dromedary', 'camel', 'alpaca', 'llama')) return 'Camelid';
+  if (Has(n, 'muffalo', 'bison', 'yak', 'muskox', 'sheep')) return 'WoollyUngulate';
+  if (Has(n, 'elephant', 'mastodon', 'rhino', 'hippo')) return 'Pachyderm';
+  if (Has(n, 'penguin')) return 'Penguin';
+  if (Has(n, 'ostrich', 'emu', 'cassowary', 'flamingo', 'heron', 'crane', 'stork')) return 'TallBird';
+  if (Has(n, 'chicken', 'duck', 'goose', 'swan', 'turkey', 'peacock', 'quail', 'sparrow', 'crow', 'bluebird', 'macaw', 'parrot', 'pigeon', 'toucan', 'vulture', 'raven', 'owl', 'eagle', 'hawk', 'bird')) return 'BirdFowl';
+  if (Has(n, 'tortoise', 'seaturtle', 'turtle', 'armadillo', 'hermitcrab', 'stonecrab', 'crab', 'lavasnail', 'snail', 'slug')) return 'ShellCreature';
+  if (Has(n, 'cobra', 'snake', 'serpent', 'viper')) return 'Serpent';
+  if (Has(n, 'megaspider', 'spelopede', 'megascarab', 'spider', 'scarab', 'insect', 'beetle', 'megaworm')) return 'Insectoid';
+  if (Has(n, 'iguana', 'monitor', 'lizard', 'gecko', 'skink', 'komodo', 'alligator', 'croc', 'gator', 'bullfrog', 'colossustoad', 'frog', 'toad', 'salamander', 'newt', 'walrus', 'seal', 'sealion')) return 'ReptileAmphibian';
+  if (Has(n, 'monkey', 'gorilla', 'ape', 'chimp', 'baboon', 'dryad')) return 'PrimateDryad';
+  if (Has(n, 'bear', 'panda', 'megasloth', 'badger', 'wolverine')) return 'UrsineSloth';
+  if (Has(n, 'hare', 'snowhare', 'rabbit', 'squirrel', 'beaver', 'raccoon', 'capybara', 'chinchilla', 'guineapig', 'rat', 'boomrat', 'wasterat', 'porcupine', 'otter', 'mink', 'prairie', 'vole', 'hamster')) return 'RodentSmall';
+  if (Has(n, 'pig', 'wildboar', 'boar')) return 'Porcine';
+  if (Has(n, 'fox', 'wolf', 'warg', 'husky', 'labrador', 'terrier', 'hound', 'dog')) return 'Canid';
+  if (Has(n, 'horse', 'donkey', 'deer', 'elk', 'caribou', 'moose', 'ibex', 'goat', 'gazelle', 'antelope', 'cow', 'bull')) return 'CervidEquine';
+  if (Has(n, 'cat', 'cougar', 'panther', 'lynx', 'tiger')) return 'Felid';
+  return 'Canid';
 }
 
-function build(n, a, L) {
-  const bushyTail = Has(n, 'fox', 'wolf', 'cat', 'lynx', 'cougar', 'husky', 'labrador', 'terrier', 'warg', 'raccoon', 'squirrel');
-  const tailUp    = Has(n, 'cat', 'squirrel', 'monkey', 'terrier');
-  const antlers   = Has(n, 'deer', 'elk', 'caribou', 'moose');
-  const horns     = Has(n, 'ibex', 'goat', 'bison', 'yak', 'cow', 'ox', 'thrumbo', 'muffalo');
-  const tusks     = Has(n, 'elephant', 'boar', 'wildboar', 'mastodon', 'walrus');
+function calibrateWidth(n, bl, defaultBw) {
+  const prop = uvJson.species && uvJson.species[n];
+  if (prop && prop.eastW > 0.05) {
+    const ratio = Math.min(0.78, Math.max(0.36, prop.southW / prop.eastW));
+    const measuredBw = bl * ratio * 0.92;
+    return defaultBw + (measuredBw - defaultBw) * 0.65;
+  }
+  return defaultBw;
+}
 
-  switch (a) {
-    case 'Blob': case 'LongNeck': {
-      const bl = .76 * L, bh = .60 * L, bw = .62 * L, legH = .10 * L;
-      Legs4(L, .26, .22, legH, .09 * L);
-      add('sph', [0, legH, -.02 * L], [bw, bh, bl]);
-      add('sph', [0, legH - .02 * L, -.02 * L], [bw * 1.08, bh * .42, bl * 1.06]);
-      if (a === 'LongNeck') {
-        const neckL = .42 * L;
-        add('cyl', [0, legH + bh * .62, bl * .30], [.20 * L, neckL, .20 * L], { pitch: 40 });
-        const hp = [0, legH + bh * .62 + neckL * .77, bl * .30 + neckL * .64];
-        const hr = .30 * L;
-        add('sph', [hp[0], hp[1] - hr * .5, hp[2]], [hr * .9, hr, hr * 1.15]);
-        add('sph', [hp[0], hp[1] - hr * .45, hp[2] + hr * .55], [hr * .55, hr * .5, hr * .6]);
-        if (n.includes('thrumbo')) add('cone', [hp[0], hp[1] + hr * .25, hp[2] + hr * .3], [.10 * L, .42 * L, .10 * L], { pitch: 25 });
-        Ears([hp[0], hp[1] + hr * .3, hp[2]], hr * .9, .07 * L, .12 * L);
-      } else {
-        const hr = .34 * L, hp = [0, legH + bh * .18, bl * .46];
-        add('sph', hp, [hr * .85, hr * 1.15, hr * .95]);
-        if (horns) {
-          add('cone', [hp[0] - hr * .35, hp[1] + hr, hp[2]], [.07 * L, .16 * L, .07 * L], { pitch: -20, yaw: -25 });
-          add('cone', [hp[0] + hr * .35, hp[1] + hr, hp[2]], [.07 * L, .16 * L, .07 * L], { pitch: -20, yaw: 25 });
-        }
-      }
-      add('cone', [0, legH + bh * .5, -bl * .46], [.10 * L, .16 * L, .10 * L], { pitch: -140 });
-      break;
+// ---------------------------------------------------------------- 欧拉旋转与 ModelBuilder 同源复刻
+// Unity Quaternion.Euler(pitch, yaw, roll) 顺序为 Z(roll) -> X(pitch) -> Y(yaw)
+function rotVec(v, pitch, yaw, roll) {
+  const rx = pitch * Math.PI / 180;
+  const ry = yaw   * Math.PI / 180;
+  const rz = roll  * Math.PI / 180;
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  // 1) Z(roll)
+  const x1 = v[0] * cz - v[1] * sz;
+  const y1 = v[0] * sz + v[1] * cz;
+  const z1 = v[2];
+  // 2) X(pitch)
+  const x2 = x1;
+  const y2 = y1 * cx - z1 * sx;
+  const z2 = y1 * sx + z1 * cx;
+  // 3) Y(yaw)
+  const x3 =  x2 * cy + z2 * sy;
+  const y3 =  y2;
+  const z3 = -x2 * sy + z2 * cy;
+  return [x3, y3, z3];
+}
+
+function stepVec(len, pitch, yaw = 0, roll = 0) {
+  return rotVec([0, len, 0], pitch, yaw, roll);
+}
+
+function add3(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function lerp3(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+
+function createModel() {
+  const parts = [];
+  const m = {
+    parts,
+    add(kind, pos, size, opt = {}) {
+      parts.push({
+        kind,
+        pos: [pos[0], pos[1], pos[2]],
+        size: [size[0], size[1], size[2]],
+        yaw: opt.yaw || 0,
+        pitch: opt.pitch || 0,
+        roll: opt.roll || 0,
+        taper: opt.taper || 0,
+        uv: opt.uv !== undefined ? opt.uv : UV_COAT,
+        noOutline: !!opt.noOutline,
+      });
     }
-    case 'Pachyderm': {
-      const bl = .74 * L, bh = .58 * L, bw = .56 * L, legH = .22 * L;
-      Legs4(L, .24, .24, legH + .08 * L, .12 * L);
-      add('sph', [0, legH, -.04 * L], [bw, bh, bl]);
-      const hr = .36 * L, hp = [0, legH + bh * .30, bl * .46];
-      add('sph', hp, [hr * .95, hr * .95, hr]);
-      if (Has(n, 'elephant', 'mastodon')) {
-        add('cyl', [hp[0], hp[1] + hr * .35, hp[2] + hr * .42], [.11 * L, .46 * L, .11 * L], { pitch: 150 });
-        add('box', [hp[0] - hr * .55, hp[1] + hr * .25, hp[2] - hr * .1], [.05 * L, .30 * L, .26 * L], { yaw: 20 });
-        add('box', [hp[0] + hr * .55, hp[1] + hr * .25, hp[2] - hr * .1], [.05 * L, .30 * L, .26 * L], { yaw: -20 });
-      }
-      if (n.includes('rhino')) add('cone', [hp[0], hp[1] + hr * .55, hp[2] + hr * .45], [.09 * L, .26 * L, .09 * L], { pitch: 35 });
-      if (tusks) {
-        add('cone', [hp[0] - hr * .22, hp[1] + hr * .15, hp[2] + hr * .4], [.05 * L, .22 * L, .05 * L], { pitch: 70 });
-        add('cone', [hp[0] + hr * .22, hp[1] + hr * .15, hp[2] + hr * .4], [.05 * L, .22 * L, .05 * L], { pitch: 70 });
-      }
-      add('cone', [0, legH + bh * .55, -bl * .46], [.07 * L, .22 * L, .07 * L], { pitch: -150 });
-      break;
-    }
-    case 'Shell': {
-      const sl = .72 * L, sh = .32 * L, sw = .62 * L, legH = .06 * L;
-      Legs4(L, .30, .26, legH + .05 * L, .08 * L);
-      add('sph', [0, legH, 0], [sw, sh, sl]);
-      add('sph', [0, legH + sh * .5, 0], [sw * .9, sh * .9, sl * .9]);
-      const hr = .16 * L;
-      add('sph', [0, legH + .02 * L, sl * .46], [hr, hr * .9, hr * 1.2]);
-      add('cone', [0, legH + .04 * L, -sl * .46], [.06 * L, .12 * L, .06 * L], { pitch: -110 });
-      break;
-    }
-    case 'Reptile': {
-      const frog = Has(n, 'frog', 'toad');
-      const bl = (frog ? .46 : .62) * L, bh = (frog ? .30 : .22) * L, bw = (frog ? .44 : .34) * L, legH = .10 * L;
-      const lx = .13 * L, lz = (frog ? .14 : .20) * L, ll = (frog ? .20 : .16) * L, lr = .05 * L;
-      add('cyl', [-lx, .14 * L,  lz], [lr, ll, lr], { yaw: -90, pitch: 115 });
-      add('cyl', [ lx, .14 * L,  lz], [lr, ll, lr], { yaw:  90, pitch: 115 });
-      add('cyl', [-lx, .14 * L, -lz], [lr, ll, lr], { yaw: -90, pitch: 115 });
-      add('cyl', [ lx, .14 * L, -lz], [lr, ll, lr], { yaw:  90, pitch: 115 });
-      add('sph', [0, legH, -.02 * L], [bw, bh, bl]);
-      const hr = (frog ? .26 : .20) * L, hp = [0, legH + bh * (frog ? .45 : .35), bl * .46];
-      add('sph', hp, [hr * .9, hr * .7, hr * 1.1]);
-      add('sph', [hp[0], hp[1] - hr * .05, hp[2] + hr * .55], [hr * .55, hr * .4, hr * .5]);
-      if (!frog) {
-        for (let i = 0; i < 4; i++) add('cone', [0, legH + bh * .85, (-.18 + i * .12) * L], [.05 * L, .10 * L, .05 * L]);
-        for (let i = 0; i < 3; i++) add('sph', [0, legH + bh * .4, (-.44 - i * .17) * L], [(.18 - i * .045) * L, (.13 - i * .03) * L, .22 * L]);
-      }
-      break;
-    }
-    case 'Insect': {
-      const ab = .46 * L, th = .30 * L, legH = .14 * L;
-      add('sph', [0, legH, -.20 * L], [ab * .9, ab * .75, ab]);
-      add('sph', [0, legH + .02 * L, .22 * L], [th * .95, th * .85, th]);
-      for (let i = 0; i < 3; i++) {
-        const z = (.20 - i * .18) * L;
-        add('cyl', [-.10 * L, .19 * L, z], [.035 * L, .30 * L, .035 * L], { yaw: -90, pitch: 130 });
-        add('cyl', [ .10 * L, .19 * L, z], [.035 * L, .30 * L, .035 * L], { yaw: 90, pitch: 130 });
-      }
-      add('cone', [-.06 * L, legH + .05 * L, .36 * L], [.04 * L, .16 * L, .04 * L], { pitch: 80, yaw: 15 });
-      add('cone', [ .06 * L, legH + .05 * L, .36 * L], [.04 * L, .16 * L, .04 * L], { pitch: 80, yaw: -15 });
-      break;
-    }
-    case 'Serpent': {
-      add('sph', [0, 0, 0], [.62 * L, .18 * L, .60 * L]);
-      add('sph', [.06 * L, .10 * L, -.04 * L], [.44 * L, .14 * L, .42 * L]);
-      const neckL = .42 * L;
-      add('cyl', [0, .12 * L, .12 * L], [.11 * L, neckL, .11 * L], { pitch: 18 });
-      const hp = [0, .12 * L + neckL * .95, .12 * L + neckL * .31];
-      add('sph', [hp[0], hp[1] - .06 * L, hp[2]], [.14 * L, .12 * L, .20 * L]);
-      add('box', [hp[0], hp[1] - .10 * L, hp[2] - .02 * L], [.22 * L, .14 * L, .03 * L]);
-      break;
-    }
-    case 'Bird': case 'TallBird': {
-      const tall = a === 'TallBird';
-      const bl = (tall ? .52 : .46) * L, bh = (tall ? .46 : .40) * L, bw = .40 * L;
-      const legH = (tall ? .42 : .14) * L, legR = (tall ? .045 : .03) * L;
-      add('cyl', [-.08 * L, 0, -.02 * L], [legR, legH + .06 * L, legR]);
-      add('cyl', [ .08 * L, 0, -.02 * L], [legR, legH + .06 * L, legR]);
-      add('sph', [0, legH, 0], [bw, bh, bl]);
-      const neckL = (tall ? .46 : .14) * L;
-      add('cyl', [0, legH + bh * .70, bl * .28], [(tall ? .09 : .12) * L, neckL, (tall ? .09 : .12) * L], { pitch: tall ? 12 : 35 });
-      const hr = (tall ? .16 : .18) * L;
-      const hp = [0, legH + bh * .70 + neckL * (tall ? .95 : .8), bl * .28 + neckL * (tall ? .2 : .55)];
-      add('sph', [hp[0], hp[1] - hr * .4, hp[2]], [hr, hr * .95, hr * 1.05]);
-      add('cone', [hp[0], hp[1] - hr * .15, hp[2] + hr * .5], [.06 * L, .14 * L, .06 * L], { pitch: 95 });
-      if (Has(n, 'chicken', 'turkey')) add('box', [hp[0], hp[1] + hr * .5, hp[2]], [.03 * L, .10 * L, .14 * L]);
-      add('box', [0, legH + bh * .55, -bl * .42], [.22 * L, .06 * L, .26 * L], { pitch: -35 });
-      break;
-    }
-    case 'Primate': {
-      const bl = .46 * L, bh = .44 * L, bw = .38 * L, legH = .18 * L;
-      Legs4(L, .22, .18, legH + .06 * L, .06 * L);
-      add('sph', [0, legH, 0], [bw, bh, bl]);
-      const hr = .30 * L, hp = [0, legH + bh * .62, bl * .34];
-      add('sph', hp, [hr, hr, hr]);
-      Ears([hp[0], hp[1] + hr * .45, hp[2]], hr, .06 * L, .08 * L);
-      add('cyl', [0, legH + bh * .5, -bl * .44], [.05 * L, .48 * L, .05 * L], { pitch: -40 });
-      break;
-    }
-    default: { // Quad / Slender / Stocky / Rodent
-      const slender = a === 'Slender', stocky = a === 'Stocky', rodent = a === 'Rodent';
-      const bl = (rodent ? .56 : .64) * L;
-      const bh = (stocky ? .42 : rodent ? .36 : .34) * L;
-      const bw = (stocky ? .36 : .30) * L;
-      const legH = (slender ? .32 : stocky ? .20 : rodent ? .10 : .22) * L;
-      const legR = (slender ? .045 : stocky ? .08 : .05) * L;
-      Legs4(L, .24, .12, legH + .08 * L, legR);
-      add('sph', [0, legH, 0], [bw, bh, bl]);
-      const neckL = (slender ? .22 : .10) * L, hr = (rodent ? .26 : .22) * L;
-      const np = [0, legH + bh * .62, bl * .36];
-      add('cyl', np, [.14 * L, neckL, .14 * L], { pitch: slender ? 38 : 55 });
-      const hp = [np[0], np[1] + neckL * (slender ? .78 : .57) - hr * .2, np[2] + neckL * (slender ? .62 : .82)];
-      add('sph', hp, [hr * .95, hr, hr * 1.05]);
-      add('sph', [hp[0], hp[1] + hr * .15, hp[2] + hr * .55], [hr * .55, hr * .48, hr * .6]);
-      Ears([hp[0], hp[1] + hr * .85, hp[2] - hr * .1], hr * .9, (rodent ? .07 : .06) * L, (rodent ? .14 : .11) * L);
-      if (antlers) {
-        add('cone', [hp[0] - hr * .3, hp[1] + hr * .95, hp[2] - hr * .1], [.05 * L, .30 * L, .05 * L], { pitch: -25, yaw: -35 });
-        add('cone', [hp[0] + hr * .3, hp[1] + hr * .95, hp[2] - hr * .1], [.05 * L, .30 * L, .05 * L], { pitch: -25, yaw: 35 });
-      } else if (horns) {
-        add('cone', [hp[0] - hr * .3, hp[1] + hr * .9, hp[2] - hr * .1], [.05 * L, .18 * L, .05 * L], { pitch: -35, yaw: -20 });
-        add('cone', [hp[0] + hr * .3, hp[1] + hr * .9, hp[2] - hr * .1], [.05 * L, .18 * L, .05 * L], { pitch: -35, yaw: 20 });
-      }
-      if (tusks) {
-        add('cone', [hp[0] - hr * .25, hp[1] + hr * .05, hp[2] + hr * .6], [.04 * L, .12 * L, .04 * L], { pitch: 60 });
-        add('cone', [hp[0] + hr * .25, hp[1] + hr * .05, hp[2] + hr * .6], [.04 * L, .12 * L, .04 * L], { pitch: 60 });
-      }
-      const tp = [0, legH + bh * .55, -bl * .46];
-      if (bushyTail) add('sph', [tp[0], tp[1] + (tailUp ? .10 : -.04) * L, tp[2] - .14 * L], [.14 * L, .14 * L, .34 * L], { pitch: tailUp ? 50 : -20 });
-      else add('cyl', tp, [.04 * L, (rodent ? .30 : .22) * L, .04 * L], { pitch: tailUp ? -30 : -145 });
-      break;
-    }
+  };
+  return m;
+}
+
+function addSymX(m, kind, x, y, z, size, opt = {}) {
+  const yaw = opt.yaw || 0, pitch = opt.pitch || 0, splay = opt.splay || 0, taper = opt.taper || 0;
+  const uv = opt.uv !== undefined ? opt.uv : UV_COAT, noOutline = !!opt.noOutline;
+  m.add(kind, [-x, y, z], size, { yaw: -yaw, pitch, roll:  splay, taper, uv, noOutline });
+  m.add(kind, [ x, y, z], size, { yaw:  yaw, pitch, roll: -splay, taper, uv, noOutline });
+}
+
+function addSeg(m, p0, len, d0, d1, pitch, yaw = 0, roll = 0, uv = UV_COAT, joint = true, noOutline = false) {
+  if (joint) {
+    m.add('sph', [p0[0], p0[1] - d0 * 0.46, p0[2]], [d0 * 0.98, d0 * 0.90, d0 * 0.98], { uv, noOutline: true });
+  }
+  const taper = d0 > 0.0001 ? Math.min(1.8, Math.max(0.04, d1 / d0)) : 1.0;
+  m.add('cyl', p0, [d0, len, d0], { yaw, pitch, roll, taper, uv, noOutline });
+  return add3(p0, stepVec(len * 0.88, pitch, yaw, roll));
+}
+
+function addSymSeg(m, pair, len, d0, d1, pitch, splay, yaw = 0, uv = UV_DETAIL, joint = true, noOutline = false) {
+  pair.L = addSeg(m, pair.L, len, d0, d1, pitch, -yaw,  splay, uv, joint, noOutline);
+  pair.R = addSeg(m, pair.R, len, d0, d1, pitch,  yaw, -splay, uv, joint, noOutline);
+}
+
+function buildQuadBody(m, L, bl, bh, bw, legH, legD, chestLift, rumpScale, frontLegUv = UV_LIMB, rearLegUv = UV_LIMB, bellyUv = UV_BELLY) {
+  const fz = bl * 0.20, rz = -bl * 0.21, sx = bw * 0.14;
+
+  const chestUv = (frontLegUv === UV_BELLY || bellyUv === UV_COAT) ? frontLegUv : UV_COAT;
+
+  // 1. 三个外轮廓主球：前胸垂瓣(y=0) + 中段腰桥(腹底微收) + 后臀垂瓣(y=0)
+  m.add('sph', [0, bh * 0.07, 0], [bw * 0.96, bh * 0.90, bl * 0.78], { uv: UV_COAT });
+  m.add('sph', [0, 0, fz], [bw * 1.02, bh + chestLift, bl * 0.54], { uv: chestUv });
+  m.add('sph', [0, 0, rz], [bw * 0.98 * rumpScale, bh * 0.95 * rumpScale, bl * 0.54], { uv: UV_COAT });
+
+  // 2. 两侧肩廓与臀廓平滑过渡（noOutline=true，不产生内部割裂黑线）
+  addSymX(m, 'sph', sx, bh * 0.05, fz * 0.9, [bw * 0.76, bh * 0.86, bl * 0.46], { uv: chestUv, noOutline: true });
+  addSymX(m, 'sph', sx, bh * 0.05, rz * 0.9, [bw * 0.74 * rumpScale, bh * 0.84 * rumpScale, bl * 0.46], { uv: UV_COAT, noOutline: true });
+
+  // 3. 腹底对比色片（noOutline=true，贴合中腹下表面展现腹底分色而不侵占前胸正视底部）
+  if (bellyUv !== UV_COAT) {
+    m.add('sph', [0, 0.005 * L, -0.01 * L], [bw * 0.94, bh * 0.44, bl * 0.62], { uv: bellyUv, noOutline: true });
+  }
+
+  return {
+    chestTop: [0, chestLift + bh * 0.64, bl * 0.32],
+    tailBase: [0, bh * 0.52 * rumpScale, -bl * 0.44],
+  };
+}
+
+function buildHead(m, headCenter, hr, snoutLen, snoutW, snoutH, headUv = UV_HEAD, snoutUv = UV_HEAD, jawUv = UV_BELLY, hasNose = true) {
+  const pitch = 112;
+  const tilt = pitch - 90;
+
+  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.25, headCenter[2] - hr * 0.02], [hr * 0.84, hr * 0.68, hr * 0.90], { uv: headUv });
+  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.44, headCenter[2]], [hr * 0.90, hr * 0.88, hr * 0.96], { noOutline: true, uv: headUv });
+
+  const cSnout = add3([headCenter[0], headCenter[1] - hr * 0.10, headCenter[2] + hr * 0.12], stepVec(snoutLen * 0.22, pitch));
+  const sx = Math.max(snoutW * 1.32, hr * 0.74);
+  const sy = Math.max(snoutH * 1.22, hr * 0.58);
+  const sz = snoutLen * 1.54;
+  const sxCore = Math.max(0.02, sx - 0.022);
+  const syCore = Math.max(0.02, sy - 0.022);
+  const szCore = Math.max(0.02, sz - 0.022);
+  const offCore = stepVec(syCore * 0.5, tilt);
+  const offSkin = stepVec(sy * 0.5, tilt);
+  m.add('sph', [cSnout[0] - offCore[0], cSnout[1] - offCore[1], cSnout[2] - offCore[2]],
+    [sxCore, syCore, szCore], { pitch: tilt, uv: snoutUv });
+  m.add('sph', [cSnout[0] - offSkin[0], cSnout[1] - offSkin[1], cSnout[2] - offSkin[2]],
+    [sx, sy, sz], { pitch: tilt, noOutline: true, uv: snoutUv });
+
+  if (jawUv !== snoutUv) {
+    const cJaw = [cSnout[0], cSnout[1] - sy * 0.14, cSnout[2] - hr * 0.04];
+    const hJaw = sy * 0.64;
+    const offJaw = stepVec(hJaw * 0.5, tilt);
+    m.add('sph', [cJaw[0] - offJaw[0], cJaw[1] - offJaw[1], cJaw[2] - offJaw[2]],
+      [sx * 0.95, hJaw, sz * 0.90], { pitch: tilt, noOutline: true, uv: jawUv });
+  }
+
+  const cBridge = [headCenter[0], headCenter[1] - hr * 0.05, headCenter[2] + hr * 0.18];
+  const hBridge = hr * 0.74;
+  const offBridge = stepVec(hBridge * 0.5, tilt * 0.6);
+  m.add('sph', [cBridge[0] - offBridge[0], cBridge[1] - offBridge[1], cBridge[2] - offBridge[2]],
+    [hr * 0.86, hBridge, hr * 0.78], { pitch: tilt * 0.6, noOutline: true, uv: headUv });
+
+  if (hasNose) {
+    const noseCenter = add3(add3(cSnout, stepVec(sz * 0.48, pitch)), [0, sy * 0.06, 0]);
+    const nh = sy * 0.28;
+    m.add('sph', [noseCenter[0], noseCenter[1] - nh * 0.5, noseCenter[2]],
+      [sx * 0.30, nh, sx * 0.28], { uv: UV_EYE, noOutline: true });
+  }
+  addSymX(m, 'sph', hr * 0.36, headCenter[1] - hr * 0.02, headCenter[2] + hr * 0.28,
+    [hr * 0.19, hr * 0.21, hr * 0.21], { uv: UV_EYE, noOutline: true });
+}
+
+function buildUngulateHead(m, headCenter, hr, muzzleLen, muzzleW, muzzleH, headUv = UV_HEAD, muzzleUv = UV_HEAD, jawUv = UV_BELLY, pitch = 118) {
+  const tilt = pitch - 90;
+  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.24, headCenter[2] - hr * 0.02], [hr * 0.82, hr * 0.66, hr * 0.88], { uv: headUv });
+  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.43, headCenter[2]], [hr * 0.88, hr * 0.86, hr * 0.94], { noOutline: true, uv: headUv });
+
+  const cMuzzle = add3([headCenter[0], headCenter[1] - hr * 0.08, headCenter[2] + hr * 0.12], stepVec(muzzleLen * 0.28, pitch));
+  const sx = Math.max(muzzleW * 1.28, hr * 0.72);
+  const sy = Math.max(muzzleH * 1.18, hr * 0.60);
+  const sz = muzzleLen * 1.52;
+  const sxCore = Math.max(0.02, sx - 0.022);
+  const syCore = Math.max(0.02, sy - 0.022);
+  const szCore = Math.max(0.02, sz - 0.022);
+  const offCore = stepVec(syCore * 0.5, tilt);
+  const offSkin = stepVec(sy * 0.5, tilt);
+  m.add('sph', [cMuzzle[0] - offCore[0], cMuzzle[1] - offCore[1], cMuzzle[2] - offCore[2]],
+    [sxCore, syCore, szCore], { pitch: tilt, uv: headUv });
+  m.add('sph', [cMuzzle[0] - offSkin[0], cMuzzle[1] - offSkin[1], cMuzzle[2] - offSkin[2]],
+    [sx, sy, sz], { pitch: tilt, noOutline: true, uv: headUv });
+
+  if (muzzleUv !== headUv) {
+    const cTip = add3(cMuzzle, stepVec(sz * 0.16, pitch));
+    const hTip = sy * 0.92;
+    const offTip = stepVec(hTip * 0.5, tilt);
+    m.add('sph', [cTip[0] - offTip[0], cTip[1] - offTip[1], cTip[2] - offTip[2]],
+      [sx * 0.94, hTip, sz * 0.70], { pitch: tilt, noOutline: true, uv: muzzleUv });
+  }
+
+  const cBridge = [headCenter[0], headCenter[1] - hr * 0.04, headCenter[2] + hr * 0.18];
+  const hBridge = hr * 0.72;
+  const offBridge = stepVec(hBridge * 0.5, tilt * 0.6);
+  m.add('sph', [cBridge[0] - offBridge[0], cBridge[1] - offBridge[1], cBridge[2] - offBridge[2]],
+    [hr * 0.84, hBridge, hr * 0.78], { pitch: tilt * 0.6, noOutline: true, uv: headUv });
+
+  addSymX(m, 'sph', hr * 0.36, headCenter[1] + hr * 0.02, headCenter[2] + hr * 0.28, [hr * 0.20, hr * 0.20, hr * 0.22], { uv: UV_EYE, noOutline: true });
+}
+
+function buildEars(m, headCenter, hr, earW, earH, opt = {}) {
+  const floppy = !!opt.floppy, roundEar = !!opt.roundEar, tufted = !!opt.tufted;
+  const earUv = opt.earUv !== undefined ? opt.earUv : UV_LIMB;
+  if (floppy) {
+    addSymX(m, 'sph', hr * 0.46, headCenter[1] - hr * 0.40, headCenter[2] - hr * 0.04,
+      [earW * 0.9, earH * 1.15, earW * 1.35], { yaw: 12, splay: 18, uv: earUv });
+  } else if (roundEar) {
+    addSymX(m, 'sph', hr * 0.35, headCenter[1] + hr * 0.34, headCenter[2] - hr * 0.10,
+      [earW * 1.15, earH * 0.92, earW * 0.82], { yaw: 12, splay: 22, uv: earUv });
+  } else {
+    const longEar = earH > 0.20 * (hr / 0.22);
+    const sp = longEar ? 18 : 24;
+    const pt = longEar ? -32 : -12;
+    const pair = {
+      L: [headCenter[0] - hr * 0.28, headCenter[1] + hr * 0.08, headCenter[2] - hr * 0.06],
+      R: [headCenter[0] + hr * 0.28, headCenter[1] + hr * 0.08, headCenter[2] - hr * 0.06],
+    };
+    addSymSeg(m, pair, earH * 1.22, earW, earW * 0.24, pt, sp, 0, earUv, false);
+    if (tufted) addSymSeg(m, pair, earH * 0.52, earW * 0.32, earW * 0.08, pt + 10, sp * 1.8, 0, UV_EYE, false, true);
   }
 }
 
-// 原型归类（与 Animal3D.ArchOf 同序）
-function archOf(n) {
-  if (Has(n, 'thrumbo', 'alpaca', 'dromedary', 'camel', 'giraffe', 'llama')) return 'LongNeck';
-  if (Has(n, 'muffalo', 'bison', 'yak', 'megasloth', 'sheep', 'mammoth', 'alope', 'muskox', 'seal', 'walrus')) return 'Blob';
-  if (Has(n, 'elephant', 'rhino', 'hippo', 'mastodon')) return 'Pachyderm';
-  if (Has(n, 'tortoise', 'turtle', 'armadillo', 'crab', 'snail', 'slug')) return 'Shell';
-  if (Has(n, 'iguana', 'lizard', 'gecko', 'skink', 'monitor', 'komodo', 'alligator', 'croc', 'gator', 'frog', 'toad', 'salamander', 'newt')) return 'Reptile';
-  if (Has(n, 'spider', 'scarab', 'spelopede', 'insect', 'beetle', 'megaworm')) return 'Insect';
-  if (Has(n, 'cobra', 'snake', 'serpent', 'viper')) return 'Serpent';
-  if (Has(n, 'emu', 'ostrich', 'cassowary', 'flamingo', 'heron', 'crane', 'stork')) return 'TallBird';
-  if (Has(n, 'chicken', 'duck', 'goose', 'turkey', 'bird', 'parrot', 'pigeon', 'toucan', 'crow', 'macaw', 'peacock', 'penguin', 'quail', 'sparrow', 'swan', 'vulture', 'raven', 'owl', 'eagle', 'hawk')) return 'Bird';
-  if (Has(n, 'monkey', 'ape', 'chimp', 'gorilla', 'dryad', 'baboon')) return 'Primate';
-  if (Has(n, 'rat', 'squirrel', 'chinchilla', 'guineapig', 'hare', 'rabbit', 'boomrat', 'capybara', 'beaver', 'raccoon', 'hamster', 'vole', 'porcupine', 'prairie')) return 'Rodent';
-  if (Has(n, 'horse', 'donkey', 'deer', 'caribou', 'elk', 'gazelle', 'ibex', 'goat', 'antelope', 'moose')) return 'Slender';
-  if (Has(n, 'bear', 'warg', 'boar', 'pig', 'cow', 'ox', 'wildboar', 'husky', 'labrador', 'badger', 'panda', 'wolverine')) return 'Stocky';
-  return 'Quad';
+// ---------------------------------------------------------------- 19 类解剖配方（与 Animal3D.cs 1:1 同步）
+export function buildAnimalModel(n, a, L) {
+  const m = createModel();
+  switch (a) {
+    case 'Thrumbo': {
+      const alpha = Has(n, 'alpha');
+      const bl = 0.72 * L, bh = 0.46 * L, bw = calibrateWidth(n, bl, 0.36 * L);
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.10 * L, 0.08 * L, 0.86, UV_LIMB, UV_LIMB, UV_LIMB);
+      m.add('sph', [0, 0, 0.02 * L], [bw * 1.03, bh * 0.52, bl * 0.94], { uv: UV_LIMB, noOutline: true });
+      addSymX(m, 'sph', bw * 0.24, bh * 0.20, 0.02 * L, [bw * 0.62, bh * 0.76, bl * 0.72], { uv: UV_COAT, noOutline: true });
+      m.add('sph', [0, 0.01 * L, bl * 0.26], [bw * 0.56, bh * 0.82, bl * 0.42], { uv: UV_LIMB, noOutline: true });
+      addSymX(m, 'sph', bw * 0.30, bh * 0.14, bl * 0.24, [bw * 0.44, bh * 0.76, bl * 0.40], { uv: UV_COAT, noOutline: true });
+
+      let np = add3(chestTop, [0, -0.05 * L, -0.03 * L]);
+      np = addSeg(m, np, 0.19 * L, 0.23 * L, 0.19 * L, 10, 0, 0, UV_COAT, true, true);
+      np = addSeg(m, np, 0.17 * L, 0.19 * L, 0.16 * L, 0, 0, 0, UV_COAT, true, true);
+      const hp = addSeg(m, np, 0.13 * L, 0.16 * L, 0.14 * L, -4, 0, 0, UV_COAT, true, true);
+      m.add('cyl', add3(chestTop, [0, -0.04 * L, 0.04 * L]), [0.10 * L, 0.36 * L, 0.08 * L], { pitch: 6, taper: 0.68, uv: UV_LIMB, noOutline: true });
+
+      m.add('cone', add3(hp, [0, 0.04 * L, -0.04 * L]), [0.09 * L, 0.21 * L, 0.10 * L], { pitch: -24, uv: UV_COAT, noOutline: true });
+      addSymX(m, 'cone', 0.04 * L, hp[1] + 0.02 * L, hp[2] - 0.04 * L, [0.08 * L, 0.20 * L, 0.09 * L], { pitch: -28, splay: 24, uv: UV_COAT, noOutline: true });
+      addSymX(m, 'cone', 0.06 * L, hp[1] - 0.05 * L, hp[2] - 0.05 * L, [0.08 * L, 0.18 * L, 0.09 * L], { pitch: -38, splay: 38, uv: UV_COAT, noOutline: true });
+      m.add('cone', add3(hp, [0, -0.10 * L, -0.06 * L]), [0.09 * L, 0.17 * L, 0.09 * L], { pitch: -48, uv: UV_COAT, noOutline: true });
+
+      const hr = 0.20 * L, headC = add3(hp, [0, 0.01 * L, 0.03 * L]);
+      buildUngulateHead(m, headC, hr, 0.15 * L, 0.105 * L, 0.105 * L, UV_COAT, UV_LIMB, UV_LIMB, 122);
+      buildEars(m, headC, hr, 0.048 * L, 0.13 * L, { earUv: UV_COAT });
+      const hd0 = (alpha ? 0.125 : 0.105) * L;
+      let hornP = add3(headC, [0, hr * 0.26, hr * 0.20]);
+      hornP = addSeg(m, hornP, 0.15 * L, hd0, hd0 * 0.80, 26, 0, 0, UV_DETAIL);
+      hornP = addSeg(m, hornP, 0.15 * L, hd0 * 0.80, hd0 * 0.50, -8, 0, 0, UV_DETAIL);
+      addSeg(m, hornP, 0.15 * L, hd0 * 0.50, hd0 * 0.08, -42, 0, 0, UV_DETAIL);
+      if (alpha) addSymX(m, 'cone', hr * 0.30, headC[1] + hr * 0.16, headC[2] + hr * 0.08, [0.055 * L, 0.13 * L, 0.055 * L], { pitch: 22, splay: 26, uv: UV_DETAIL });
+      m.add('cone', add3(tailBase, [0, 0.04 * L, 0.02 * L]), [0.085 * L, 0.16 * L, 0.085 * L], { pitch: -68, uv: UV_COAT });
+      break;
+    }
+
+    case 'WoollyUngulate': {
+      const sheep = Has(n, 'sheep'), bison = Has(n, 'bison'), muskox = Has(n, 'muskox'), yak = Has(n, 'yak');
+      const bl = (sheep ? 0.68 : 0.80) * L, bh = (sheep ? 0.48 : 0.56) * L;
+      const bw = calibrateWidth(n, bl, (sheep ? 0.46 : 0.54) * L);
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.10 * L, (sheep ? 0.02 : 0.08) * L, bison ? 0.84 : 0.90,
+        bison ? UV_COAT : UV_LIMB, bison ? UV_COAT : UV_LIMB, sheep ? UV_COAT : UV_BELLY);
+      if (bison) {
+        m.add('sph', [0, bh * 0.18, bl * 0.14], [bw * 1.02, bh * 0.90, bl * 0.56], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0, -0.01 * L], [bw * 1.03, bh * 0.40, bl * 0.94], { uv: UV_BELLY, noOutline: true });
+      } else if (!sheep) {
+        m.add('sph', [0, bh * 0.12, bl * 0.10], [bw * 1.04, bh * 0.92, bl * 0.62], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0, -0.01 * L], [bw * 1.04, bh * 0.42, bl * 0.94], { uv: UV_BELLY, noOutline: true });
+      } else {
+        addSymX(m, 'sph', bw * 0.20, bh * 0.12, 0.03 * L, [bw * 0.68, bh * 0.78, bl * 0.58], { uv: UV_COAT, noOutline: true });
+      }
+      const hr = (sheep ? 0.24 : 0.29) * L;
+      const headC = [0, bh * (sheep ? 0.48 : bison ? 0.36 : 0.42), bl * 0.44];
+      if (!sheep && !yak && !bison && !muskox) {
+        m.add('sph', [0, bh * 0.24, bl * 0.22], [bw * 1.00, bh * 0.86, bl * 0.50], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, bh * 0.04, bl * 0.44], [hr * 0.88, bh * 0.68, hr * 0.78], { pitch: 12, uv: UV_HEAD });
+        addSymX(m, 'sph', hr * 0.25, bh * 0.35, bl * 0.585, [0.068 * L, 0.020 * L, 0.055 * L], { yaw: 26, uv: UV_EYE, noOutline: true });
+      } else if (bison) {
+        m.add('sph', [0, bh * 0.05, bl * 0.43], [hr * 0.88, bh * 0.66, hr * 0.84], { pitch: 18, uv: UV_HEAD });
+        m.add('sph', [0, bh * 0.02, bl * 0.49], [hr * 0.46, bh * 0.34, hr * 0.52], { pitch: 18, noOutline: true, uv: UV_BELLY });
+        addSymX(m, 'sph', hr * 0.38, bh * 0.27, bl * 0.535, [0.066 * L, 0.068 * L, 0.066 * L], { uv: UV_EYE, noOutline: true });
+        const pair = {
+          L: [-hr * 0.32, bh * 0.42, bl * 0.45],
+          R: [ hr * 0.32, bh * 0.42, bl * 0.45],
+        };
+        addSymSeg(m, pair, 0.105 * L, 0.068 * L, 0.048 * L, 34, 68, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.095 * L, 0.048 * L, 0.020 * L, -16, -14, 0, UV_DETAIL);
+      } else {
+        buildUngulateHead(m, headC, hr, hr * 0.70, hr * 0.56, hr * 0.50, UV_HEAD, UV_LIMB, UV_LIMB, 120);
+        buildEars(m, headC, hr, 0.048 * L, 0.10 * L, { floppy: sheep, earUv: UV_LIMB });
+        if (muskox)
+          m.add('sph', add3(headC, [0, hr * 0.08, -hr * 0.02]), [hr * 1.12, hr * 0.76, hr * 0.96], { uv: UV_DETAIL, noOutline: true });
+        const pair = {
+          L: [headC[0] - hr * 0.32, headC[1] + hr * 0.24, headC[2]],
+          R: [headC[0] + hr * 0.32, headC[1] + hr * 0.24, headC[2]],
+        };
+        if (sheep) {
+          addSymSeg(m, pair, 0.10 * L, 0.070 * L, 0.055 * L, -20, 65, 0, UV_DETAIL);
+          addSymSeg(m, pair, 0.10 * L, 0.055 * L, 0.030 * L, 55, 35, 0, UV_DETAIL);
+        } else if (muskox) {
+          addSymSeg(m, pair, 0.13 * L, 0.090 * L, 0.065 * L, 25, 115, 0, UV_DETAIL);
+          addSymSeg(m, pair, 0.12 * L, 0.065 * L, 0.025 * L, 35, 65, 0, UV_DETAIL);
+        } else {
+          const hl = (yak ? 0.15 : 0.11) * L;
+          addSymSeg(m, pair, hl, 0.070 * L, 0.050 * L, 12, 66, 0, UV_DETAIL);
+          addSymSeg(m, pair, hl, 0.050 * L, 0.018 * L, 6, 20, 0, UV_DETAIL);
+        }
+      }
+      break;
+    }
+
+    case 'SacUngulate': {
+      const bl = 0.72 * L, bh = 0.40 * L, bw = calibrateWidth(n, bl, 0.38 * L);
+      const { chestTop } = buildQuadBody(m, L, bl, bh, bw, 0, 0.09 * L, 0.02 * L, 0.92, UV_COAT, UV_COAT, UV_BELLY);
+      m.add('sph', [0, bh * 0.56, 0.02 * L], [0.33 * L, 0.33 * L, 0.37 * L], { uv: UV_DETAIL });
+      m.add('sph', [0, bh * 0.30, -0.35 * L], [0.24 * L, 0.26 * L, 0.25 * L], { uv: UV_DETAIL });
+      addSymX(m, 'sph', bw * 0.38, bh * 0.22, -0.11 * L, [0.21 * L, 0.25 * L, 0.26 * L], { uv: UV_DETAIL });
+      addSymX(m, 'sph', bw * 0.36, bh * 0.20, 0.16 * L, [0.15 * L, 0.17 * L, 0.17 * L], { uv: UV_DETAIL });
+      const np = addSeg(m, add3(chestTop, [0, -0.06 * L, 0.02 * L]), 0.18 * L, 0.13 * L, 0.10 * L, 44, 0, 0, UV_COAT, true, true);
+      const hr = 0.165 * L, headC = add3(np, [0, 0.01 * L, 0.02 * L]);
+      buildUngulateHead(m, headC, hr, 0.14 * L, 0.085 * L, 0.085 * L, UV_HEAD, UV_HEAD, UV_BELLY, 126);
+      buildEars(m, headC, hr, 0.040 * L, 0.095 * L, { earUv: UV_LIMB });
+      break;
+    }
+
+    case 'Camelid': {
+      const camel = Has(n, 'dromedary', 'camel');
+      const bl = 0.72 * L, bh = (camel ? 0.42 : 0.38) * L, bw = calibrateWidth(n, bl, (camel ? 0.35 : 0.31) * L);
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.08 * L, 0.02 * L, 0.92, camel ? UV_LIMB : UV_COAT, camel ? UV_LIMB : UV_COAT, UV_BELLY);
+      if (camel) {
+        m.add('sph', [0, bh * 0.42, -0.05 * L], [bw * 0.80, 0.32 * L, 0.38 * L], { uv: UV_COAT });
+        let np = add3(chestTop, [0, -0.12 * L, 0.02 * L]);
+        np = addSeg(m, np, 0.16 * L, 0.16 * L, 0.14 * L, 66, 0, 0, UV_COAT, true, true);
+        const hp = addSeg(m, np, 0.19 * L, 0.14 * L, 0.12 * L, 14, 0, 0, UV_COAT, true, true);
+        const hr = 0.185 * L, headC = add3(hp, [0, 0.01 * L, 0.02 * L]);
+        buildUngulateHead(m, headC, hr, 0.15 * L, 0.095 * L, 0.095 * L, UV_COAT, UV_HEAD, UV_BELLY, 122);
+        addSymX(m, 'sph', hr * 0.44, headC[1] + hr * 0.16, headC[2] - hr * 0.06, [0.050 * L, 0.078 * L, 0.042 * L], { splay: 26, uv: UV_COAT });
+        const tp = addSeg(m, add3(tailBase, [0, -0.02 * L, 0.02 * L]), 0.14 * L, 0.036 * L, 0.024 * L, -168, 0, 0, UV_LIMB, false);
+        m.add('sph', add3(tp, [0, -0.03 * L, 0]), [0.048 * L, 0.065 * L, 0.048 * L], { uv: UV_COAT });
+      } else {
+        m.add('sph', [0, bh * 0.46, chestTop[2] + 0.02 * L], [0.155 * L, 0.39 * L, 0.165 * L], { pitch: 10, uv: UV_COAT });
+        const hr = 0.19 * L, headC = [0, bh * 0.46 + 0.36 * L, chestTop[2] + 0.08 * L];
+        buildUngulateHead(m, headC, hr, 0.125 * L, 0.086 * L, 0.086 * L, UV_COAT, UV_HEAD, UV_BELLY, 120);
+        m.add('sph', add3(headC, [0, hr * 0.08, -0.01 * L]), [hr * 0.94, hr * 0.56, hr * 0.90], { noOutline: true, uv: UV_COAT });
+        addSymX(m, 'cone', hr * 0.34, headC[1] + hr * 0.22, headC[2] - hr * 0.04, [0.046 * L, 0.115 * L, 0.042 * L], { pitch: -6, splay: 16, taper: 0.22, uv: UV_COAT });
+        addSeg(m, add3(tailBase, [0, -0.02 * L, 0.03 * L]), 0.13 * L, 0.050 * L, 0.024 * L, -162, 0, 0, UV_COAT, false);
+      }
+      break;
+    }
+
+    case 'Pachyderm': {
+      const ele = Has(n, 'elephant', 'mastodon'), mastodon = Has(n, 'mastodon'), rhino = Has(n, 'rhino');
+      const bl = 0.78 * L, bh = 0.52 * L, bw = calibrateWidth(n, bl, (rhino ? 0.56 : 0.50) * L);
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.14 * L, (rhino ? 0.03 : 0.01) * L, 0.94, UV_LIMB, UV_LIMB, UV_BELLY);
+      const hr = (rhino ? 0.25 : 0.30) * L, headC = [0, bh * (rhino ? 0.50 : 0.52), bl * (ele ? 0.48 : 0.43)];
+      if (ele) {
+        m.add('sph', [headC[0], headC[1] - hr * 0.48, headC[2]], [hr * 0.94, hr * 1.02, hr * 0.98], { pitch: 12, uv: UV_HEAD });
+        if (mastodon) m.add('sph', add3(headC, [0, hr * 0.14, 0]), [hr * 1.04, hr * 0.64, hr * 0.94], { uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', bw * 0.54, headC[1] - hr * 0.44, headC[2] - hr * 0.24, [0.24 * L, 0.32 * L, 0.16 * L], { yaw: 18, splay: 22, uv: UV_HEAD });
+        addSymX(m, 'sph', hr * 0.31, headC[1] - hr * 0.04, headC[2] + hr * 0.32, [0.05 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
+        let trk = add3(headC, [0, -hr * 0.08, hr * 0.36]);
+        trk = addSeg(m, trk, 0.14 * L, 0.125 * L, 0.095 * L, 134, 0, 0, UV_HEAD);
+        trk = addSeg(m, trk, 0.12 * L, 0.095 * L, 0.075 * L, 162, 0, 0, UV_HEAD);
+        addSeg(m, trk, 0.08 * L, 0.075 * L, 0.052 * L, 126, 0, 0, UV_HEAD);
+        const pair = {
+          L: [headC[0] - hr * 0.28, headC[1] - hr * 0.26, headC[2] + hr * 0.30],
+          R: [headC[0] + hr * 0.28, headC[1] - hr * 0.26, headC[2] + hr * 0.30],
+        };
+        const tl = (mastodon ? 0.18 : 0.13) * L;
+        addSymSeg(m, pair, tl, 0.058 * L, 0.042 * L, 124, 10, 0, UV_DETAIL);
+        addSymSeg(m, pair, tl * 0.85, 0.042 * L, 0.014 * L, 92, 4, 0, UV_DETAIL);
+      } else if (rhino) {
+        addSymX(m, 'sph', bw * 0.24, bh * 0.04, 0.02 * L, [bw * 0.68, bh * 0.86, bl * 0.78], { uv: UV_COAT, noOutline: true });
+        buildUngulateHead(m, headC, hr, 0.13 * L, 0.14 * L, 0.13 * L, UV_HEAD, UV_HEAD, UV_LIMB, 112);
+        addSymX(m, 'sph', hr * 0.44, headC[1] + hr * 0.22, headC[2] - hr * 0.06, [0.075 * L, 0.095 * L, 0.055 * L], { yaw: 18, splay: 24, uv: UV_HEAD });
+        const h1 = add3(headC, [0, -hr * 0.28, hr * 0.48]);
+        addSeg(m, h1, 0.24 * L, 0.115 * L, 0.016 * L, 16, 0, 0, UV_DETAIL, false);
+      } else {
+        buildHead(m, add3(headC, [0, -0.04 * L, 0]), hr, hr * 1.05, hr * 0.96, hr * 0.74, UV_HEAD, UV_BELLY, UV_BELLY, false);
+        addSymX(m, 'sph', hr * 0.24, headC[1] - hr * 0.04, headC[2] + hr * 0.68, [0.07 * L, 0.06 * L, 0.08 * L], { uv: UV_EYE, noOutline: true });
+        buildEars(m, headC, hr, 0.045 * L, 0.08 * L, { roundEar: true, earUv: UV_LIMB });
+      }
+      addSeg(m, tailBase, 0.15 * L, 0.042 * L, 0.016 * L, -162, 0, 0, UV_LIMB, false);
+      break;
+    }
+
+    case 'CervidEquine': {
+      const equine = Has(n, 'horse', 'donkey'), donkey = Has(n, 'donkey'), moose = Has(n, 'moose');
+      const antler = Has(n, 'deer', 'elk', 'caribou', 'moose'), ibex = Has(n, 'ibex');
+      const gazelle = Has(n, 'gazelle', 'antelope'), goat = Has(n, 'goat'), bovine = Has(n, 'cow', 'bull');
+      const bl = (bovine ? 0.76 : 0.70) * L, bh = (bovine ? 0.42 : moose ? 0.38 : 0.38) * L;
+      const bw = calibrateWidth(n, bl, (bovine ? 0.42 : 0.31) * L);
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (bovine ? 0.09 : 0.07) * L, (bovine ? 0.01 : 0.03) * L, bovine ? 0.96 : moose ? 0.93 : 0.95, UV_LIMB, bovine ? UV_COAT : UV_LIMB, ibex ? UV_LIMB : UV_BELLY);
+      const neckPitch = bovine ? 46 : moose ? 52 : equine ? 26 : 36;
+      const nd0 = (bovine ? 0.19 : 0.155) * L, nd1 = (bovine ? 0.165 : 0.135) * L;
+      let np = add3(chestTop, [0, -0.05 * L, 0.01 * L]);
+      np = addSeg(m, np, (bovine ? 0.13 : equine ? 0.18 : 0.16) * L, nd0, nd1, neckPitch, 0, 0, UV_COAT, true, true);
+      const hp = addSeg(m, np, (bovine ? 0.10 : equine ? 0.16 : 0.14) * L, nd1, nd1 * 0.86, neckPitch - 8, 0, 0, UV_COAT, true, true);
+      const hr = (bovine ? 0.22 : 0.195) * L, headC = add3(hp, [0, 0.01 * L, 0.02 * L]);
+      buildUngulateHead(m, headC, hr,
+        (moose ? 0.18 : bovine ? 0.16 : 0.16) * L,
+        (bovine ? 0.115 : moose ? 0.115 : 0.095) * L,
+        (moose ? 0.12 : bovine ? 0.11 : 0.10) * L,
+        UV_HEAD, bovine ? UV_LIMB : UV_HEAD, UV_BELLY, moose ? 116 : equine ? 128 : bovine ? 122 : 118);
+      if (equine) {
+        const maneStart = add3(headC, [0, hr * 0.34, -hr * 0.16]);
+        const maneMid = addSeg(m, maneStart, 0.19 * L, 0.058 * L, 0.068 * L, -158, 0, 0, UV_DETAIL, true);
+        addSeg(m, maneMid, 0.18 * L, 0.068 * L, 0.048 * L, -152, 0, 0, UV_DETAIL, true, true);
+        m.add('sph', add3(headC, [0, hr * 0.20, hr * 0.12]), [0.062 * L, 0.058 * L, 0.075 * L], { pitch: 24, uv: UV_DETAIL });
+        addSymX(m, 'cone', hr * 0.30, headC[1] + hr * 0.24, headC[2] - hr * 0.04, [0.042 * L, (donkey ? 0.16 : 0.082) * L, 0.038 * L], { pitch: -8, splay: donkey ? 28 : 14, taper: 0.22, uv: UV_HEAD });
+      } else if (bovine) {
+        addSymX(m, 'cone', hr * 0.40, headC[1] + hr * 0.04, headC[2] - hr * 0.10, [0.046 * L, 0.105 * L, 0.040 * L], { pitch: -28, splay: 74, taper: 0.25, uv: UV_HEAD });
+      } else if (antler && !moose) {
+        m.add('sph', add3(hp, [0, -0.08 * L, 0.045 * L]), [0.085 * L, 0.11 * L, 0.075 * L], { pitch: 28, noOutline: true, uv: UV_BELLY });
+        addSymX(m, 'cone', hr * 0.38, headC[1] + hr * 0.08, headC[2] - hr * 0.06, [0.044 * L, 0.115 * L, 0.038 * L], { pitch: -14, splay: 58, taper: 0.22, uv: UV_LIMB });
+      } else if (ibex || goat) {
+        addSymX(m, 'cone', hr * 0.38, headC[1] + hr * 0.06, headC[2] - hr * 0.04, [0.044 * L, 0.11 * L, 0.038 * L], { pitch: -14, splay: 58, taper: 0.22, uv: UV_LIMB });
+      } else {
+        buildEars(m, headC, hr, 0.046 * L, (donkey ? 0.18 : bovine ? 0.10 : 0.11) * L, { floppy: false, earUv: UV_LIMB });
+      }
+      if (goat || ibex) m.add('cone', add3(headC, [0, -hr * 0.36, hr * 0.42]), [0.048 * L, 0.12 * L, 0.052 * L], { pitch: 172, taper: 0.18, uv: UV_LIMB });
+
+      const pair = {
+        L: [headC[0] - hr * 0.28, headC[1] + hr * 0.24, headC[2] - hr * 0.04],
+        R: [headC[0] + hr * 0.28, headC[1] + hr * 0.24, headC[2] - hr * 0.04],
+      };
+      if (moose) {
+        const p0L = [...pair.L], p0R = [...pair.R];
+        addSymSeg(m, pair, 0.13 * L, 0.052 * L, 0.064 * L, -34, 56, 0, UV_DETAIL, false);
+        const browPair = { L: lerp3(p0L, pair.L, 0.65), R: lerp3(p0R, pair.R, 0.65) };
+        addSymSeg(m, browPair, 0.09 * L, 0.040 * L, 0.020 * L, 38, 14, 0, UV_DETAIL, false);
+        const p1L = [...pair.L], p1R = [...pair.R];
+        addSymSeg(m, pair, 0.17 * L, 0.070 * L, 0.052 * L, -48, 24, 0, UV_DETAIL, true);
+        for (let t = 0; t < 3; t++) {
+          const frac = 0.18 + t * 0.40;
+          const tPair = { L: lerp3(p1L, pair.L, frac), R: lerp3(p1R, pair.R, frac) };
+          addSymSeg(m, tPair, (0.12 - t * 0.01) * L, 0.052 * L, 0.024 * L, -10 - t * 13, 8 + t * 12, 0, UV_DETAIL, false);
+        }
+      } else if (antler) {
+        const bL = [...pair.L], bR = [...pair.R];
+        addSymSeg(m, pair, 0.14 * L, 0.044 * L, 0.036 * L, -28, 58, 0, UV_DETAIL);
+        const fPair = { L: lerp3(bL, pair.L, 0.60), R: lerp3(bR, pair.R, 0.60) };
+        addSymSeg(m, fPair, 0.095 * L, 0.032 * L, 0.014 * L, 34, 12, 0, UV_DETAIL, false);
+        const mPair = { L: [...pair.L], R: [...pair.R] };
+        addSymSeg(m, pair, 0.15 * L, 0.036 * L, 0.016 * L, -12, -14, 0, UV_DETAIL);
+        addSymSeg(m, mPair, 0.11 * L, 0.030 * L, 0.014 * L, 16, -34, 0, UV_DETAIL, false);
+      } else if (ibex) {
+        pair.L = [headC[0] - hr * 0.22, headC[1] + hr * 0.26, headC[2] + hr * 0.04];
+        pair.R = [headC[0] + hr * 0.22, headC[1] + hr * 0.26, headC[2] + hr * 0.04];
+        addSymSeg(m, pair, 0.15 * L, 0.068 * L, 0.060 * L, 10, 20, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.17 * L, 0.060 * L, 0.052 * L, -42, 24, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.17 * L, 0.052 * L, 0.042 * L, -96, 16, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.16 * L, 0.042 * L, 0.028 * L, -148, 4, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.12 * L, 0.028 * L, 0.014 * L, -192, -8, 0, UV_DETAIL);
+      } else if (gazelle || goat || bovine) {
+        if (bovine) {
+          pair.L = [headC[0] - hr * 0.30, headC[1] + hr * 0.22, headC[2] + hr * 0.08];
+          pair.R = [headC[0] + hr * 0.30, headC[1] + hr * 0.22, headC[2] + hr * 0.08];
+          addSymSeg(m, pair, 0.095 * L, 0.046 * L, 0.032 * L, 28, 64, 0, UV_DETAIL);
+          addSymSeg(m, pair, 0.085 * L, 0.032 * L, 0.014 * L, 8, 16, 0, UV_DETAIL);
+        } else {
+          const hl = (gazelle ? 0.16 : 0.11) * L;
+          addSymSeg(m, pair, hl, 0.042 * L, 0.028 * L, -36, 22, 0, UV_DETAIL);
+          addSymSeg(m, pair, hl * 0.85, 0.028 * L, 0.012 * L, -52, 9, 0, UV_DETAIL);
+        }
+      }
+
+      if (equine) {
+        const tp = addSeg(m, add3(tailBase, [0, 0.04 * L, 0.02 * L]), 0.13 * L, 0.072 * L, 0.088 * L, -152, 0, 0, UV_DETAIL, true, true);
+        addSeg(m, tp, 0.14 * L, 0.088 * L, 0.032 * L, -162, 0, 0, UV_DETAIL, true);
+      } else if (bovine) {
+        addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.17 * L, 0.044 * L, 0.020 * L, -160, 0, 0, UV_COAT, false);
+      } else if (moose) {
+        addSeg(m, add3(tailBase, [0, -0.02 * L, 0.04 * L]), 0.11 * L, 0.048 * L, 0.026 * L, -172, 0, 0, UV_COAT, false);
+      } else {
+        m.add('cone', add3(tailBase, [0, -0.01 * L, 0.02 * L]), [0.070 * L, 0.14 * L, 0.065 * L], { pitch: goat ? -35 : -164, uv: antler ? UV_BELLY : UV_COAT });
+      }
+      break;
+    }
+
+    case 'UrsineSloth': {
+      const panda = Has(n, 'panda'), sloth = Has(n, 'megasloth', 'sloth'), badger = Has(n, 'badger', 'wolverine');
+      const bl = (badger ? 0.68 : 0.76) * L, bh = (badger ? 0.36 : sloth ? 0.50 : 0.42) * L;
+      const bw = calibrateWidth(n, bl, (badger ? 0.38 : 0.48) * L);
+      const frontRegion = panda ? UV_LIMB : sloth ? UV_BELLY : UV_LIMB;
+      const rearRegion = panda ? UV_COAT : UV_LIMB;
+      const bellyRegion = panda ? UV_COAT : sloth ? UV_LIMB : UV_BELLY;
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (badger ? 0.09 : 0.12) * L, (sloth ? 0.04 : 0.01) * L, sloth ? 0.90 : 1.00, frontRegion, rearRegion, bellyRegion);
+      if (panda) {
+        m.add('sph', [0, 0.02 * L, -bl * 0.14], [bw * 1.00, bh * 1.06, bl * 0.62], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0, -bl * 0.25], [bw * 1.06, bh * 0.46, bl * 0.46], { uv: UV_LIMB, noOutline: true });
+      } else if (sloth) {
+        m.add('sph', [0, 0.02 * L, -bl * 0.12], [bw * 1.01, bh * 0.94, bl * 0.74], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.08 * L, bl * 0.20], [bw * 1.06, bh * 0.96, bl * 0.52], { uv: UV_BELLY, noOutline: true });
+        addSymX(m, 'sph', bw * 0.16, bh * 0.34, bl * 0.16, [bw * 0.82, bh * 0.64, bl * 0.44], { uv: UV_BELLY, noOutline: true });
+        m.add('sph', [0, 0, bl * 0.20], [bw * 1.06, bh * 0.36, bl * 0.50], { uv: UV_LIMB, noOutline: true });
+        m.add('cone', [0, bh * 0.86, bl * 0.12], [0.14 * L, 0.15 * L, 0.14 * L], { pitch: -48, taper: 0.22, noOutline: true, uv: UV_BELLY });
+      }
+      const hr = (badger ? 0.21 : sloth ? 0.23 : 0.25) * L, headC = [0, bh * (sloth ? 0.48 : 0.66), bl * (sloth ? 0.46 : 0.44)];
+      buildHead(m, headC, hr, hr * 0.68, hr * 0.58, hr * 0.50, panda ? UV_HEAD : sloth ? UV_BELLY : UV_COAT, badger ? UV_DETAIL : sloth ? UV_LIMB : UV_HEAD, panda ? UV_HEAD : UV_BELLY);
+      if (panda || sloth)
+        addSymX(m, 'sph', hr * 0.26, headC[1] - hr * 0.08, headC[2] + hr * 0.24, [hr * 0.32, hr * 0.28, hr * 0.28], { yaw: 18, splay: -14, uv: UV_LIMB, noOutline: true });
+      if (!sloth)
+        buildEars(m, headC, hr, 0.058 * L, 0.082 * L, { roundEar: true, earUv: UV_LIMB });
+      if (sloth) {
+        addSeg(m, add3(tailBase, [0, 0.01 * L, 0.04 * L]), 0.25 * L, 0.15 * L, 0.042 * L, -126, 0, 0, UV_COAT, true);
+      } else if (badger) addSeg(m, tailBase, 0.17 * L, 0.12 * L, 0.055 * L, -115, 0, 0, UV_COAT);
+      else addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.10 * L, 0.062 * L, 0.030 * L, -142, 0, 0, panda ? UV_COAT : UV_LIMB, false);
+      break;
+    }
+
+    case 'Canid': {
+      const warg = Has(n, 'warg'), fox = Has(n, 'fox'), fennec = Has(n, 'fennec');
+      const husky = Has(n, 'husky'), floppy = Has(n, 'labrador', 'boghound'), terrier = Has(n, 'terrier', 'yorkshire');
+      const bl = (fox ? 0.66 : 0.70) * L, bh = (warg ? 0.40 : fox ? 0.32 : 0.37) * L;
+      const bw = calibrateWidth(n, bl, (warg ? 0.36 : fox ? 0.29 : 0.32) * L);
+      const bellyUv = fox ? UV_DETAIL : UV_BELLY;
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (warg ? 0.10 : 0.07) * L, (warg ? 0.04 : 0.02) * L, warg ? 0.78 : 0.94, UV_LIMB, UV_LIMB, bellyUv);
+      if (terrier) m.add('sph', [0, 0, 0], [bw * 1.06, bh * 0.52, bl * 0.94], { uv: UV_BELLY, noOutline: true });
+      const canidNeckPitch = warg ? 48 : 50;
+      const np = addSeg(m, add3(chestTop, [0, -0.06 * L, 0.01 * L]), 0.13 * L, 0.15 * L, 0.13 * L, canidNeckPitch, 0, 0, UV_COAT, true, true);
+      if (husky)
+        m.add('cyl', add3(chestTop, [0, -0.08 * L, 0.04 * L]), [0.11 * L, 0.14 * L, 0.09 * L], { pitch: canidNeckPitch, taper: 0.82, uv: UV_BELLY, noOutline: true });
+      const hr = (warg ? 0.24 : fox ? 0.21 : 0.22) * L, headC = add3(np, [0, 0.01 * L, 0.02 * L]);
+      buildHead(m, headC, hr, hr * (fox ? 0.96 : 0.84), hr * (fox ? 0.46 : 0.52), hr * 0.45, terrier ? UV_HEAD : UV_COAT, husky ? UV_BELLY : fox ? UV_COAT : UV_HEAD, bellyUv);
+      if (husky)
+        addSymX(m, 'sph', hr * 0.365, headC[1] - hr * 0.02, headC[2] + hr * 0.285, [hr * 0.20, hr * 0.22, hr * 0.22], { uv: UV_DETAIL, noOutline: true });
+      buildEars(m, headC, hr, (fennec ? 0.085 : 0.052) * L, (fennec ? 0.22 : 0.11) * L, { floppy, earUv: (fox || fennec) ? UV_LIMB : UV_HEAD });
+      if (!warg && !floppy && !terrier) {
+        m.add('sph', [0, 0.01 * L, bl * 0.22], [bw * 0.96, bh * 0.46, bl * 0.46], { noOutline: true, uv: bellyUv });
+      }
+      if (warg) {
+        for (let i = 0; i < 4; i++) {
+          const t = i / 3;
+          const spPos = lerp3(add3(headC, [0, hr * 0.28, -hr * 0.22]), [0, bh * 0.92, 0.02 * L], t);
+          m.add('cone', spPos, [0.065 * L, (0.16 - i * 0.015) * L, 0.085 * L], { pitch: -46 - i * 6, taper: 0.16, uv: UV_EYE });
+        }
+        addSymX(m, 'cone', 0.045 * L, headC[1] + hr * 0.14, headC[2] - hr * 0.28, [0.055 * L, 0.14 * L, 0.070 * L], { pitch: -44, splay: 22, taper: 0.18, uv: UV_EYE });
+      }
+      if (fox) {
+        const tStart = add3(tailBase, [0, 0.02 * L, 0.02 * L]);
+        addSeg(m, tStart, 0.38 * L, 0.15 * L, 0.036 * L, -116, 0, 0, UV_COAT, true);
+        const tMid = add3(tStart, stepVec(0.11 * L, -116, 0, 0));
+        m.add('sph', add3(tMid, [0, -0.085 * L, 0]), [0.175 * L, 0.17 * L, 0.22 * L], { pitch: -26, noOutline: true, uv: UV_COAT });
+        const tWhite = add3(tStart, stepVec(0.19 * L, -116, 0, 0));
+        addSeg(m, tWhite, 0.20 * L, 0.135 * L, 0.038 * L, -116, 0, 0, UV_DETAIL, true, true);
+      } else if (husky || terrier) {
+        let tp = addSeg(m, add3(tailBase, [0, 0.02 * L, 0.02 * L]), 0.13 * L, 0.10 * L, 0.125 * L, -42, 0, 0, UV_COAT, true);
+        tp = addSeg(m, tp, 0.13 * L, 0.125 * L, 0.115 * L, 18, 0, 0, UV_BELLY, true);
+        addSeg(m, tp, 0.12 * L, 0.115 * L, 0.048 * L, 78, 0, 0, UV_BELLY, true);
+      } else if (warg) {
+        const tp = addSeg(m, add3(tailBase, [0, 0.03 * L, 0.02 * L]), 0.14 * L, 0.058 * L, 0.038 * L, -118, 0, 0, UV_LIMB, true);
+        addSeg(m, tp, 0.13 * L, 0.038 * L, 0.014 * L, -142, 0, 0, UV_EYE, false);
+      } else {
+        addSeg(m, add3(tailBase, [0, 0.02 * L, 0.02 * L]), 0.25 * L, 0.12 * L, 0.038 * L, -128, 0, 0, UV_COAT, true);
+      }
+      break;
+    }
+
+    case 'Felid': {
+      const lynx = Has(n, 'lynx'), scimitar = Has(n, 'scimitar'), tiger = Has(n, 'tiger'), smallCat = Has(n, 'cat') && !scimitar;
+      const bl = 0.68 * L, bh = (smallCat ? 0.34 : 0.36) * L, bw = calibrateWidth(n, bl, (smallCat ? 0.29 : 0.31) * L);
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.07 * L, 0.02 * L, 0.96, UV_COAT, UV_COAT, lynx ? UV_COAT : UV_BELLY);
+      if (tiger) {
+        for (let i = 0; i < 3; i++)
+          m.add('sph', [0, bh * 0.10, (0.14 - i * 0.16) * L], [bw * 1.02, bh * 0.88, 0.07 * L], { uv: UV_DETAIL, noOutline: true });
+      }
+      const np = addSeg(m, add3(chestTop, [0, -0.05 * L, 0.01 * L]), (smallCat ? 0.14 : 0.12) * L, 0.14 * L, 0.12 * L, smallCat ? 26 : 40, 0, 0, UV_COAT, true, true);
+      const hr = (smallCat ? 0.24 : 0.22) * L, headC = add3(np, [0, 0.01 * L, 0.02 * L]);
+      buildHead(m, headC, hr, hr * (smallCat ? 0.42 : 0.56), hr * (smallCat ? 0.52 : 0.56), hr * 0.42, UV_COAT, lynx ? UV_BELLY : UV_COAT, UV_BELLY);
+      if (lynx) {
+        m.add('sph', [0, 0.03 * L, bl * 0.28], [bw * 0.82, bh * 0.48, bl * 0.34], { uv: UV_BELLY, noOutline: true });
+        addSymX(m, 'sph', hr * 0.44, headC[1] + hr * 0.38, headC[2] - hr * 0.10, [0.042 * L, 0.052 * L, 0.038 * L], { uv: UV_BELLY, noOutline: true });
+      }
+      buildEars(m, headC, hr, (smallCat ? 0.064 : 0.052) * L, (lynx || smallCat ? 0.105 : 0.082) * L, { roundEar: false, tufted: lynx, earUv: smallCat ? UV_COAT : lynx ? UV_LIMB : UV_HEAD });
+      if (scimitar) addSymX(m, 'cone', hr * 0.20, headC[1] - hr * 0.38, headC[2] + hr * 0.46, [0.042 * L, 0.14 * L, 0.042 * L], { pitch: 168, uv: UV_DETAIL });
+      if (lynx || scimitar) {
+        const tp = addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.10 * L, 0.068 * L, 0.054 * L, -124, 0, 0, UV_COAT, true);
+        addSeg(m, tp, 0.06 * L, 0.054 * L, 0.032 * L, -124, 0, 0, UV_EYE, true, true);
+      } else if (smallCat) {
+        let tp = addSeg(m, add3(tailBase, [0, 0.02 * L, 0.02 * L]), 0.16 * L, 0.058 * L, 0.050 * L, -16, 0, 0, UV_COAT, true);
+        tp = addSeg(m, tp, 0.15 * L, 0.048 * L, 0.042 * L, 10, 0, -10, UV_COAT, true);
+        addSeg(m, tp, 0.10 * L, 0.040 * L, 0.028 * L, 68, 0, -28, UV_COAT, true);
+      } else {
+        const tp = addSeg(m, add3(tailBase, [0, 0.03 * L, 0.03 * L]), 0.20 * L, 0.054 * L, 0.038 * L, -134, 0, 0, UV_COAT, true);
+        addSeg(m, tp, 0.11 * L, 0.038 * L, 0.024 * L, -146, 0, 0, UV_DETAIL, true, true);
+      }
+      break;
+    }
+
+    case 'Porcine': {
+      const boar = Has(n, 'boar');
+      const bl = 0.66 * L, bh = 0.36 * L, bw = calibrateWidth(n, bl, 0.38 * L);
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.08 * L, 0, 0.92, UV_COAT, UV_COAT, UV_BELLY);
+      const hr = 0.24 * L, headC = [0, bh * 0.58, bl * 0.38];
+      buildHead(m, headC, hr, hr * 0.58, hr * 0.62, hr * 0.52, boar ? UV_COAT : UV_HEAD, boar ? UV_COAT : UV_HEAD, UV_BELLY, false);
+      const snoutTip = add3(headC, [0, -hr * 0.22, hr * 0.52]);
+      m.add('sph', add3(snoutTip, [0, -0.042 * L, 0]), [0.096 * L, 0.084 * L, 0.068 * L], { uv: UV_HEAD, noOutline: true });
+      addSymX(m, 'cone', hr * 0.28, headC[1] + hr * 0.04, headC[2] - hr * 0.06, [0.058 * L, 0.14 * L, 0.048 * L], { pitch: -14, splay: 44, taper: 0.24, uv: boar ? UV_COAT : UV_HEAD });
+      if (boar) {
+        m.add('sph', add3(headC, [0, -hr * 0.06, hr * 0.12]), [0.068 * L, hr * 0.56, hr * 0.72], { pitch: 22, noOutline: true, uv: UV_LIMB });
+        for (let i = 0; i < 6; i++) {
+          const t = i / 5;
+          const spPos = lerp3([0, headC[1] + hr * 0.22, headC[2] + 0.02 * L], [0, bh * 0.82, -0.22 * L], t);
+          if (i > 0 && i < 5) spPos[1] += 0.03 * L;
+          m.add('cone', spPos, [(0.068 - i * 0.003) * L, (0.115 - i * 0.006) * L, 0.088 * L], { pitch: -24 - i * 4, taper: 0.18, uv: UV_LIMB });
+        }
+        const pair = {
+          L: [headC[0] - hr * 0.26, headC[1] - hr * 0.28, headC[2] + hr * 0.36],
+          R: [headC[0] + hr * 0.26, headC[1] - hr * 0.28, headC[2] + hr * 0.36],
+        };
+        addSymSeg(m, pair, 0.115 * L, 0.046 * L, 0.014 * L, 22, 20, 0, UV_DETAIL, true);
+      }
+      const tp = addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.09 * L, 0.038 * L, 0.026 * L, -142, 0, 0, UV_COAT, false);
+      if (boar) addSeg(m, tp, 0.05 * L, 0.028 * L, 0.016 * L, -148, 0, 0, UV_LIMB, false, true);
+      break;
+    }
+
+    case 'RodentSmall': {
+      const hare = Has(n, 'hare', 'rabbit'), squirrel = Has(n, 'squirrel'), beaver = Has(n, 'beaver');
+      const raccoon = Has(n, 'raccoon'), boomrat = Has(n, 'boomrat'), porcupine = Has(n, 'porcupine');
+      const cavy = Has(n, 'capybara', 'guineapig', 'prairie', 'vole'), chinchilla = Has(n, 'chinchilla');
+      const bl = (cavy ? 0.64 : hare ? 0.54 : squirrel ? 0.48 : boomrat ? 0.60 : 0.58) * L, bh = (cavy ? 0.40 : hare ? 0.36 : squirrel ? 0.30 : boomrat ? 0.24 : 0.35) * L, bw = calibrateWidth(n, bl, (cavy ? 0.36 : hare ? 0.32 : squirrel ? 0.26 : boomrat ? 0.28 : 0.30) * L);
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.065 * L, -0.02 * L, boomrat ? 0.86 : 1.12, UV_COAT, UV_COAT, UV_BELLY);
+      if (hare || squirrel) m.add('sph', [0, 0.02 * L, -0.04 * L], [bw * 1.00, bh * 1.02, bl * 0.78], { noOutline: true, uv: UV_COAT });
+      if (boomrat) {
+        m.add('sph', [0, bh * 0.50, 0.11 * L], [0.20 * L, 0.19 * L, 0.21 * L], { pitch: -24, uv: UV_DETAIL });
+        m.add('sph', [0, bh * 0.34, -0.09 * L], [0.22 * L, 0.20 * L, 0.23 * L], { pitch: -26, uv: UV_DETAIL });
+      } else if (porcupine) {
+        for (let i = 0; i < 4; i++) {
+          const fz = (0.14 - i * 0.12) * L;
+          m.add('cone', [0, bh * 0.72, fz], [0.055 * L, 0.17 * L, 0.055 * L], { pitch: -58, uv: UV_DETAIL });
+          addSymX(m, 'cone', bw * 0.26, bh * 0.58, fz, [0.050 * L, 0.15 * L, 0.050 * L], { pitch: -55, splay: 24, uv: UV_DETAIL });
+        }
+      }
+      const hr = (cavy ? 0.25 : hare ? 0.23 : squirrel ? 0.20 : boomrat ? 0.19 : 0.22) * L, headC = [0, bh * (hare ? 0.54 : squirrel ? 0.64 : boomrat ? 0.78 : 0.42), bl * (hare || squirrel ? 0.36 : boomrat ? 0.42 : 0.40)];
+      buildHead(m, headC, hr, hr * (cavy ? 0.82 : hare ? 0.34 : squirrel ? 0.38 : boomrat ? 0.62 : 0.74), hr * (cavy ? 0.68 : 0.54), hr * (cavy ? 0.64 : 0.48), UV_HEAD, UV_HEAD, UV_BELLY, !(hare || squirrel || boomrat));
+      if (raccoon) addSymX(m, 'sph', hr * 0.28, headC[1] - hr * 0.12, headC[2] + hr * 0.24, [hr * 0.34, hr * 0.26, hr * 0.26], { uv: UV_LIMB, noOutline: true });
+      if (beaver) m.add('box', add3(headC, [0, -hr * 0.42, hr * 0.48]), [0.042 * L, 0.048 * L, 0.026 * L], { uv: UV_DETAIL, noOutline: true });
+      if (hare || squirrel || boomrat) {
+        addSymX(m, 'sph', hr * (hare ? 0.17 : boomrat ? 0.32 : 0.22), headC[1] + hr * (boomrat ? 0.02 : 0.10), headC[2] - hr * 0.06, [(hare ? 0.068 : 0.052) * L, (hare ? 0.27 : boomrat ? 0.10 : 0.12) * L, (hare ? 0.052 : 0.046) * L], { pitch: hare ? -26 : -16, splay: hare ? 11 : boomrat ? 38 : 18, uv: UV_COAT });
+      } else {
+        buildEars(m, headC, hr, (chinchilla ? 0.075 : 0.052) * L, 0.095 * L, { roundEar: true, earUv: UV_LIMB });
+      }
+      if (boomrat) {
+        // 无外露鼠尾
+      } else if (hare || cavy) {
+        m.add('sph', [0, bh * 0.08, -bl * 0.43], [0.11 * L, 0.11 * L, 0.11 * L], { uv: UV_BELLY });
+      } else if (squirrel || chinchilla) {
+        const t0 = add3(tailBase, [0, -0.04 * L, 0.06 * L]);
+        const t1 = addSeg(m, t0, 0.18 * L, 0.105 * L, 0.110 * L, -60, 0, 14, UV_COAT, false);
+        const j1 = add3(t0, stepVec(0.168 * L, -60, 0, 14));
+        m.add('sph', add3(j1, [0, -0.060 * L, 0]), [0.120 * L, 0.120 * L, 0.120 * L], { noOutline: true, uv: UV_COAT });
+        const t2 = addSeg(m, t1, 0.16 * L, 0.108 * L, 0.098 * L, -24, 0, -18, UV_COAT, false);
+        const j2 = add3(t1, stepVec(0.150 * L, -24, 0, -18));
+        m.add('sph', add3(j2, [0, -0.054 * L, 0]), [0.108 * L, 0.108 * L, 0.108 * L], { noOutline: true, uv: UV_COAT });
+        addSeg(m, t2, 0.13 * L, 0.094 * L, 0.036 * L, 20, 0, 12, UV_COAT, false);
+      } else if (beaver) {
+        m.add('sph', add3(tailBase, [0, -0.06 * L, -0.14 * L]), [0.18 * L, 0.06 * L, 0.32 * L], { pitch: -12, uv: UV_LIMB });
+      } else if (raccoon) {
+        let tp = tailBase;
+        for (let i = 0; i < 4; i++)
+          tp = addSeg(m, tp, 0.09 * L, (0.12 - i * 0.014) * L, (0.11 - i * 0.014) * L, -102 + i * 8, 0, 0, (i % 2 === 0) ? UV_COAT : UV_LIMB);
+      } else {
+        const tp = addSeg(m, tailBase, 0.16 * L, 0.050 * L, 0.036 * L, -102, 0, 0, UV_LIMB);
+        addSeg(m, tp, 0.17 * L, 0.036 * L, 0.014 * L, -90, 0, 0, UV_LIMB);
+      }
+      break;
+    }
+
+    case 'PrimateDryad': {
+      const gorilla = Has(n, 'gorilla', 'ape'), dryad = Has(n, 'dryad'), clawer = Has(n, 'clawer');
+      const bl = (gorilla ? 0.60 : 0.56) * L, bh = (gorilla ? 0.54 : 0.42) * L;
+      const bw = calibrateWidth(n, bl, (gorilla ? 0.46 : 0.35) * L);
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (gorilla ? 0.13 : 0.08) * L, (gorilla ? 0.10 : 0.04) * L, gorilla ? 0.84 : 0.96, UV_COAT, UV_COAT, UV_BELLY);
+      if (clawer) {
+        const pair = { L: [-bw * 0.44, 0.12 * L, bl * 0.28], R: [bw * 0.44, 0.12 * L, bl * 0.28] };
+        addSymSeg(m, pair, 0.16 * L, 0.08 * L, 0.025 * L, 78, 18, 0, UV_DETAIL);
+      }
+      const hr = (gorilla ? 0.27 : 0.24) * L, headC = add3(chestTop, [0, -0.02 * L, 0.06 * L]);
+      buildHead(m, headC, hr, hr * 0.66, hr * 0.66, hr * 0.54, UV_COAT, UV_HEAD, UV_HEAD);
+      if (dryad) {
+        buildEars(m, headC, hr, 0.065 * L, 0.17 * L, { earUv: UV_DETAIL });
+      } else {
+        buildEars(m, headC, hr, 0.055 * L, 0.075 * L, { roundEar: true, earUv: UV_HEAD });
+        if (!gorilla) {
+          let tp = addSeg(m, tailBase, 0.17 * L, 0.052 * L, 0.045 * L, -18, 0, 0, UV_COAT);
+          tp = addSeg(m, tp, 0.15 * L, 0.045 * L, 0.038 * L, 12, 0, 0, UV_COAT);
+          addSeg(m, tp, 0.10 * L, 0.038 * L, 0.028 * L, 68, 0, 0, UV_COAT);
+        }
+      }
+      break;
+    }
+
+    case 'BirdFowl':
+    case 'TallBird': {
+      const tall = a === 'TallBird', chicken = Has(n, 'chicken'), turkey = Has(n, 'turkey');
+      const peacock = Has(n, 'peacock'), duck = Has(n, 'duck'), cassowary = Has(n, 'cassowary');
+      const macaw = Has(n, 'macaw', 'parrot'), waterfowl = Has(n, 'duck', 'goose', 'swan');
+      const longNeck = tall || Has(n, 'goose', 'swan', 'peacock');
+      const bl = (tall ? 0.56 : (turkey || peacock) ? 0.48 : 0.54) * L, bh = (tall ? 0.36 : (turkey || peacock || duck) ? 0.31 : 0.36) * L, bw = calibrateWidth(n, bl, (tall ? 0.38 : (turkey || peacock || duck) ? 0.35 : 0.36) * L);
+      const bodyMainUv = peacock ? UV_HEAD : duck ? UV_BELLY : UV_COAT;
+      const breastUv = peacock ? UV_HEAD : duck ? UV_LIMB : UV_COAT;
+      const wingUv = tall ? UV_COAT : (turkey || chicken) ? UV_COAT : UV_BELLY;
+      m.add('sph', [0, 0, duck ? -0.02 * L : 0], [bw, bh, bl], { uv: bodyMainUv });
+      m.add('sph', [0, bh * (duck ? 0.04 : 0.06), bl * (duck ? 0.22 : 0.18)], [bw * 0.94, bh * (duck ? 0.88 : 0.86), bl * (duck ? 0.52 : 0.56)], { uv: breastUv, noOutline: true });
+      if (duck) {
+        m.add('sph', [0, bh * 0.42, -0.11 * L], [bw * 0.42, bh * 0.54, bl * 0.60], { pitch: -28, noOutline: true, uv: UV_LIMB });
+      }
+      if (tall) {
+        addSymX(m, 'sph', bw * 0.38, bh * 0.08, -0.02 * L, [bw * 0.38, bh * 0.68, bl * 0.68], { yaw: 6, pitch: -10, splay: 12, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', bw * 0.48, 0.01 * L, 0.02 * L, [0.13 * L, 0.13 * L, 0.20 * L], { yaw: 8, splay: 16, uv: UV_BELLY });
+        addSymX(m, 'sph', bw * 0.45, 0.02 * L, -0.10 * L, [0.11 * L, 0.12 * L, 0.17 * L], { yaw: 6, splay: 14, uv: UV_BELLY, noOutline: true });
+      } else {
+        addSymX(m, 'sph', bw * 0.34, bh * 0.12, -0.02 * L, [bw * 0.40, bh * 0.70, bl * 0.68], { yaw: 5, pitch: -8, uv: wingUv, noOutline: true });
+        if (turkey) {
+          addSymX(m, 'sph', bw * 0.36, 0.03 * L, -0.04 * L, [0.08 * L, 0.16 * L, 0.12 * L], { yaw: 8, pitch: -36, splay: 10, uv: UV_BELLY, noOutline: true });
+        } else if (peacock) {
+          addSymX(m, 'sph', bw * 0.36, 0.03 * L, -0.05 * L, [0.085 * L, 0.13 * L, 0.15 * L], { yaw: 6, pitch: -18, splay: 8, uv: UV_LIMB, noOutline: true });
+        } else if (duck) {
+          addSymX(m, 'sph', bw * 0.39, bh * 0.28, -0.08 * L, [0.090 * L, 0.082 * L, 0.24 * L], { yaw: 6, pitch: -16, uv: UV_LIMB, noOutline: true });
+        } else {
+          addSymX(m, 'sph', bw * 0.34, 0.02 * L, -0.02 * L, [bw * 0.24, bh * 0.34, bl * 0.42], { yaw: 4, pitch: -8, uv: UV_LIMB, noOutline: true });
+        }
+      }
+      let np = [0, bh * (tall ? 0.42 : (turkey || peacock) ? 0.56 : (duck || chicken) ? 0.68 : 0.56), bl * (tall ? 0.20 : (turkey || peacock) ? 0.32 : (duck || chicken) ? 0.28 : 0.25)];
+      const neckUv = (tall || duck || peacock) ? UV_HEAD : turkey ? UV_DETAIL : UV_COAT;
+      const hr = (tall ? 0.145 : (turkey || peacock) ? 0.13 : (duck || chicken) ? 0.145 : 0.17) * L;
+      let headC;
+      if (turkey) {
+        const n0 = [...np];
+        np = addSeg(m, n0, 0.27 * L, 0.072 * L, 0.060 * L, -8, 0, 0, UV_DETAIL, false);
+        m.add('sph', add3(n0, [0, 0.01 * L, -0.005 * L]), [0.084 * L, 0.26 * L, 0.092 * L], { pitch: -8, noOutline: true, uv: UV_DETAIL });
+        m.add('sph', add3(np, [0, -0.065 * L, 0.014 * L]), [0.092 * L, 0.105 * L, 0.112 * L], { pitch: 10, noOutline: true, uv: UV_DETAIL });
+      } else if (peacock) {
+        const n0 = [0, bh * 0.50, bl * 0.30];
+        np = addSeg(m, n0, 0.34 * L, 0.068 * L, 0.056 * L, -6, 0, 0, UV_HEAD, false);
+        m.add('sph', [0, 0.11 * L, 0.14 * L], [0.112 * L, 0.24 * L, 0.125 * L], { pitch: -6, noOutline: true, uv: UV_HEAD });
+        m.add('sph', add3(n0, [0, 0.04 * L, -0.008 * L]), [0.088 * L, 0.29 * L, 0.098 * L], { pitch: -6, noOutline: true, uv: UV_HEAD });
+        m.add('sph', add3(np, [0, -0.072 * L, 0.012 * L]), [0.112 * L, 0.115 * L, 0.122 * L], { pitch: 8, noOutline: true, uv: UV_HEAD });
+      } else if (duck) {
+        const n0 = [...np];
+        np = addSeg(m, n0, 0.18 * L, 0.092 * L, 0.072 * L, -4, 0, 0, UV_HEAD, false);
+        m.add('sph', add3(n0, [0, 0.030 * L, -0.006 * L]), [0.122 * L, 0.048 * L, 0.128 * L], { pitch: 4, noOutline: true, uv: UV_BELLY });
+        m.add('sph', add3(n0, [0, 0.056 * L, -0.002 * L]), [0.115 * L, 0.14 * L, 0.122 * L], { pitch: -4, noOutline: true, uv: UV_HEAD });
+        m.add('sph', add3(np, [0, -0.072 * L, 0.014 * L]), [0.128 * L, 0.120 * L, 0.142 * L], { pitch: 8, noOutline: true, uv: UV_HEAD });
+      } else if (longNeck) {
+        const nl = (tall ? 0.24 : 0.13) * L;
+        const n0 = [...np];
+        np = addSeg(m, n0, nl, (tall ? 0.076 : 0.104) * L, 0.074 * L, -10, 0, 0, neckUv, false);
+        if (tall) {
+          m.add('sph', add3(n0, [0, 0.01 * L, -0.01 * L]), [0.102 * L, 0.23 * L, 0.108 * L], { pitch: -10, noOutline: true, uv: neckUv });
+        }
+        const nj = add3(n0, stepVec(nl * 0.92, -10, 0, 0));
+        m.add('sph', add3(nj, [0, -0.055 * L, 0]), [0.106 * L, 0.112 * L, 0.108 * L], { noOutline: true, uv: neckUv });
+        const n1 = add3(n0, stepVec(nl * 0.86, -10, 0, 0));
+        np = addSeg(m, n1, nl * (tall ? 0.86 : 0.96), 0.094 * L, 0.068 * L, 16, 0, 0, neckUv, false);
+        m.add('sph', add3(np, [0, -0.075 * L, 0.006 * L]), [0.104 * L, 0.13 * L, 0.108 * L], { pitch: 14, noOutline: true, uv: neckUv });
+      } else {
+        const n0 = [...np];
+        np = addSeg(m, n0, 0.16 * L, 0.116 * L, 0.104 * L, -2, 0, 0, neckUv, false);
+        m.add('sph', [0, bh * 0.56, 0.06 * L], [0.130 * L, bh * 0.50, 0.24 * L], { pitch: -14, noOutline: true, uv: neckUv });
+        m.add('sph', add3(n0, [0, -0.015 * L, -0.002 * L]), [0.128 * L, 0.15 * L, 0.145 * L], { pitch: -2, noOutline: true, uv: neckUv });
+        m.add('sph', add3(np, [0, -0.068 * L, 0.006 * L]), [0.112 * L, 0.115 * L, 0.138 * L], { pitch: 6, noOutline: true, uv: neckUv });
+      }
+      headC = add3(np, [0, hr * 0.08, ((turkey || peacock || duck || chicken) ? 0.012 : -0.008) * L]);
+      m.add('sph', [headC[0], headC[1] - hr * 0.48, headC[2]], [hr * (tall ? 0.90 : 0.92), hr * 0.84, hr * (tall ? 0.86 : (turkey || peacock || duck || chicken) ? 0.94 : 1.02)], { pitch: 8, uv: UV_HEAD });
+      if (turkey) {
+        m.add('sph', add3(headC, [0, -hr * 0.42, -0.024 * L]), [hr * 0.88, hr * 0.82, hr * 0.72], { pitch: 6, noOutline: true, uv: UV_DETAIL });
+      }
+      addSymX(m, 'sph', hr * 0.22, headC[1] - hr * 0.36, headC[2] + hr * 0.04, [hr * 0.44, hr * 0.44, hr * 0.46], { pitch: 12, uv: macaw ? UV_DETAIL : UV_HEAD, noOutline: true });
+      addSymX(m, 'sph', hr * 0.36, headC[1] - hr * 0.04, headC[2] + hr * 0.20, [hr * 0.20, hr * 0.20, hr * 0.20], { uv: UV_EYE, noOutline: true });
+      const beakUv = (waterfowl || tall || macaw) ? UV_DETAIL : (turkey || peacock) ? UV_BELLY : UV_LIMB;
+      if (waterfowl) {
+        m.add('sph', add3(headC, [0, -hr * 0.28, hr * 0.34]), [hr * 0.52, hr * 0.34, hr * 0.52], { pitch: 14, noOutline: true, uv: beakUv });
+        m.add('sph', add3(headC, [0, -hr * 0.25, hr * 0.48]), [hr * 0.22, hr * 0.18, hr * 0.62], { pitch: 14, uv: beakUv });
+        m.add('sph', add3(headC, [0, -hr * 0.27, hr * 0.48]), [hr * 0.44, hr * 0.22, hr * 0.66], { pitch: 14, noOutline: true, uv: beakUv });
+      }
+      else {
+        m.add('sph', add3(headC, [0, -hr * 0.26, hr * 0.26]), [hr * 0.54, hr * 0.36, hr * 0.52], { pitch: 12, noOutline: true, uv: beakUv });
+        addSeg(m, add3(headC, [0, -hr * 0.08, hr * 0.20]), (tall ? 0.125 : (turkey || peacock || chicken) ? 0.098 : 0.125) * L, (tall ? 0.048 : (turkey || peacock || chicken) ? 0.036 : 0.048) * L, 0.014 * L, tall ? 98 : 106, 0, 0, beakUv, false, false);
+      }
+      if (chicken) {
+        for (let i = 0; i < 3; i++)
+          m.add('sph', add3(headC, [0, hr * 0.22, (0.036 - i * 0.036) * L]), [0.038 * L, (i === 1 ? 0.086 : 0.070) * L, 0.040 * L], { uv: UV_DETAIL });
+        m.add('sph', add3(headC, [0, hr * 0.16, 0]), [0.044 * L, 0.052 * L, 0.104 * L], { noOutline: true, uv: UV_DETAIL });
+        m.add('sph', add3(headC, [0, -hr * 0.52, hr * 0.44]), [0.044 * L, 0.062 * L, 0.052 * L], { noOutline: true, uv: UV_DETAIL });
+      } else if (turkey || cassowary) {
+        m.add('sph', add3(headC, [0.008 * L, -0.16 * L, 0.088 * L]), [0.030 * L, 0.155 * L, 0.034 * L], { pitch: -4, uv: UV_DETAIL, noOutline: true });
+        m.add('sph', [0, 0.13 * L, 0.215 * L], [0.068 * L, 0.22 * L, 0.078 * L], { pitch: -6, uv: UV_DETAIL, noOutline: true });
+        addSymX(m, 'sph', 0.030 * L, 0.145 * L, 0.218 * L, [0.052 * L, 0.072 * L, 0.068 * L], { uv: UV_DETAIL, noOutline: true });
+        if (cassowary) m.add('cone', add3(headC, [0, hr * 0.32, -0.01 * L]), [0.06 * L, 0.15 * L, 0.11 * L], { pitch: -10, uv: UV_LIMB });
+      } else if (peacock) {
+        const cBase = add3(headC, [0, hr * 0.28, -0.015 * L]);
+        const cTop = addSeg(m, cBase, 0.072 * L, 0.030 * L, 0.054 * L, -12, 0, 0, UV_BELLY, false);
+        m.add('sph', add3(cTop, [0, -0.018 * L, 0]), [0.062 * L, 0.034 * L, 0.048 * L], { pitch: -12, noOutline: true, uv: UV_DETAIL });
+      }
+      if (turkey || peacock) {
+        const fanW = (peacock ? 0.68 : 0.66) * L, fanH = (peacock ? 0.33 : 0.44) * L, fanR = (peacock ? 0.32 : 0.35) * L;
+        const fanMainUv = peacock ? UV_COAT : UV_BELLY;
+        const fanY = bh * (peacock ? 0.44 : 0.54), fanZ = -bl * (peacock ? 0.26 : 0.26);
+        const fanPitch = peacock ? -8 : -12;
+        m.add('sph', [0, fanY + 0.02 * L, fanZ], [fanW, fanH, 0.13 * L], { pitch: fanPitch, uv: fanMainUv });
+        for (const ang of [-68, -36, 36, 68]) {
+          m.add('sph', [0, fanY + 0.02 * L, fanZ], [0.22 * L, fanR, 0.125 * L], { pitch: fanPitch, roll: ang, uv: fanMainUv });
+          m.add('sph', [0, fanY + 0.02 * L, fanZ], [0.23 * L, fanR * 0.96, 0.142 * L], { pitch: fanPitch, roll: ang, uv: fanMainUv, noOutline: true });
+        }
+        m.add('sph', [0, fanY + 0.02 * L, fanZ], [fanW * 0.97, fanH * 0.97, 0.145 * L], { pitch: fanPitch, uv: fanMainUv, noOutline: true });
+        if (peacock) {
+          const spotAngles = [-64, -42, -21, 0, 21, 42, 64];
+          const spotRadii = [0.14 * L, 0.23 * L];
+          for (let ir = 0; ir < spotRadii.length; ir++) {
+            const sr = spotRadii[ir];
+            const szOuter = (ir === 0 ? 0.148 : 0.126) * L;
+            const szInner = (ir === 0 ? 0.152 : 0.130) * L;
+            for (let ia = 0; ia < spotAngles.length; ia++) {
+              if (ir === 0 && (ia === 0 || ia === spotAngles.length - 1)) continue;
+              const sp = add3([0, fanY + 0.02 * L, fanZ], stepVec(sr, fanPitch, 0, spotAngles[ia]));
+              m.add('sph', add3(sp, [0, -0.028 * L, 0]), [0.050 * L, 0.054 * L, szOuter], { pitch: fanPitch, noOutline: true, uv: UV_BELLY });
+              m.add('sph', add3(sp, [0, -0.020 * L, 0]), [0.032 * L, 0.036 * L, szInner], { pitch: fanPitch, noOutline: true, uv: UV_DETAIL });
+            }
+          }
+        } else {
+          m.add('sph', [0, fanY, fanZ], [fanW * 0.66, fanH * 0.68, 0.175 * L], { pitch: fanPitch, uv: UV_LIMB, noOutline: true });
+          for (const ang of [-68, -36, 36, 68]) {
+            m.add('sph', [0, fanY, fanZ], [0.18 * L, fanR * 0.68, 0.175 * L], { pitch: fanPitch, roll: ang, uv: UV_LIMB, noOutline: true });
+          }
+        }
+      } else if (tall) {
+        m.add('sph', [0, 0.02 * L, -bl * 0.44], [0.16 * L, 0.20 * L, 0.18 * L], { pitch: -24, uv: UV_BELLY });
+        addSymX(m, 'sph', 0.08 * L, 0.05 * L, -bl * 0.40, [0.14 * L, 0.16 * L, 0.16 * L], { pitch: -20, splay: 18, uv: UV_BELLY, noOutline: true });
+      } else {
+        m.add('sph', [0, bh * 0.24, -bl * 0.36], [0.18 * L, 0.16 * L, 0.20 * L], { pitch: -24, noOutline: true, uv: wingUv });
+        m.add('cone', [0, bh * 0.38, -bl * 0.32], [0.14 * L, 0.23 * L, 0.11 * L], { pitch: -66, uv: wingUv });
+      }
+      break;
+    }
+
+    case 'Penguin': {
+      const bw = 0.35 * L, bh = 0.50 * L, bl = 0.32 * L;
+      m.add('sph', [0, 0, -0.01 * L], [bw, bh, bl], { pitch: 8, uv: UV_COAT });
+      const torsoBase = [0, 0.20 * L, 0.005 * L];
+      addSeg(m, torsoBase, 0.38 * L, 0.26 * L, 0.182 * L, 8, 0, 0, UV_COAT, false);
+      m.add('sph', [0, 0.10 * L, -0.004 * L], [0.33 * L, 0.42 * L, 0.31 * L], { pitch: 8, noOutline: true, uv: UV_COAT });
+      m.add('sph', [0, 0.35 * L, 0.036 * L], [0.182 * L, 0.22 * L, 0.235 * L], { pitch: 14, uv: UV_HEAD, noOutline: true });
+      m.add('sph', [0, 0.015 * L, 0.048 * L], [0.268 * L, 0.45 * L, 0.285 * L], { pitch: 8, uv: UV_BELLY, noOutline: true });
+      m.add('sph', [0, 0.16 * L, 0.062 * L], [0.225 * L, 0.27 * L, 0.255 * L], { pitch: 9, uv: UV_BELLY, noOutline: true });
+      addSymX(m, 'sph', 0.235 * L, 0.13 * L, 0.005 * L, [0.082 * L, 0.34 * L, 0.112 * L], { pitch: 12, splay: -24, uv: UV_COAT });
+      m.add('sph', [0, 0.01 * L, -0.085 * L], [0.052 * L, 0.08 * L, 0.065 * L], { pitch: -18, uv: UV_COAT });
+      const hr = 0.195 * L, headC = [0, 0.62 * L, 0.034 * L];
+      m.add('sph', [headC[0], headC[1] - hr * 0.48, headC[2]], [hr * 0.96, hr * 0.92, hr * 1.00], { pitch: 6, uv: UV_COAT });
+      m.add('sph', [0, 0.44 * L, 0.008 * L], [0.125 * L, 0.20 * L, 0.195 * L], { pitch: 6, noOutline: true, uv: UV_COAT });
+      addSymX(m, 'sph', 0.064 * L, 0.495 * L, 0.002 * L, [0.068 * L, 0.125 * L, 0.112 * L], { pitch: 8, splay: -6, uv: UV_HEAD, noOutline: true });
+      addSymX(m, 'sph', hr * 0.34, headC[1] - hr * 0.06, headC[2] + hr * 0.24, [0.042 * L, 0.042 * L, 0.042 * L], { uv: UV_EYE, noOutline: true });
+      m.add('sph', add3(headC, [0, -hr * 0.18, hr * 0.34]), [0.086 * L, 0.066 * L, 0.088 * L], { pitch: 8, noOutline: true, uv: UV_DETAIL });
+      addSeg(m, add3(headC, [0, -hr * 0.06, hr * 0.38]), 0.145 * L, 0.048 * L, 0.014 * L, 94, 0, 0, UV_DETAIL, false);
+      break;
+    }
+
+    case 'ShellCreature': {
+      const sea = Has(n, 'seaturtle'), armadillo = Has(n, 'armadillo'), crab = Has(n, 'crab'), snail = Has(n, 'snail', 'slug');
+      const sl = 0.68 * L, sh = (sea ? 0.32 : 0.40) * L, sw = calibrateWidth(n, sl, 0.52 * L);
+      if (snail) {
+        m.add('sph', [0, 0, 0.04 * L], [0.34 * L, 0.16 * L, 0.78 * L], { uv: UV_BELLY });
+        m.add('sph', [0, 0.02 * L, 0.26 * L], [0.28 * L, 0.20 * L, 0.36 * L], { uv: UV_HEAD, noOutline: true });
+        m.add('cone', [0, 0.06 * L, -0.30 * L], [0.22 * L, 0.22 * L, 0.14 * L], { pitch: -96, uv: UV_BELLY });
+        m.add('sph', [0, 0.10 * L, -0.06 * L], [0.46 * L, 0.46 * L, 0.50 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0.28 * L, -0.08 * L], [0.32 * L, 0.32 * L, 0.36 * L], { uv: UV_DETAIL, noOutline: true });
+        addSymX(m, 'sph', 0.16 * L, 0.16 * L, -0.06 * L, [0.22 * L, 0.30 * L, 0.32 * L], { uv: UV_DETAIL, noOutline: true });
+        const pair = { L: [-0.07 * L, 0.16 * L, 0.36 * L], R: [0.07 * L, 0.16 * L, 0.36 * L] };
+        addSymSeg(m, pair, 0.15 * L, 0.035 * L, 0.025 * L, 28, 18, 0, UV_HEAD);
+        m.add('sph', pair.L, [0.055 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
+        m.add('sph', pair.R, [0.055 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
+        const fPair = { L: [-0.06 * L, 0.08 * L, 0.40 * L], R: [0.06 * L, 0.08 * L, 0.40 * L] };
+        addSymSeg(m, fPair, 0.09 * L, 0.028 * L, 0.012 * L, 72, 24, 0, UV_HEAD, false);
+      } else if (crab) {
+        m.add('sph', [0, 0, -0.04 * L], [sw, sh * 1.05, sl * 0.92], { uv: UV_COAT });
+        m.add('sph', [0, sh * 0.22, -0.06 * L], [sw * 0.78, sh * 0.78, sl * 0.72], { uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', sw * 0.36, 0.02 * L, -0.02 * L, [0.20 * L, sh * 0.68, sl * 0.70], { uv: UV_LIMB, noOutline: true });
+        addSymX(m, 'sph', 0.10 * L, sh * 0.42, 0.22 * L, [0.055 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
+        const pair = { L: [-0.18 * L, 0.08 * L, 0.20 * L], R: [0.18 * L, 0.08 * L, 0.20 * L] };
+        addSymSeg(m, pair, 0.18 * L, 0.10 * L, 0.13 * L, 82, 22, 0, UV_DETAIL);
+        addSymSeg(m, pair, 0.14 * L, 0.13 * L, 0.04 * L, 90, -24, 0, UV_DETAIL);
+      } else {
+        const shellL = (sea ? 0.62 : armadillo ? 0.66 : 0.56) * L;
+        const shellH = (sea ? 0.32 : armadillo ? 0.38 : 0.37) * L;
+        const shellW = calibrateWidth(n, shellL, (sea ? 0.50 : 0.47) * L);
+        const shellPitch = sea ? -8 : 0;
+        const shellMainUv = sea ? UV_DETAIL : UV_COAT;
+        if (sea) {
+          addSymX(m, 'sph', shellW * 0.32, 0, 0.05 * L, [0.085 * L, 0.075 * L, 0.21 * L], { yaw: 14, pitch: -16, splay: -14, uv: UV_LIMB });
+          addSymX(m, 'sph', shellW * 0.30, 0.015 * L, 0.12 * L, [0.11 * L, 0.095 * L, 0.18 * L], { yaw: 12, pitch: -10, uv: UV_LIMB, noOutline: true });
+        }
+        m.add('sph', [0, 0, -0.01 * L], [shellW * (sea ? 0.88 : 0.82), 0.095 * L, shellL * 0.82], { uv: UV_BELLY });
+        m.add('sph', [0, 0.015 * L, -0.01 * L], [shellW, shellH, shellL], { uv: shellMainUv });
+        m.add('sph', [0, 0.038 * L, -0.01 * L], [shellW * 0.85, 0.15 * L, shellL * 0.85], { noOutline: true, uv: shellMainUv });
+        if (sea) {
+          m.add('sph', [0, 0.032 * L, 0.015 * L], [shellW * 0.96, shellH * 1.00, shellL * 0.92], { pitch: -6, noOutline: true, uv: shellMainUv });
+          m.add('sph', [0, shellH * 0.26, 0.01 * L], [shellW * 0.72, shellH * 0.76, shellL * 0.76], { pitch: -6, noOutline: true, uv: UV_COAT });
+        }
+        const hr = (armadillo ? 0.19 : sea ? 0.150 : 0.155) * L, headC = [0, (sea ? 0.155 : 0.175) * L, shellL * (sea ? 0.54 : 0.56)];
+        if (armadillo) {
+          buildHead(m, headC, hr, hr * 0.95, hr * 0.64, hr * 0.54, UV_HEAD, UV_HEAD, UV_BELLY);
+          buildEars(m, headC, hr, 0.045 * L, 0.10 * L, { earUv: UV_HEAD });
+        } else {
+          const neckBase = [0, (sea ? 0.085 : 0.095) * L, shellL * 0.30];
+          addSeg(m, neckBase, 0.17 * L, 0.126 * L, 0.128 * L, sea ? 68 : 64, 0, 0, UV_HEAD, false, true);
+          m.add('sph', [headC[0], headC[1] - hr * 0.38, headC[2]], [hr * 0.72, hr * 0.72, hr * 0.94], { pitch: 4, uv: UV_HEAD });
+          m.add('sph', [headC[0], headC[1] - hr * 0.45, headC[2]], [hr * 0.88, hr * 0.86, hr * 1.08], { pitch: 4, noOutline: true, uv: UV_HEAD });
+          if (sea) {
+            m.add('sph', [headC[0], headC[1] - hr * 0.18, headC[2] + hr * 0.04], [hr * 0.68, hr * 0.62, hr * 0.82], { pitch: 6, noOutline: true, uv: UV_DETAIL });
+          }
+          addSymX(m, 'sph', hr * 0.34, headC[1] - hr * 0.02, headC[2] + hr * 0.22, [hr * 0.20, hr * 0.18, hr * 0.20], { uv: UV_EYE, noOutline: true });
+        }
+        if (!sea) {
+          addSymX(m, 'sph', shellW * 0.22, 0.055 * L, 0.05 * L, [shellW * 0.42, shellH * 0.68, shellL * 0.42], { noOutline: true, uv: shellMainUv });
+          addSymX(m, 'sph', shellW * 0.20, 0.050 * L, -0.07 * L, [shellW * 0.40, shellH * 0.64, shellL * 0.40], { noOutline: true, uv: shellMainUv });
+          m.add('sph', [0, 0.020 * L, -shellL * 0.37], [0.065 * L, 0.058 * L, 0.070 * L], { noOutline: true, uv: UV_BELLY });
+          addSeg(m, [0, 0.035 * L, -shellL * 0.37], (armadillo ? 0.22 : 0.095) * L, 0.040 * L, 0.014 * L, armadillo ? -98 : -120, 0, 0, UV_HEAD, false);
+        }
+      }
+      break;
+    }
+
+    case 'ReptileAmphibian': {
+      const frog = Has(n, 'frog', 'toad'), pinniped = Has(n, 'walrus', 'seal', 'sealion');
+      const gator = Has(n, 'alligator', 'croc', 'gator'), iguana = Has(n, 'iguana');
+      if (frog) {
+        const bl = 0.54 * L, bh = 0.36 * L, bw = 0.48 * L;
+        m.add('sph', [0, 0, -0.02 * L], [bw, bh, bl], { pitch: -10, uv: UV_COAT });
+        m.add('sph', [0, 0.01 * L, 0.10 * L], [bw * 0.86, bh * 0.76, bl * 0.68], { uv: UV_BELLY, noOutline: true });
+        addSymX(m, 'sph', bw * 0.38, 0, -0.06 * L, [0.18 * L, 0.22 * L, 0.30 * L], { yaw: 12, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', bw * 0.26, 0.18 * L, -0.02 * L, [0.10 * L, 0.12 * L, 0.28 * L], { pitch: -10, uv: UV_DETAIL, noOutline: true });
+        const hr = 0.28 * L, headC = [0, 0.22 * L, 0.20 * L];
+        m.add('sph', [headC[0], headC[1] - hr * 0.45, headC[2]], [hr * 1.15, hr * 0.72, hr * 0.95], { pitch: 14, uv: UV_HEAD });
+        addSymX(m, 'sph', hr * 0.32, headC[1] - hr * 0.40, headC[2] + hr * 0.06, [hr * 0.52, hr * 0.48, hr * 0.56], { pitch: 14, uv: UV_HEAD, noOutline: true });
+        m.add('sph', [headC[0], headC[1] - hr * 0.58, headC[2] + hr * 0.12], [hr * 0.88, hr * 0.56, hr * 0.76], { pitch: 14, uv: UV_BELLY, noOutline: true });
+        addSymX(m, 'sph', hr * 0.34, headC[1] + 0.02 * L, headC[2] + 0.04 * L, [0.10 * L, 0.10 * L, 0.10 * L], { uv: UV_DETAIL });
+        addSymX(m, 'sph', hr * 0.36, headC[1] + 0.04 * L, headC[2] + 0.07 * L, [0.06 * L, 0.06 * L, 0.06 * L], { uv: UV_EYE, noOutline: true });
+      } else if (pinniped) {
+        const walrus = Has(n, 'walrus');
+        const bl = 0.68 * L, bh = 0.38 * L, bw = 0.42 * L;
+        m.add('sph', [0, 0, 0], [bw, bh, bl], { uv: UV_COAT });
+        m.add('sph', [0, 0.02 * L, 0.14 * L], [bw * 0.92, bh * 1.04, bl * 0.56], { pitch: -8, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', bw * 0.48, 0, 0.12 * L, [0.24 * L, 0.06 * L, 0.16 * L], { yaw: -24, uv: UV_LIMB });
+        addSymX(m, 'sph', 0.10 * L, 0, -bl * 0.52, [0.14 * L, 0.06 * L, 0.22 * L], { yaw: 22, uv: UV_LIMB });
+        const hr = 0.25 * L, headC = [0, 0.28 * L, 0.28 * L];
+        buildHead(m, headC, hr, hr * 0.68, hr * 0.76, hr * 0.58, UV_HEAD, UV_BELLY, UV_BELLY);
+        if (walrus) addSymX(m, 'cone', hr * 0.26, headC[1] - hr * 0.42, headC[2] + hr * 0.44, [0.055 * L, 0.20 * L, 0.055 * L], { pitch: 172, uv: UV_DETAIL });
+      } else if (!gator) {
+        const bh = 0.182 * L, bw = calibrateWidth(n, 0.56 * L, 0.21 * L);
+        m.add('sph', [0, 0, 0.06 * L], [bw, bh, 0.28 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0, -0.05 * L], [bw * 0.90, 0.132 * L, 0.32 * L], { uv: UV_COAT });
+        addSeg(m, [0, 0.098 * L, 0.10 * L], 0.54 * L, bw * 0.88, 0.022 * L, -96.2, 0, 0, UV_COAT, false);
+        m.add('sph', [0, 0.004 * L, 0.02 * L], [bw * 0.96, 0.155 * L, 0.32 * L], { noOutline: true, uv: UV_COAT });
+        const headC = [0, 0.168 * L, 0.275 * L];
+        m.add('sph', [0, 0.036 * L, 0.205 * L], [0.076 * L, 0.118 * L, 0.115 * L], { noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.095 * L, 0.20 * L], [0.125 * L, 0.115 * L, 0.14 * L], { noOutline: true, uv: UV_HEAD });
+        m.add('sph', [headC[0], headC[1] - 0.046 * L, headC[2]], [0.116 * L, 0.092 * L, 0.172 * L], { uv: UV_HEAD });
+        m.add('sph', [headC[0], headC[1] - 0.057 * L, headC[2]], [0.140 * L, 0.114 * L, 0.184 * L], { noOutline: true, uv: UV_HEAD });
+        addSymX(m, 'sph', 0.050 * L, headC[1] - 0.006 * L, headC[2] + 0.036 * L, [0.030 * L, 0.028 * L, 0.038 * L], { uv: UV_EYE, noOutline: true });
+        for (let i = 0; i < 11; i++) {
+          const t = i / 10;
+          const sz = (0.16 + (-0.35 - 0.16) * t) * L;
+          const surfY = (0.180 + (0.068 - 0.180) * t + Math.sin(t * Math.PI) * 0.012) * L;
+          const spH = (0.068 + (0.045 - 0.068) * t) * L;
+          m.add('cone', [0, surfY - 0.016 * L, sz], [0.044 * L, spH, 0.046 * L], { pitch: -18, noOutline: true, uv: UV_COAT });
+        }
+      } else {
+        const bh = 0.172 * L, bw = calibrateWidth(n, 0.56 * L, 0.24 * L);
+        m.add('sph', [0, 0, 0.05 * L], [bw, bh, 0.30 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0, -0.04 * L], [bw * 0.90, 0.122 * L, 0.34 * L], { uv: UV_COAT });
+        addSeg(m, [0, 0.092 * L, 0.06 * L], 0.51 * L, 0.160 * L, 0.022 * L, -97.8, 0, 0, UV_COAT, false);
+        m.add('sph', [0, 0.005 * L, 0.01 * L], [bw * 0.96, 0.148 * L, 0.34 * L], { noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.005 * L, -0.02 * L], [bw * 0.90, 0.072 * L, 0.34 * L], { noOutline: true, uv: UV_DETAIL });
+        m.add('sph', [0, 0, 0.12 * L], [bw * 0.76, 0.052 * L, 0.088 * L], { noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.034 * L, 0.225 * L], [0.112 * L, 0.062 * L, 0.21 * L], { pitch: 3, noOutline: true, uv: UV_DETAIL });
+        m.add('sph', [0, 0.065 * L, 0.19 * L], [0.148 * L, 0.094 * L, 0.16 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0.053 * L, 0.19 * L], [0.172 * L, 0.118 * L, 0.18 * L], { noOutline: true, uv: UV_COAT });
+        addSymX(m, 'sph', 0.035 * L, 0.128 * L, 0.215 * L, [0.046 * L, 0.044 * L, 0.065 * L], { uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', 0.044 * L, 0.132 * L, 0.225 * L, [0.028 * L, 0.026 * L, 0.036 * L], { uv: UV_EYE, noOutline: true });
+        m.add('sph', [0, 0.064 * L, 0.295 * L], [0.048 * L, 0.060 * L, 0.205 * L], { pitch: 2, uv: UV_COAT });
+        m.add('sph', [0, 0.055 * L, 0.295 * L], [0.122 * L, 0.078 * L, 0.215 * L], { pitch: 2, noOutline: true, uv: UV_COAT });
+      }
+      break;
+    }
+
+    case 'Serpent': {
+      const pts = [
+        [-0.07 * L, 0.145 * L, -0.14 * L],
+        [-0.02 * L, 0.132 * L, -0.05 * L],
+        [ 0.10 * L, 0.110 * L, -0.08 * L],
+        [-0.11 * L, 0.082 * L, -0.14 * L],
+        [-0.04 * L, 0.044 * L, -0.27 * L],
+        [ 0.10 * L, 0.042 * L, -0.15 * L],
+        [ 0.09 * L, 0.042 * L,  0.03 * L],
+        [ 0.00 * L, 0.044 * L,  0.12 * L],
+        [ 0.00 * L, 0.145 * L,  0.09 * L],
+        [ 0.00 * L, 0.255 * L,  0.04 * L],
+        [ 0.00 * L, 0.355 * L,  0.025 * L],
+      ];
+      const diams = [
+        0.028 * L, 0.046 * L, 0.064 * L, 0.072 * L,
+        0.078 * L, 0.082 * L, 0.084 * L, 0.086 * L,
+        0.082 * L, 0.078 * L, 0.074 * L
+      ];
+      for (let i = 0; i < pts.length; i++) {
+        const ds = diams[i], dc = Math.max(0.014 * L, ds - 0.026 * L);
+        m.add('sph', [pts[i][0], pts[i][1] - dc * 0.5, pts[i][2]], [dc, dc, dc], { uv: UV_COAT });
+        m.add('sph', [pts[i][0], pts[i][1] - ds * 0.5, pts[i][2]], [ds, ds, ds], { noOutline: true, uv: UV_COAT });
+        if (i < pts.length - 1) {
+          const dx = pts[i + 1][0] - pts[i][0];
+          const dy = pts[i + 1][1] - pts[i][1];
+          const dz = pts[i + 1][2] - pts[i][2];
+          const segLen = Math.hypot(dx, dy, dz);
+          const segPitch = Math.acos(Math.max(-1, Math.min(1, dy / segLen))) * 180 / Math.PI;
+          const segYaw = Math.atan2(dx, dz) * 180 / Math.PI;
+          const dcNext = Math.max(0.014 * L, diams[i + 1] - 0.026 * L);
+          addSeg(m, pts[i], segLen, dc, dcNext, segPitch, segYaw, 0, UV_COAT, false);
+          m.add('cyl', pts[i], [ds, segLen, ds], { yaw: segYaw, pitch: segPitch, taper: diams[i + 1] / ds, noOutline: true, uv: UV_COAT });
+        }
+      }
+      m.add('sph', [0, 0.065 * L, 0.082 * L], [0.062 * L, 0.28 * L, 0.062 * L], { pitch: -19, noOutline: true, uv: UV_HEAD });
+      m.add('sph', [0, 0.235 * L, 0.028 * L], [0.118 * L, 0.145 * L, 0.064 * L], { pitch: -12, uv: UV_COAT });
+      m.add('sph', [0, 0.225 * L, 0.028 * L], [0.140 * L, 0.166 * L, 0.082 * L], { pitch: -12, noOutline: true, uv: UV_COAT });
+      m.add('sph', [0, 0.240 * L, 0.040 * L], [0.084 * L, 0.135 * L, 0.066 * L], { pitch: -12, noOutline: true, uv: UV_HEAD });
+      const headC = [0, 0.365 * L, 0.052 * L];
+      m.add('sph', [headC[0], headC[1] - 0.032 * L, headC[2]], [0.042 * L, 0.064 * L, 0.098 * L], { uv: UV_COAT });
+      m.add('sph', [headC[0], headC[1] - 0.042 * L, headC[2]], [0.098 * L, 0.082 * L, 0.114 * L], { noOutline: true, uv: UV_COAT });
+      m.add('sph', [headC[0], headC[1] - 0.038 * L, headC[2] + 0.004 * L], [0.072 * L, 0.042 * L, 0.092 * L], { noOutline: true, uv: UV_HEAD });
+      addSymX(m, 'sph', 0.036 * L, headC[1] - 0.004 * L, headC[2] + 0.022 * L, [0.022 * L, 0.022 * L, 0.026 * L], { uv: UV_EYE, noOutline: true });
+      break;
+    }
+
+    case 'Insectoid': {
+      const spelopede = Has(n, 'spelopede'), scarab = Has(n, 'scarab', 'beetle');
+      if (scarab) {
+        m.add('sph', [0, 0, 0.01 * L], [0.155 * L, 0.088 * L, 0.275 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0, 0.01 * L], [0.172 * L, 0.102 * L, 0.292 * L], { noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.008 * L, -0.055 * L], [0.184 * L, 0.178 * L, 0.215 * L], { pitch: -10, uv: UV_COAT });
+        m.add('sph', [0, 0, -0.055 * L], [0.204 * L, 0.196 * L, 0.235 * L], { pitch: -10, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.006 * L, 0.075 * L], [0.144 * L, 0.135 * L, 0.175 * L], { pitch: 16, uv: UV_COAT });
+        m.add('sph', [0, 0, 0.075 * L], [0.164 * L, 0.154 * L, 0.192 * L], { pitch: 16, noOutline: true, uv: UV_COAT });
+        addSymX(m, 'sph', 0.044 * L, 0.065 * L, 0.156 * L, [0.036 * L, 0.036 * L, 0.036 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.050 * L, 0.024 * L, 0.148 * L, [0.044 * L, 0.044 * L, 0.085 * L], { yaw: -12, pitch: 16, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', 0.048 * L, 0.036 * L, 0.162 * L, [0.018 * L, 0.105 * L, 0.038 * L], { pitch: 84, yaw: -20, uv: UV_COAT });
+        addSymX(m, 'cone', 0.048 * L, 0.036 * L, 0.156 * L, [0.040 * L, 0.112 * L, 0.044 * L], { pitch: 84, yaw: -20, uv: UV_COAT, noOutline: true });
+        m.add('cone', [0, 0.040 * L, 0.162 * L], [0.022 * L, 0.052 * L, 0.022 * L], { pitch: 132, noOutline: true, uv: UV_COAT });
+      } else if (spelopede) {
+        m.add('sph', [0, 0.028 * L, -0.155 * L], [0.168 * L, 0.148 * L, 0.175 * L], { pitch: -18, uv: UV_COAT });
+        m.add('sph', [0, 0.018 * L, -0.155 * L], [0.188 * L, 0.168 * L, 0.195 * L], { pitch: -18, noOutline: true, uv: UV_COAT });
+        addSeg(m, [0, 0.095 * L, -0.165 * L], 0.105 * L, 0.154 * L, 0.096 * L, -18, 0, 0, UV_COAT, false);
+        m.add('cyl', [0, 0.095 * L, -0.165 * L], [0.176 * L, 0.105 * L, 0.168 * L], { pitch: -18, taper: 0.64, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.135 * L, -0.195 * L], [0.118 * L, 0.112 * L, 0.118 * L], { noOutline: true, uv: UV_COAT });
+        m.add('cone', [0, 0.178 * L, -0.202 * L], [0.088 * L, 0.125 * L, 0.095 * L], { pitch: 18, uv: UV_COAT });
+        m.add('cone', [0, 0.170 * L, -0.202 * L], [0.110 * L, 0.132 * L, 0.114 * L], { pitch: 18, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.008 * L, -0.015 * L], [0.140 * L, 0.142 * L, 0.190 * L], { pitch: -24, uv: UV_COAT });
+        m.add('sph', [0, 0, -0.015 * L], [0.160 * L, 0.160 * L, 0.208 * L], { pitch: -24, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.006 * L, 0.115 * L], [0.152 * L, 0.146 * L, 0.190 * L], { pitch: 18, uv: UV_COAT });
+        m.add('sph', [0, 0, 0.115 * L], [0.172 * L, 0.164 * L, 0.210 * L], { pitch: 18, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0, 0.155 * L], [0.138 * L, 0.088 * L, 0.175 * L], { pitch: 6, noOutline: true, uv: UV_COAT });
+        addSymX(m, 'cone', 0.065 * L, 0.060 * L, 0.130 * L, [0.044 * L, 0.056 * L, 0.054 * L], { pitch: 12, splay: 68, uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.042 * L, 0.205 * L], [0.028 * L, 0.070 * L, 0.045 * L], { pitch: 18, noOutline: true, uv: UV_DETAIL });
+        addSymX(m, 'sph', 0.048 * L, 0.075 * L, 0.192 * L, [0.038 * L, 0.038 * L, 0.038 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.054 * L, 0.115 * L, 0.175 * L, [0.026 * L, 0.026 * L, 0.026 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.072 * L, 0.090 * L, 0.165 * L, [0.024 * L, 0.024 * L, 0.024 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'cone', 0.038 * L, 0.118 * L, 0.178 * L, [0.036 * L, 0.110 * L, 0.040 * L], { pitch: 68, yaw: -6, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'sph', 0.058 * L, 0.034 * L, 0.205 * L, [0.046 * L, 0.048 * L, 0.095 * L], { yaw: -10, pitch: 18, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', 0.054 * L, 0.046 * L, 0.220 * L, [0.020 * L, 0.125 * L, 0.042 * L], { pitch: 84, yaw: -20, uv: UV_COAT });
+        addSymX(m, 'cone', 0.054 * L, 0.046 * L, 0.214 * L, [0.044 * L, 0.132 * L, 0.048 * L], { pitch: 84, yaw: -20, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', 0.022 * L, 0.052 * L, 0.208 * L, [0.022 * L, 0.068 * L, 0.022 * L], { pitch: 138, noOutline: true, uv: UV_LIMB });
+      } else {
+        m.add('sph', [0, 0, -0.02 * L], [0.185 * L, 0.130 * L, 0.25 * L], { pitch: -6, uv: UV_LIMB });
+        m.add('sph', [0, 0.008 * L, -0.01 * L], [0.200 * L, 0.140 * L, 0.26 * L], { pitch: -6, noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.012 * L, 0.07 * L], [0.180 * L, 0.138 * L, 0.18 * L], { pitch: 18, noOutline: true, uv: UV_COAT });
+        m.add('cone', [0, 0.032 * L, 0.11 * L], [0.052 * L, 0.085 * L, 0.052 * L], { pitch: 108, noOutline: true, uv: UV_COAT });
+        const abdPts = [
+          [0, 0.068 * L, -0.06 * L],
+          [0, 0.155 * L, -0.14 * L],
+          [0, 0.208 * L, -0.22 * L],
+          [0, 0.168 * L, -0.28 * L],
+        ];
+        const abdD = [0.155 * L, 0.172 * L, 0.158 * L, 0.112 * L];
+        for (let i = 0; i < abdPts.length; i++) {
+          const ds = abdD[i], dc = ds - 0.024 * L;
+          m.add('sph', [abdPts[i][0], abdPts[i][1] - dc * 0.5, abdPts[i][2]], [dc * 1.18, dc, dc * 1.12], { uv: UV_COAT });
+          m.add('sph', [abdPts[i][0], abdPts[i][1] - ds * 0.5, abdPts[i][2]], [ds * 1.18, ds, ds * 1.12], { noOutline: true, uv: UV_COAT });
+          if (i < abdPts.length - 1) {
+            const dy = abdPts[i + 1][1] - abdPts[i][1], dz = abdPts[i + 1][2] - abdPts[i][2];
+            const segLen = Math.hypot(dy, dz);
+            const segPitch = -Math.acos(Math.max(-1, Math.min(1, dy / segLen))) * 180 / Math.PI;
+            const dcNext = abdD[i + 1] - 0.024 * L;
+            addSeg(m, abdPts[i], segLen, dc * 1.12, dcNext * 1.12, segPitch, 0, 0, UV_COAT, false);
+            m.add('cyl', abdPts[i], [ds * 1.12, segLen, ds], { pitch: segPitch, taper: abdD[i + 1] / ds, noOutline: true, uv: UV_COAT });
+          }
+        }
+        m.add('sph', [0, 0.032 * L, -0.14 * L], [0.165 * L, 0.120 * L, 0.14 * L], { pitch: -35, noOutline: true, uv: UV_LIMB });
+        addSymX(m, 'sph', 0.058 * L, 0.095 * L, -0.20 * L, [0.068 * L, 0.095 * L, 0.095 * L], { pitch: -20, uv: UV_DETAIL, noOutline: true });
+        m.add('cone', [0, 0.148 * L, -0.29 * L], [0.044 * L, 0.065 * L, 0.048 * L], { pitch: -148, uv: UV_COAT });
+        m.add('sph', [0, 0.135 * L, 0.10 * L], [0.205 * L, 0.088 * L, 0.13 * L], { pitch: -18, uv: UV_COAT });
+        m.add('sph', [0, 0.124 * L, 0.10 * L], [0.232 * L, 0.110 * L, 0.155 * L], { pitch: -18, noOutline: true, uv: UV_COAT });
+        addSymX(m, 'cone', 0.068 * L, 0.175 * L, 0.095 * L, [0.054 * L, 0.195 * L, 0.058 * L], { pitch: -36, splay: 46, uv: UV_COAT });
+        addSymX(m, 'cone', 0.055 * L, 0.162 * L, 0.105 * L, [0.088 * L, 0.215 * L, 0.092 * L], { pitch: -36, splay: 46, uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.082 * L, 0.155 * L], [0.136 * L, 0.096 * L, 0.14 * L], { pitch: 12, uv: UV_COAT });
+        m.add('sph', [0, 0.072 * L, 0.155 * L], [0.160 * L, 0.118 * L, 0.16 * L], { pitch: 12, noOutline: true, uv: UV_COAT });
+        m.add('cone', [0, 0.162 * L, 0.20 * L], [0.014 * L, 0.125 * L, 0.036 * L], { pitch: 86, uv: UV_COAT });
+        m.add('cone', [0, 0.162 * L, 0.19 * L], [0.040 * L, 0.135 * L, 0.042 * L], { pitch: 86, noOutline: true, uv: UV_COAT });
+        addSymX(m, 'sph', 0.046 * L, 0.150 * L, 0.195 * L, [0.025 * L, 0.025 * L, 0.025 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.064 * L, 0.134 * L, 0.180 * L, [0.023 * L, 0.023 * L, 0.023 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.042 * L, 0.120 * L, 0.205 * L, [0.021 * L, 0.021 * L, 0.021 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'cone', 0.052 * L, 0.112 * L, 0.195 * L, [0.024 * L, 0.125 * L, 0.042 * L], { pitch: 112, yaw: -12, uv: UV_COAT });
+        addSymX(m, 'cone', 0.052 * L, 0.112 * L, 0.188 * L, [0.052 * L, 0.132 * L, 0.052 * L], { pitch: 112, yaw: -12, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', 0.020 * L, 0.095 * L, 0.210 * L, [0.026 * L, 0.075 * L, 0.026 * L], { pitch: 142, noOutline: true, uv: UV_LIMB });
+      }
+      break;
+    }
+  }
+  return m;
 }
 
-// 原版 approx drawSize（格），用于把 L 还原成真实体量对比
+// ---------------------------------------------------------------- ModelBuilder 顶点与反绕描边壳生成（同 Model3D.cs）
+function compileMesh(spKey, m, outlineW) {
+  const pos = [], norms = [], uvs = [], idx = [];
+  const hPos = [], hIdx = [];
+  const partBoxes = [];
+
+  for (const p of m.parts) {
+    const rect = getUvRect(spKey, p.uv);
+    const mapU = u => rect[0] + (rect[2] - rect[0]) * Math.min(1, Math.max(0, u));
+    const mapV = v => rect[1] + (rect[3] - rect[1]) * Math.min(1, Math.max(0, v));
+    const xform = lp => add3(p.pos, rotVec(lp, p.pitch, p.yaw, p.roll));
+
+    const pVerts = [], pUvs = [], pTris = [];
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+    const vtx = (lp, uv) => {
+      const wp = xform(lp);
+      if (wp[0] < x0) x0 = wp[0]; if (wp[0] > x1) x1 = wp[0];
+      if (wp[1] < y0) y0 = wp[1]; if (wp[1] > y1) y1 = wp[1];
+      if (wp[2] < z0) z0 = wp[2]; if (wp[2] > z1) z1 = wp[2];
+      pVerts.push(wp);
+      pUvs.push([mapU(uv[0]), mapV(uv[1])]);
+      return pVerts.length - 1;
+    };
+    const tri = (a, b, c) => { pTris.push(a, b, c); };
+    const quad = (a, b, c, d, ua, ub, uc, ud) => {
+      const i0 = vtx(a, ua), i1 = vtx(b, ub), i2 = vtx(c, uc), i3 = vtx(d, ud);
+      pTris.push(i0, i1, i2, i0, i2, i3);
+    };
+
+    const [sx, sy, sz] = p.size;
+    if (p.kind === 'box') {
+      const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
+      quad([-hx, 0, -hz], [-hx, hy, -hz], [ hx, hy, -hz], [ hx, 0, -hz], [0,0],[0,1],[1,1],[1,0]);
+      quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,0],[0,1],[1,1],[1,0]);
+      quad([-hx, 0,  hz], [-hx, hy,  hz], [-hx, hy, -hz], [-hx, 0, -hz], [0,0],[0,1],[1,1],[1,0]);
+      quad([ hx, 0, -hz], [ hx, hy, -hz], [ hx, hy,  hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0]);
+      quad([-hx, hy, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, hy, -hz], [0,0],[0,1],[1,1],[1,0]);
+      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0]);
+    } else if (p.kind === 'cyl' || p.kind === 'cone') {
+      const seg = 12, cone = p.kind === 'cone';
+      const r = sx * 0.5, rz = (sz > 0.001 ? sz : sx) * 0.5, h = sy;
+      const ratio = p.taper > 0.001 ? p.taper : (cone ? 0.02 : 1.0);
+      const topR = r * ratio, topRz = rz * ratio;
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+        quad([c0 * r, 0, s0 * rz], [c0 * topR, h, s0 * topRz], [c1 * topR, h, s1 * topRz], [c1 * r, 0, s1 * rz],
+          [i / seg, 0], [i / seg, 1], [(i + 1) / seg, 1], [(i + 1) / seg, 0]);
+      }
+      if (!cone && ratio > 0.08) {
+        const tc = vtx([0, h, 0], [0.5, 0.5]);
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+          const v0 = vtx([Math.cos(a0) * topR, h, Math.sin(a0) * topRz], [0.5 + Math.cos(a0) * 0.45, 0.5 + Math.sin(a0) * 0.45]);
+          const v1 = vtx([Math.cos(a1) * topR, h, Math.sin(a1) * topRz], [0.5 + Math.cos(a1) * 0.45, 0.5 + Math.sin(a1) * 0.45]);
+          tri(tc, v1, v0);
+        }
+      }
+      const bc = vtx([0, 0, 0], [0.5, 0.5]);
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const v0 = vtx([Math.cos(a0) * r, 0, Math.sin(a0) * rz], [0.5, 0.5]);
+        const v1 = vtx([Math.cos(a1) * r, 0, Math.sin(a1) * rz], [0.5, 0.5]);
+        tri(bc, v0, v1);
+      }
+    } else {
+      const lon = 14, lat = 10;
+      const rx = sx * 0.5, ry = sy * 0.5, rz = sz * 0.5;
+      for (let iy = 0; iy < lat; iy++) {
+        const v0 = (iy / lat) * Math.PI, v1 = ((iy + 1) / lat) * Math.PI;
+        const y0s = ry - Math.cos(v0) * ry, y1s = ry - Math.cos(v1) * ry;
+        const r0 = Math.sin(v0), r1 = Math.sin(v1);
+        for (let ix = 0; ix < lon; ix++) {
+          const u0 = (ix / lon) * Math.PI * 2, u1 = ((ix + 1) / lon) * Math.PI * 2;
+          const p00 = [Math.cos(u0) * r0 * rx, y0s, Math.sin(u0) * r0 * rz];
+          const p10 = [Math.cos(u1) * r0 * rx, y0s, Math.sin(u1) * r0 * rz];
+          const p11 = [Math.cos(u1) * r1 * rx, y1s, Math.sin(u1) * r1 * rz];
+          const p01 = [Math.cos(u0) * r1 * rx, y1s, Math.sin(u0) * r1 * rz];
+          const suv = pt => [
+            0.5 + 0.45 * (rx > 0.001 ? pt[0] / rx : 0),
+            0.5 + 0.45 * (ry > 0.001 ? (pt[1] - ry) / ry : 0),
+          ];
+          quad(p00, p01, p11, p10, suv(p00), suv(p01), suv(p11), suv(p10));
+        }
+      }
+    }
+
+    partBoxes.push({ k: p.kind, uv: p.uv, x0, x1, y0, y1, z0, z1 });
+
+    // 逐部件平滑法线计算与反绕描边壳（与 ModelBuilder.ToHull 完全同口径）
+    const avg = pVerts.map(() => [0, 0, 0]);
+    const keyOf = v => `${Math.round(v[0]*1000)},${Math.round(v[1]*1000)},${Math.round(v[2]*1000)}`;
+    const groups = new Map();
+    for (let i = 0; i < pVerts.length; i++) {
+      const k = keyOf(pVerts[i]);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    for (let i = 0; i < pTris.length; i += 3) {
+      const ia = pTris[i], ib = pTris[i + 1], ic = pTris[i + 2];
+      const pa = pVerts[ia], pb = pVerts[ib], pc = pVerts[ic];
+      const ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2];
+      const vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      avg[ia][0] += nx; avg[ia][1] += ny; avg[ia][2] += nz;
+      avg[ib][0] += nx; avg[ib][1] += ny; avg[ib][2] += nz;
+      avg[ic][0] += nx; avg[ic][1] += ny; avg[ic][2] += nz;
+    }
+
+    // 写入主体网格（曲面部用平滑顶点法线，方盒保留棱角法线）
+    const baseV = pos.length / 3;
+    for (let i = 0; i < pVerts.length; i++) {
+      pos.push(pVerts[i][0], pVerts[i][1], pVerts[i][2]);
+      uvs.push(pUvs[i][0], pUvs[i][1]);
+      if (p.kind === 'box') {
+        const len = Math.hypot(avg[i][0], avg[i][1], avg[i][2]) || 1;
+        norms.push(avg[i][0] / len, avg[i][1] / len, avg[i][2] / len);
+      } else {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        norms.push(sxn / len, syn / len, szn / len);
+      }
+    }
+    for (let i = 0; i < pTris.length; i++) idx.push(baseV + pTris[i]);
+
+    if (!p.noOutline && outlineW > 0) {
+      const hBase = hPos.length / 3;
+      for (let i = 0; i < pVerts.length; i++) {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        hPos.push(
+          pVerts[i][0] + (sxn / len) * outlineW,
+          pVerts[i][1] + (syn / len) * outlineW,
+          pVerts[i][2] + (szn / len) * outlineW
+        );
+      }
+      for (let i = 0; i < pTris.length; i += 3) {
+        hIdx.push(hBase + pTris[i], hBase + pTris[i + 2], hBase + pTris[i + 1]);
+      }
+    }
+  }
+
+  const bodyGeo = new THREE.BufferGeometry();
+  bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  bodyGeo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+  bodyGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  bodyGeo.setIndex(idx);
+
+  const hullGeo = new THREE.BufferGeometry();
+  hullGeo.setAttribute('position', new THREE.Float32BufferAttribute(hPos, 3));
+  hullGeo.setIndex(hIdx);
+
+  return { bodyGeo, hullGeo, partBoxes };
+}
+
+// ---------------------------------------------------------------- 代表物种与全物种尺寸表
 const SPECIES = [
-  ['muffalo',      2.5], ['thrumbo',     4.0], ['elephant',    3.8],
-  ['cow',          2.0], ['horse',       2.2], ['bear',        1.6],
-  ['wolf_timber',  1.1], ['cat',         0.6], ['squirrel',    0.4],
-  ['hare',         0.5], ['chicken',     0.4], ['ostrich',     1.6],
-  ['tortoise',     0.9], ['megaspider',  0.8], ['cobra',       1.4],
-  ['monkey',       0.7], ['deer',        1.7], ['alpaca',      1.6],
-  ['alligator',    1.6], ['monitorlizard',1.2], ['bullfrog',    0.5],
-  ['armadillo',    0.7], ['mastodon',    3.6], ['gorilla',     1.3],
-  ['flamingo',     1.1], ['penguin',     0.6], ['boomalope',   2.4],
+  ['thrumbo',      4.0], ['muffalo',      2.5], ['boomalope',    2.4], ['toxalope',     2.2],
+  ['elephant',     3.8], ['mastodon',     3.6], ['rhinoceros',   2.7], ['dromedary',    2.4],
+  ['alpaca',       1.6], ['bison',        2.6], ['yak',          2.4], ['muskox',       2.2],
+  ['sheep',        1.4], ['cow',          2.0], ['horse',        2.2], ['deer',         1.7],
+  ['elk',          2.3], ['caribou',      2.1], ['moose',        2.6], ['ibex',         1.5],
+  ['gazelle',      1.5], ['bear_grizzly', 2.1], ['bear_polar',   2.2], ['panda',        1.8],
+  ['megasloth',    3.2], ['warg',         1.7], ['wolf_timber',  1.5], ['wolf_arctic',  1.5],
+  ['fox_red',      1.1], ['fox_fennec',   0.95],['husky',        1.4], ['labradorretriever', 1.4],
+  ['cougar',       1.6], ['panther',      1.6], ['lynx',         1.3], ['cat',          0.85],
+  ['pig',          1.4], ['wildboar',     1.5], ['hare',         0.75],['squirrel',     0.65],
+  ['beaver',       1.1], ['raccoon',      1.0], ['boomrat',      0.95],['capybara',     1.2],
+  ['porcupine',    1.0], ['guineapig',    0.7], ['monkey',       0.95],['gorilla',      1.7],
+  ['dryad_basic',  1.1], ['chicken',      0.72],['duck',         0.75],['goose',        0.95],
+  ['turkey',       1.15],['peacock',      1.25],['ostrich',      1.8], ['emu',          1.6],
+  ['cassowary',    1.6], ['flamingo',     1.4], ['penguin',      0.95],['tortoise',     1.1],
+  ['seaturtle',    1.3], ['armadillo',    0.95],['stonecrab',    1.0], ['lavasnail',    1.2],
+  ['iguana',       1.1], ['alligator',    1.9], ['bullfrog',     0.75],['walrus',       2.2],
+  ['cobra',        1.3], ['megaspider',   1.8], ['spelopede',    1.3], ['megascarab',   0.9],
 ];
+const DS_MAP = Object.fromEntries(SPECIES);
 
-const COL = {
-  Blob:0xb9a98a, LongNeck:0xd8d2c4, Pachyderm:0x9a9a9a, Shell:0x7d6a4a,
-  Insect:0x5a4a3a, Serpent:0x8a8a6a, Bird:0xe8e8e0, TallBird:0xd8c8b0,
-  Primate:0x8a7a68, Quad:0xa08a6a, Slender:0xb59a74, Stocky:0x6a5a4a, Rodent:0x9a8a7a, Reptile:0x6a8a4a,
-};
-
-// ---------------------------------------------------------------- three
+// ---------------------------------------------------------------- Three.js 场景
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
 renderer.setClearColor(0x20242c, 1);
 app.appendChild(renderer.domElement);
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x20242c);
-const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.02, 200);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x20242c);
+const camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.02, 200);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true; controls.dampingFactor = 0.08;
-scene.add(new THREE.AmbientLight(0xffffff, 0.66));
-const L1 = new THREE.DirectionalLight(0xffffff, 0.62); L1.position.set(3, 6, 4); scene.add(L1);
-const L2 = new THREE.DirectionalLight(0xffffff, 0.26); L2.position.set(-4, 3, -3); scene.add(L2);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.75));
+const L1 = new THREE.DirectionalLight(0xffffff, 1.45); L1.position.set(3.5, 6.5, 4.5); scene.add(L1);
+const L2 = new THREE.DirectionalLight(0xffffff, 0.55); L2.position.set(-4, 3.5, -3.5); scene.add(L2);
 
 const grid = new THREE.GridHelper(24, 24, 0x4a5568, 0x2e3446);
-grid.position.y = -0.002; scene.add(grid);
+grid.position.y = -0.002;
+scene.add(grid);
 
-// 单位参考盒（1 格 = 1 米）——挂在 root 上，随模型一起切换/销毁，避免累积
-function refBox(parent, x) {
-  const g = new THREE.BoxGeometry(1, 1, 1);
-  const m = new THREE.MeshLambertMaterial({ color: 0x3a4a5a, transparent: true, opacity: 0.35 });
-  const b = new THREE.Mesh(g, m); b.position.set(x, 0.5, 0); parent.add(b);
-  const e = new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0x6a8aa8 }));
-  e.position.copy(b.position); parent.add(e);
-}
-
-const OUTLINE = 0x14161c;
-function addPart(root, p) {
-  const [w, h, d] = p.size;
-  let geo;
-  if (p.kind === 'box') geo = new THREE.BoxGeometry(1, 1, 1);
-  else if (p.kind === 'cyl') geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
-  else if (p.kind === 'cone') geo = new THREE.ConeGeometry(0.5, 1, 14);
-  else geo = new THREE.SphereGeometry(0.5, 14, 10);
-  const mat = new THREE.MeshLambertMaterial({ color: p.color, flatShading: false });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.scale.set(w, h, d);
-  mesh.position.set(0, h * 0.5, 0);
-  const grp = new THREE.Group();
-  // Unity Quaternion.Euler(x=pitch, y=yaw, z=0) 默认 ZXY 序；roll=0 时等价 YXZ
-  grp.rotation.order = 'YXZ';
-  grp.rotation.set(THREE.MathUtils.degToRad(p.pitch), THREE.MathUtils.degToRad(p.yaw), 0);
-  grp.position.set(p.pos[0], p.pos[1], p.pos[2]);
-  grp.add(mesh);
-  // 描边壳（背面外扩）
-  const om = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }));
-  om.scale.set(w * 1.05 + 0.02, h * 1.03 + 0.02, d * 1.05 + 0.02);
-  om.position.set(0, h * 0.5, 0);
-  const og = new THREE.Group();
-  og.rotation.order = 'YXZ';
-  og.rotation.set(grp.rotation.x, grp.rotation.y, 0);
-  og.position.set(p.pos[0], p.pos[1], p.pos[2]);
-  og.add(om);
-  root.add(og); root.add(grp);
-}
-
-let root = null, curL = 1;
-function show(name) {
-  if (root) { scene.remove(root); root.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
-  root = new THREE.Group(); scene.add(root);
-  parts.length = 0;
-  const entry = SPECIES.find(s => s[0] === name);
-  const drawSize = entry ? entry[1] : 1.0;
-  const L = drawSize * 0.72;           // 与 Animal3D 一致
-  curL = L;
-  const a = archOf(name);
-  build(name, a, L);
-  const col = COL[a] || 0xa08a6a;
-  for (const p of parts) { p.color = col; addPart(root, p); }
-  refBox(root, -L - 0.9);
-  draw(name, a, L, parts.length);
-}
-
-// ---------------------------------------------------------------- 视图
-const VIEWS = {
-  '侧视·东': { off: [ 1.0, 0.42, 0.0] },
-  '主视·南': { off: [ 0.0, 0.42,-1.0] },
-  '后视·北': { off: [ 0.0, 0.42, 1.0] },
-  '俯视':    { off: [ 0.02, 1.0, 0.02] },
-  '45°':     { off: [ 0.8, 0.55,-0.8] },
-};
-const bar = document.getElementById('sp'), vbar = document.getElementById('vw');
-const hud = document.getElementById('hud');
-let curSp = 'muffalo', curV = '侧视·东';
-// 取景：按已知的 L 定框，不依赖包围盒探测（headless 下 Box3 探测曾使首帧抛错、
-// 渲染循环根本没起来）。中心取身高的 0.45L，半径随 L 线性放大。
-function focus() {
-  const c = new THREE.Vector3(0, 0.45 * curL, 0);
-  const r = Math.max(1.6 * curL, 1.3) * 2.0;
-  const o = VIEWS[curV].off;
-  camera.position.set(c.x + o[0] * r, c.y + o[1] * r, c.z + o[2] * r);
-  controls.target.copy(c); controls.update();
-}
-function setView(k) { curV = k; [...vbar.children].forEach(b => b.classList.toggle('on', b.dataset.v === k)); focus(); draw(); }
-Object.keys(VIEWS).forEach(k => {
-  const b = document.createElement('button'); b.textContent = k; b.dataset.v = k; b.onclick = () => setView(k); vbar.appendChild(b);
-});
 const q = new URLSearchParams(location.search);
-if (q.get('species')) curSp = q.get('species');
-SPECIES.forEach(([n]) => {
-  const b = document.createElement('button'); b.textContent = n; b.dataset.s = n;
-  b.onclick = () => { curSp = n; [...bar.children].forEach(x => x.classList.toggle('on', x.dataset.s === n)); show(curSp); setView(curV); };
-  bar.appendChild(b);
-});
-if (VIEWS[q.get('view')]) curV = q.get('view');
-addEventListener('keydown', e => {
-  const ks = Object.keys(VIEWS), i = ks.indexOf(curV);
-  if (e.key === 'ArrowRight') setView(ks[(i + 1) % ks.length]);
-  if (e.key === 'ArrowLeft') setView(ks[(i - 1 + ks.length) % ks.length]);
-});
-let last = null;
-function draw(name, a, L, n) {
-  hud.innerHTML =
-    `<b>${name}</b> · 原型 <b>${a}</b><br>` +
-    `L = drawSize(${(SPECIES.find(s => s[0] === name)?.[1] ?? 1).toFixed(2)}) × 0.72 = ${L.toFixed(3)} 格<br>` +
-    `部件数 <b>${n}</b> · 网格 3x3 每格 1 米 · 左侧半透明盒 = 1 米参考<br>` +
-    `约定：pos.y = 部件底面 · 旋转 Euler(pitch,yaw,0)，three 用 'YXZ' 等价 Unity ZXY<br>` +
-    `← → 切视角 · 拖拽旋转 · 滚轮缩放`;
+const STILL   = q.get('still') === '1';
+const GALLERY = q.get('gallery') === '1';
+const PARTS   = q.get('parts') === '1';
+const SHEET   = q.get('sheet');
+const SINGLE  = q.get('single');
+
+const AUDIT_GROUPS = [
+  ['thrumbo', 'muffalo', 'boomalope', 'toxalope', 'elephant', 'rhinoceros', 'dromedary', 'alpaca', 'bison', 'moose', 'deer', 'ibex', 'horse', 'cow'],
+  ['bear_grizzly', 'panda', 'megasloth', 'warg', 'wolf_timber', 'fox_red', 'husky', 'cougar', 'lynx', 'cat', 'wildboar', 'hare', 'squirrel', 'boomrat'],
+  ['ostrich', 'turkey', 'peacock', 'duck', 'chicken', 'penguin', 'tortoise', 'seaturtle', 'iguana', 'alligator', 'cobra', 'megaspider', 'spelopede', 'megascarab'],
+];
+
+function hideChrome() {
+  if (!STILL && !GALLERY && !PARTS && SHEET === null && !SINGLE) return;
+  for (const id of ['hud', 'sp', 'vw']) {
+    const e = document.getElementById(id);
+    if (e) e.style.display = 'none';
+  }
 }
-// 渲染循环先于首次 show() 启动，且对 root 判空：任何后续取景/构建异常都不能
-// 让画面停在空白。自动摆头只在 ?spin=1 时开启（截图验收要的是正侧视，不能歪）。
-let t = 0, manual = false;
-const SPIN = q.get('spin') === '1';
-controls.addEventListener('start', () => { manual = true; });
+
+let root = null, curSp = q.get('species') || 'thrumbo', curV = q.get('view') || '45°', curL = 1.5;
+
+const VIEWS = {
+  '45°':     { off: [ 0.78, 0.52,  0.78] },
+  '侧视·东': { off: [-1.08, 0.18,  0.00] },
+  '主视·南': { off: [ 0.00, 0.22,  1.08] },
+  '后视·北': { off: [ 0.00, 0.24, -1.08] },
+  '俯视':    { off: [ 0.02, 1.25,  0.02] },
+};
+
+function buildOneGroup(name, overrideL = null) {
+  const ds = DS_MAP[name] || 1.4;
+  const L = overrideL !== null ? overrideL : Math.min(4.5, Math.max(0.45, ds * 0.72));
+  const a = archOf(name);
+  const m = buildAnimalModel(name, a, L);
+  const ow = 0.022 * Math.min(2.2, Math.max(0.6, L));
+  const { bodyGeo, hullGeo, partBoxes } = compileMesh(name, m, ow);
+  const grp = new THREE.Group();
+  const bodyMesh = new THREE.Mesh(bodyGeo, matAtlas);
+  const hullMesh = new THREE.Mesh(hullGeo, matHull);
+  bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
+  grp.add(hullMesh);
+  grp.add(bodyMesh);
+  return { grp, L, a, partBoxes, bodyGeo };
+}
+
+function focus() {
+  if (!root) return;
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.y, size.z, 0.5);
+  const r = span * 1.62;
+  const o = (VIEWS[curV] || VIEWS['45°']).off;
+  camera.position.set(center.x + o[0] * r, center.y + o[1] * r, center.z + o[2] * r);
+  controls.target.copy(center);
+  controls.update();
+}
+
+function updateHud(name, a, L, nParts) {
+  if (STILL || GALLERY || PARTS) return;
+  const hud = document.getElementById('hud');
+  hud.innerHTML =
+    `<b>${name}</b> · 原型 <b>${a}</b> · 视图 <b>${curV}</b><br>` +
+    `体量 L = ${L.toFixed(2)}m · 解剖部件数 <b>${nParts}</b><br>` +
+    `纹理图集 ${uvJson.size[0]}x${uvJson.size[1]}（6 区：coat / belly / head / limb / detail / eye）` +
+    (MISSING.size ? `<br><b style="color:#ff8f8f">缺取样区 ${[...MISSING].join(' ')}</b>` : '');
+}
+
+function show(name) {
+  hideChrome();
+  if (root) {
+    scene.remove(root);
+    root.traverse(o => { o.geometry?.dispose?.(); });
+  }
+  MISSING.clear();
+  const { grp, L, a, partBoxes } = buildOneGroup(name);
+  root = grp;
+  curL = L;
+  scene.add(root);
+  focus();
+  updateHud(name, a, L, partBoxes.length);
+}
+
+const vbar = document.getElementById('vw'), sbar = document.getElementById('sp');
+Object.keys(VIEWS).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = k; b.dataset.v = k;
+  b.onclick = () => {
+    curV = k;
+    [...vbar.children].forEach(x => x.classList.toggle('on', x.dataset.v === k));
+    focus();
+  };
+  vbar.appendChild(b);
+});
+SPECIES.forEach(([n]) => {
+  const b = document.createElement('button');
+  b.textContent = n; b.dataset.s = n;
+  b.onclick = () => {
+    curSp = n;
+    [...sbar.children].forEach(x => x.classList.toggle('on', x.dataset.s === n));
+    show(n);
+  };
+  sbar.appendChild(b);
+});
+
+if (PARTS) {
+  hideChrome();
+  const out = {};
+  const allKeys = Object.keys(uvJson.species || uvJson.props || uvJson.proportions || {});
+  const checkList = allKeys.length ? allKeys : SPECIES.map(s => s[0]);
+  for (const sp of checkList) {
+    MISSING.clear();
+    const { L, a, partBoxes } = buildOneGroup(sp, 1.0);
+    out[sp] = { arch: a, L, parts: partBoxes, missing: [...MISSING] };
+  }
+  const pre = document.createElement('pre');
+  pre.id = 'partjson';
+  pre.textContent = JSON.stringify(out);
+  document.body.appendChild(pre);
+} else if (GALLERY) {
+  hideChrome();
+  grid.visible = false;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  scene.background = new THREE.Color(0x28303e);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(90, 90),
+    new THREE.MeshLambertMaterial({ color: 0x4b5668 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.003;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const keyLight = new THREE.DirectionalLight(0xfff3e0, 0.85);
+  keyLight.position.set(6, 10, 7);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  const sc = keyLight.shadow.camera;
+  sc.left = -16; sc.right = 16; sc.top = 16; sc.bottom = -16; sc.far = 45;
+  scene.add(keyLight);
+
+  const SETS = [
+    ['thrumbo', 'muffalo', 'boomalope', 'toxalope', 'elephant', 'rhinoceros', 'dromedary', 'alpaca'],
+    ['bison', 'yak', 'muskox', 'sheep', 'cow', 'horse', 'moose', 'deer', 'ibex'],
+    ['bear_grizzly', 'panda', 'megasloth', 'warg', 'wolf_timber', 'fox_red', 'husky', 'cougar', 'lynx', 'cat'],
+    ['wildboar', 'pig', 'hare', 'squirrel', 'beaver', 'raccoon', 'boomrat', 'porcupine', 'monkey', 'dryad_basic'],
+    ['ostrich', 'cassowary', 'turkey', 'peacock', 'goose', 'duck', 'chicken', 'penguin', 'tortoise', 'seaturtle', 'iguana', 'cobra', 'megaspider', 'spelopede', 'megascarab'],
+  ];
+  const rowIdx = +(q.get('row') || 0);
+  const row = SETS[rowIdx] || SETS[0];
+  let x = 0;
+  const items = [];
+  for (const sp of row) {
+    const { grp, bodyGeo } = buildOneGroup(sp, 1.35);
+    bodyGeo.computeBoundingBox();
+    const bb = bodyGeo.boundingBox;
+    const w = Math.max(0.55, bb.max.x - bb.min.x);
+    grp.position.set(x + w * 0.5, 0, 0);
+    grp.rotation.y = -0.42;
+    scene.add(grp);
+    items.push({ grp, w });
+    x += w + 0.42;
+  }
+  const midX = x * 0.5 - 0.21;
+  const dist = Math.max(4.2, x * 0.62);
+  // 人眼平视高度基准 1.62m（Metrics3D.HumanEyeHeight）
+  camera.position.set(midX, 1.62, dist);
+  controls.target.set(midX, 0.62, 0);
+  controls.update();
+} else if (SINGLE) {
+  hideChrome();
+  grid.visible = false;
+  const viewKeys = ['侧视·东', '主视·南', '后视·北', '45°'];
+  const CW = 340, CH = 280;
+  const totalW = CW * viewKeys.length, totalH = CH;
+  renderer.setSize(totalW, totalH);
+  renderer.setScissorTest(true);
+  camera.aspect = CW / CH;
+  camera.updateProjectionMatrix();
+
+  const { grp } = buildOneGroup(SINGLE, 1.2);
+  scene.add(grp);
+  const box = new THREE.Box3().setFromObject(grp);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.y * 1.25, size.z, 0.4);
+  const dist = span * 1.48;
+  for (let c = 0; c < viewKeys.length; c++) {
+    const o = VIEWS[viewKeys[c]].off;
+    camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+    L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+    L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+    camera.lookAt(center);
+    const wx = c * CW;
+    renderer.setViewport(wx, 0, CW, CH);
+    renderer.setScissor(wx, 0, CW, CH);
+    renderer.render(scene, camera);
+  }
+} else if (SHEET !== null) {
+  hideChrome();
+  grid.visible = false;
+  const list = AUDIT_GROUPS[+SHEET] || AUDIT_GROUPS[0];
+  const viewKeys = ['侧视·东', '主视·南', '45°'];
+  const CW = 240, CH = 180;
+  const totalW = CW * viewKeys.length, totalH = CH * list.length;
+  renderer.setSize(totalW, totalH);
+  renderer.setScissorTest(true);
+  camera.aspect = CW / CH;
+  camera.updateProjectionMatrix();
+
+  for (let r = 0; r < list.length; r++) {
+    const sp = list[r];
+    const { grp } = buildOneGroup(sp, 1.2);
+    scene.add(grp);
+    const box = new THREE.Box3().setFromObject(grp);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y * 1.25, size.z, 0.4);
+    const dist = span * 1.48;
+    const wy = (list.length - 1 - r) * CH;
+    for (let c = 0; c < viewKeys.length; c++) {
+      const o = VIEWS[viewKeys[c]].off;
+      camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+      L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+      L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+      camera.lookAt(center);
+      const wx = c * CW;
+      renderer.setViewport(wx, wy, CW, CH);
+      renderer.setScissor(wx, wy, CW, CH);
+      renderer.render(scene, camera);
+    }
+    scene.remove(grp);
+    grp.traverse(o => { o.geometry?.dispose?.(); });
+  }
+} else {
+  show(curSp);
+  [...vbar.children].forEach(x => x.classList.toggle('on', x.dataset.v === curV));
+  [...sbar.children].forEach(x => x.classList.toggle('on', x.dataset.s === curSp));
+}
+
 function loop() {
-  requestAnimationFrame(loop); controls.update();
-  if (SPIN && root && !manual) { t += 0.004; root.rotation.y = Math.sin(t) * 0.5; }
+  if (SHEET !== null || PARTS || SINGLE) return;
+  requestAnimationFrame(loop);
+  controls.update();
   renderer.render(scene, camera);
 }
 loop();
-try { show(curSp); } catch (e) { console.error('show failed', e); }
-try { setView(curV); } catch (e) { console.error('setView failed', e); }
-[...bar.children].forEach(x => x.classList.toggle('on', x.dataset.s === curSp));
 
-// ---- 结构自检（?report=1）----
-// 逐只打印：部件数 / 网格数 / 三角数 / 包围盒（米）/ UV 范围。
-// 用途：无头环境里我看不到图，这是唯一能核验下面两件事的通道 ——
-//   1) 描边壳是否真的被建出来（meshes > parts），且比本体大（bbox 被 inflate 撑开）；
-//   2) UV 是否真的落在贴图中央方块内（AnimalTextureFill），而不是采到黑边。
-// 注意：它检查的是**模型定义**，不是渲染结果，不能替代肉眼验收；
-// 截图（shots/animal_*.png）仍然留给老板看。
-if (q.get('report') === '1') {
-  const lines = [];
-  for (const [name, ds, arch] of SPECIES) {
-    try { show(name); } catch (e) { lines.push(name + ' SHOW-FAIL ' + e.message); continue; }
-    let tri = 0, meshes = 0;
-    const uvs = [];
-    root.traverse(o => {
-      if (!o.geometry) return;
-      meshes++;
-      const ix = o.geometry.index, pos = o.geometry.attributes.position;
-      tri += ix ? ix.count / 3 : (pos ? pos.count / 3 : 0);
-      const a = o.geometry.attributes.uv;
-      if (a) {
-        let u0 = 9, u1 = -9, v0 = 9, v1 = -9;
-        for (let i = 0; i < a.count; i++) {
-          u0 = Math.min(u0, a.getX(i)); u1 = Math.max(u1, a.getX(i));
-          v0 = Math.min(v0, a.getY(i)); v1 = Math.max(v1, a.getY(i));
-        }
-        uvs.push('[' + u0.toFixed(2) + ',' + u1.toFixed(2) + ']x[' + v0.toFixed(2) + ',' + v1.toFixed(2) + ']');
-      }
-    });
-    let bb = 'n/a';
-    try {
-      const b = new THREE.Box3().setFromObject(root);
-      const c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3());
-      bb = s.x.toFixed(2) + 'x' + s.y.toFixed(2) + 'x' + s.z.toFixed(2)
-         + '@(' + c.x.toFixed(2) + ',' + c.y.toFixed(2) + ',' + c.z.toFixed(2) + ')';
-    } catch (e) { bb = 'BOXFAIL ' + e.message; }
-    lines.push(name + ' | ' + arch + ' | L=' + (ds * 0.72).toFixed(2) + 'm | parts=' + parts.length
-      + ' meshes=' + meshes + (meshes > parts.length ? '(+hull)' : '(NO-HULL)')
-      + ' | tris=' + Math.round(tri) + ' | bbox ' + bb + ' | uv ' + (uvs[0] || '-'));
-  }
-  const pre = document.createElement('pre');
-  pre.id = 'report';
-  pre.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:20;font:11px/1.35 Consolas,monospace;color:#bcd;background:rgba(0,0,0,.55);padding:8px;white-space:pre';
-  pre.textContent = lines.join('\n');
-  // 同时逐行打到控制台：headless 下 --enable-logging=stderr 能把它当文本捞出来
-  for (const l of lines) console.log('FP3D| ' + l);
-  document.body.appendChild(pre);
-  try { show(curSp); setView(curV); } catch (e) { console.error(e); }
-}
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight); draw();
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
 });
-window.__show = n => { curSp = n; show(n); setView(curV); };
-window.__view = setView;
-window.__stopSpin = () => { manual = true; root.rotation.y = 0; };
 </script>
 </body>
 </html>

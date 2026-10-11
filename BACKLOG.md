@@ -25,8 +25,11 @@ updated: 2026-10-10
 | F008 | 屋顶与楼板 | spec | 4 楼层 | F005 | `docs/features/F008-roofs-floors.md` |
 | F009 | 走上楼与走下楼 | spec | 4 楼层 | F003, F008 | `docs/features/F009-vertical-travel.md` |
 | F010 | 邻图随走动加载 | spec | 5 地图 | F003 | `docs/features/F010-streaming.md` |
-| F011 | 自由探索闭环 | spec | 6 玩法 | F003, F004, F010 | `docs/features/F011-exploration.md` |
+| F011 | 自由探索闭环 | spec | 6 玩法 | F003, F004, F010, F013 | `docs/features/F011-exploration.md` |
 | F012 | 性能门槛 | spec | 7 性能 | F006, F010 | `docs/features/F012-perf-budget.md` |
+| F013 | 三维光照系统 | 部分落地 | 6 玩法 | 无 | `docs/features/F013-lighting.md` |
+| F014 | 第一人称受击反馈 | 已落地待实机 | 6 玩法 | 无 | `docs/features/F014-hit-feedback.md` |
+| F015 | 武器射击效果 | 已落地待实机 | 6 玩法 | 无 | `docs/features/F015-shot-effects.md` |
 
 ## 阶段说明
 
@@ -35,7 +38,7 @@ updated: 2026-10-10
 3. **大型网格。** 墙、山、家具分三条线，共用 `Metrics3D` 和「原版贴图当材质」。谁也不等谁。
 4. **楼层。** 先有天花板和楼板，人再沿楼梯换图。栈注册表保持 `docs/decisions/0001-stacked-maps.md`。
 5. **地图。** 东向调试加载扩成以玩家为中心的邻接加载与卸载。
-6. **玩法。** 在能走、能瞄准、能跨图之后，补上第一人称里的探索节奏（照明、揭示、兴趣点、战斗入口）。战斗数值仍走原版。
+6. **玩法。** 在能走、能瞄准、能跨图之后，补上第一人称里的探索节奏（照明、揭示、兴趣点、战斗入口）。照明单列为 F013。战斗数值仍走原版。
 7. **性能。** 山体和多图会放大绘制量。门槛用现有 `PerfMon3D` 读数，不提前做一套新监控。
 
 ## 明确不单列的事

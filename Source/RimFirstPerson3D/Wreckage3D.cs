@@ -18,6 +18,7 @@ namespace RimFirstPerson3D
     // （不再生成立板回退），改由 DrawWreckage 逐件调用 TryDraw 绘制真实几何。
     // 之前 WreckageSamples / WreckageUVGen 只是库，没有接线，故残骸在游戏里
     // 仍是原版 2D —— 本文件即补上这条接线。
+    [StaticConstructorOnStartup]
     public static class Wreckage3D
     {
         private class Built
@@ -46,12 +47,21 @@ namespace RimFirstPerson3D
             { "rustedindustrialtruck", "rustedindustrialtruck" },
         };
 
+        private static readonly Dictionary<ThingDef, string> wreckageDefCache = new Dictionary<ThingDef, string>();
+
         private static string Key(Thing t)
         {
-            if (t == null || t.def == null || string.IsNullOrEmpty(t.def.defName)) return null;
+            if (t == null || t.def == null) return null;
+            if (wreckageDefCache.TryGetValue(t.def, out var cached)) return cached;
+            if (string.IsNullOrEmpty(t.def.defName))
+            {
+                wreckageDefCache[t.def] = null;
+                return null;
+            }
             string n = t.def.defName.ToLowerInvariant().Replace("_", "").Replace(" ", "");
-            string name;
-            return Types.TryGetValue(n, out name) ? name : null;
+            string name = Types.TryGetValue(n, out string val) ? val : null;
+            wreckageDefCache[t.def] = name;
+            return name;
         }
 
         /// <summary>该建筑是否由本层绘制（BuildingLayer3D 据此跳过立板回退）。</summary>
@@ -81,15 +91,19 @@ namespace RimFirstPerson3D
             }
         }
 
-        // ---- 网格缓存（按样板名）----
+        // ---- 网格缓存（按样板名 + 朝向）----
+        //
+        // 朝向烘进网格而不是绘制时再转：顶点色里的形体明暗是按世界太阳算的，
+        // 若网格保持模型空间，物体一转，被照亮的这一面就跟着一起转（F013）。
 
-        private static Built Get(string name)
+        private static Built Get(string name, float yaw)
         {
+            string ck = name + "|" + Mathf.RoundToInt(yaw);
             Built b;
-            if (cache.TryGetValue(name, out b)) return b;
+            if (cache.TryGetValue(ck, out b)) return b;
             var uv = WreckageSamples.Uv(name);
             var mb = new ModelBuilder(uv, false);
-            mb.AddAll(WreckageSamples.Build(name));
+            mb.AddAll(WreckageSamples.Build(name), Matrix4x4.TRS(Vector3.zero, Quaternion.AngleAxis(yaw, Vector3.up), Vector3.one));
             var st = FirstPerson3DMod.settings;
             float ow = st != null ? st.outlineWidth : Metrics3D.OutlineWidth;
             b = new Built
@@ -97,7 +111,7 @@ namespace RimFirstPerson3D
                 body = mb.ToMesh(),
                 hull = mb.ToHull(ow),
             };
-            cache[name] = b;
+            cache[ck] = b;
             return b;
         }
 
@@ -114,21 +128,22 @@ namespace RimFirstPerson3D
 
         // ---- 绘制 ----
 
-        /// <summary>画一件残骸；返回 false 表示本层没接管（调用方走原回退路径）。</summary>
-        public static bool TryDraw(Thing t, Vector3 pos)
+        /// <summary>画一件残骸；返回 false 表示本层没接管（调用方走原回退路径）。
+        /// lit 是该件所在处的放置亮度（F013 实例乘子）。</summary>
+        public static bool TryDraw(Thing t, Vector3 pos, Color lit)
         {
             if (!Handles(t)) return false;
             var m = Mat;
             if (m == null) return false;
             string name = Key(t);
             if (name == null) return false;
-            var b = Get(name);
-            if (b == null || b.body == null) return false;
 
-            // 残骸几何不含朝向，按建筑旋转绕 Y 摆放；位置 Y 用调用方给的落地基准。
+            // 残骸几何不含朝向：按建筑旋转烘进网格缓存，绘制矩阵只管位置。
             float yaw = t.Rotation.AsAngle;
-            var matrix = Matrix4x4.TRS(pos, Quaternion.AngleAxis(yaw, Vector3.up), Vector3.one);
-            Graphics.DrawMesh(b.body, matrix, m, 0);
+            var b = Get(name, yaw);
+            if (b == null || b.body == null) return false;
+            var matrix = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
+            Graphics.DrawMesh(b.body, matrix, Lighting3D.MatFor(m, lit), 0);
             PerfCounters.BuildingMeshesDrawn++;
             if (Fps3DState.DrawOutlines && b.hull != null)
             {

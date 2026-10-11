@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- F013 光照离线模拟场景台。跑的是游戏里同一份公式（LightShade.cs 直接链接进来，
+       不复制、不改写、不留第二套规范），所以这里通过才有资格进游戏实测。
+       用法：在仓库根执行 dotnet run 加参数 project=tools/LightSim（退出码非 0 表示未通过） -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>LightSim</AssemblyName>
+    <RootNamespace>RimFirstPerson3D.LightSim</RootNamespace>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>D:\Steam\steamapps\common\RimWorld\RimWorldWin64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 离线模拟场景台：F013 光照合成式（LightShade.cs）+ F014 受击反馈曲线（HitFxMath.cs）。
+       两份都是游戏里跑的同一份代码，直接链接进来，不复制、不改写、不留第二套规范，
+       所以这里通过才有资格进游戏实测。 -->
+  <ItemGroup>
+    <Compile Include="..\..\Source\RimFirstPerson3D\LightShade.cs" Link="LightShade.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\HitFxMath.cs" Link="HitFxMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\ShotFxMath.cs" Link="ShotFxMath.cs" />
+  </ItemGroup>
+
+</Project>

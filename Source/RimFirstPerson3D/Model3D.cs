@@ -103,6 +103,8 @@ namespace RimFirstPerson3D
         public Vector3 size;     // 见 Prim 注释
         public float yaw;        // 绕 Y 轴旋转（度）
         public float pitch;      // 绕 X 轴旋转（度），用于斜面
+        public float roll;       // 绕 Z 轴旋转（度）
+        public float taper;      // 圆柱顶底半径比（<=0 时按 Cylinder=1 / Cone=0.02）
         public bool noOutline;   // 参与渲染但不产生描边（如贴地薄片）
         public bool noTop;       // 顶面不贴图（如埋在别的部件下面）
         /// <summary>取样规格下标（ModelBuilder 的 UvSpec 列表）。</summary>
@@ -117,7 +119,8 @@ namespace RimFirstPerson3D
         public Vector3 bounds;
 
         public Model3D Add(Prim kind, Vector3 pos, Vector3 size,
-            float yaw = 0f, float pitch = 0f, bool noOutline = false, int uv = 0)
+            float yaw = 0f, float pitch = 0f, bool noOutline = false, int uv = 0,
+            float roll = 0f, float taper = 0f)
         {
             parts.Add(new Part
             {
@@ -126,6 +129,8 @@ namespace RimFirstPerson3D
                 size = size,
                 yaw = yaw,
                 pitch = pitch,
+                roll = roll,
+                taper = taper,
                 noOutline = noOutline,
                 uv = uv
             });
@@ -201,7 +206,7 @@ namespace RimFirstPerson3D
         public void Add(Part p, Matrix4x4 pre)
         {
             uv = uvList[p.uv >= 0 && p.uv < uvList.Count ? p.uv : 0];
-            var rot = Quaternion.Euler(p.pitch, p.yaw, 0f);
+            var rot = Quaternion.Euler(p.pitch, p.yaw, p.roll);
             var local = Matrix4x4.TRS(p.pos, rot, Vector3.one);
             var matrix = pre * local;
             int hullStart = hullVerts.Count;
@@ -223,6 +228,14 @@ namespace RimFirstPerson3D
         {
             if (model == null) return;
             for (int i = 0; i < model.parts.Count; i++) Add(model.parts[i]);
+        }
+
+        /// <summary>整套部件过一个「模型空间 -> 世界空间」的预变换再合并。
+        /// 用于把朝向烘进网格：法线随之旋转，形体明暗才跟着世界太阳而不是跟着物件转。</summary>
+        public void AddAll(Model3D model, Matrix4x4 pre)
+        {
+            if (model == null) return;
+            for (int i = 0; i < model.parts.Count; i++) Add(model.parts[i], pre);
         }
 
         // ---- 顶点写入 ----
@@ -392,7 +405,8 @@ namespace RimFirstPerson3D
         {
             const int seg = 12;
             float r = s.x * 0.5f, h = s.y, rz = s.z * 0.5f;
-            float topR = cone ? 0.02f * r : r;
+            float ratio = p.taper > 0.001f ? p.taper : (cone ? 0.02f : 1f);
+            float topR = r * ratio, topRz = rz * ratio;
             var rSide = wholeCell ? new Vector4(0, 0, 1, 1) : uv.side;
             for (int i = 0; i < seg; i++)
             {
@@ -401,34 +415,52 @@ namespace RimFirstPerson3D
                 float u0 = i / (float)seg, u1 = (i + 1) / (float)seg;
                 var b0 = new Vector3(Mathf.Cos(a0) * r, 0f, Mathf.Sin(a0) * rz);
                 var b1 = new Vector3(Mathf.Cos(a1) * r, 0f, Mathf.Sin(a1) * rz);
-                var t1 = new Vector3(Mathf.Cos(a1) * topR, h, Mathf.Sin(a1) * rz * (topR / Mathf.Max(0.0001f, r)));
-                var t0 = new Vector3(Mathf.Cos(a0) * topR, h, Mathf.Sin(a0) * rz * (topR / Mathf.Max(0.0001f, r)));
-                Quad(b0, b1, t1, t0,
-                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u0), rSide.y),
+                var t1 = new Vector3(Mathf.Cos(a1) * topR, h, Mathf.Sin(a1) * topRz);
+                var t0 = new Vector3(Mathf.Cos(a0) * topR, h, Mathf.Sin(a0) * topRz);
+                Quad(b1, b0, t0, t1,
                     new Vector2(Mathf.Lerp(rSide.x, rSide.z, u1), rSide.y),
-                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u1), rSide.w),
-                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u0), rSide.w), m);
+                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u0), rSide.y),
+                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u0), rSide.w),
+                    new Vector2(Mathf.Lerp(rSide.x, rSide.z, u1), rSide.w), m);
             }
+            float mx = Mathf.Max(0.0001f, uv.modelXZ.x), mz = Mathf.Max(0.0001f, uv.modelXZ.y);
             // 顶盖（圆锥时退化为尖点，跳过）
-            if (!cone)
+            if (!cone && !p.noTop && ratio > 0.04f)
             {
-                var tr = TopRectFor(local, new Vector3(-r, h, rz), new Vector3(r, h, rz),
-                    new Vector3(r, h, -rz), new Vector3(-r, h, -rz));
+                var tr = TopRectFor(local, new Vector3(-topR, h, topRz), new Vector3(topR, h, topRz),
+                    new Vector3(topR, h, -topRz), new Vector3(-topR, h, -topRz));
                 int center = verts.Count;
                 Vert(new Vector3(0f, h, 0f), Vector3.up, new Vector2((tr.x + tr.z) * 0.5f, (tr.y + tr.w) * 0.5f), m);
                 // 顶盖 UV 必须按**该点的 XZ 在取样区里的位置**铺（和盒体顶面同一口径）。
                 // 之前沿 i/seg 在对角线上插值 -> 圆面被摊成扇形黑白相间。
-                float mx = Mathf.Max(0.0001f, uv.modelXZ.x), mz = Mathf.Max(0.0001f, uv.modelXZ.y);
                 for (int i = 0; i < seg; i++)
                 {
                     float a0 = i / (float)seg * Mathf.PI * 2f;
                     float a1 = (i + 1) / (float)seg * Mathf.PI * 2f;
-                    Vert(new Vector3(Mathf.Cos(a0) * r, h, Mathf.Sin(a0) * rz), Vector3.up, CapUV(a0, r, rz, tr, mx, mz), m);
-                    Vert(new Vector3(Mathf.Cos(a1) * r, h, Mathf.Sin(a1) * rz), Vector3.up, CapUV(a1, r, rz, tr, mx, mz), m);
+                    Vert(new Vector3(Mathf.Cos(a1) * topR, h, Mathf.Sin(a1) * topRz), Vector3.up, CapUV(a1, topR, topRz, tr, mx, mz), m);
+                    Vert(new Vector3(Mathf.Cos(a0) * topR, h, Mathf.Sin(a0) * topRz), Vector3.up, CapUV(a0, topR, topRz, tr, mx, mz), m);
                     Tri(center, center + 1 + i * 2, center + 2 + i * 2);
                     hullVerts.Add(m.MultiplyPoint3x4(new Vector3(0f, h, 0f)));
-                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a0) * r, h, Mathf.Sin(a0) * rz)));
-                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a1) * r, h, Mathf.Sin(a1) * rz)));
+                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a1) * topR, h, Mathf.Sin(a1) * topRz)));
+                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a0) * topR, h, Mathf.Sin(a0) * topRz)));
+                }
+            }
+            // 底盖（闭合圆柱与圆锥底面，使反绕描边壳在底缘处与 viewer/animals.html 完全同口径）
+            {
+                var br = TopRectFor(local, new Vector3(-r, 0f, rz), new Vector3(r, 0f, rz),
+                    new Vector3(r, 0f, -rz), new Vector3(-r, 0f, -rz));
+                int bCenter = verts.Count;
+                Vert(new Vector3(0f, 0f, 0f), Vector3.down, new Vector2((br.x + br.z) * 0.5f, (br.y + br.w) * 0.5f), m);
+                for (int i = 0; i < seg; i++)
+                {
+                    float a0 = i / (float)seg * Mathf.PI * 2f;
+                    float a1 = (i + 1) / (float)seg * Mathf.PI * 2f;
+                    Vert(new Vector3(Mathf.Cos(a0) * r, 0f, Mathf.Sin(a0) * rz), Vector3.down, CapUV(a0, r, rz, br, mx, mz), m);
+                    Vert(new Vector3(Mathf.Cos(a1) * r, 0f, Mathf.Sin(a1) * rz), Vector3.down, CapUV(a1, r, rz, br, mx, mz), m);
+                    Tri(bCenter, bCenter + 1 + i * 2, bCenter + 2 + i * 2);
+                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(0f, 0f, 0f)));
+                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a0) * r, 0f, Mathf.Sin(a0) * rz)));
+                    hullVerts.Add(m.MultiplyPoint3x4(new Vector3(Mathf.Cos(a1) * r, 0f, Mathf.Sin(a1) * rz)));
                 }
             }
         }
@@ -444,7 +476,7 @@ namespace RimFirstPerson3D
 
         private void AddSphere(Matrix4x4 m, Vector3 s, Part p)
         {
-            const int lon = 12, lat = 8;
+            const int lon = 14, lat = 10;
             float rx = s.x * 0.5f, ry = s.y * 0.5f, rz = s.z * 0.5f;
             var rTop = wholeCell ? new Vector4(0, 0, 1, 1) : uv.top;
             int start = verts.Count;
@@ -457,8 +489,8 @@ namespace RimFirstPerson3D
                     var n = new Vector3(Mathf.Sin(phi) * Mathf.Cos(theta), Mathf.Cos(phi), Mathf.Sin(phi) * Mathf.Sin(theta));
                     var pos = new Vector3(n.x * rx, ry + n.y * ry, n.z * rz);
                     Vert(pos, n, new Vector2(
-                        Mathf.Lerp(rTop.x, rTop.z, x / (float)lon),
-                        Mathf.Lerp(rTop.y, rTop.w, y / (float)lat)), m);
+                        Mathf.Lerp(rTop.x, rTop.z, 0.5f + 0.45f * n.x),
+                        Mathf.Lerp(rTop.y, rTop.w, 0.5f + 0.45f * n.y)), m);
                 }
             }
             for (int y = 0; y < lat; y++)
@@ -503,7 +535,9 @@ namespace RimFirstPerson3D
 
             // 面积加权平均法线：叉积长度正比于三角形面积，累加即得加权和。
             var acc = new Vector3[uniq.Count];
-            for (int t = 0; t + 2 < hullVerts.Count; t += 3)
+            // 只遍历本部件区间 [start, end)：localOf 的下标基准是 start，
+            // 从 0 起会读到 localOf[负数]（List 负下标 -> ArgumentOutOfRangeException）。
+            for (int t = start; t + 2 < hullVerts.Count; t += 3)
             {
                 var a = hullVerts[t]; var b = hullVerts[t + 1]; var c = hullVerts[t + 2];
                 var n = Vector3.Cross(b - a, c - a);
@@ -519,7 +553,7 @@ namespace RimFirstPerson3D
                 hullUnique.Add(uniq[i]);
                 hullUniqueNormals.Add(n.sqrMagnitude > 1e-8f ? n.normalized : Vector3.up);
             }
-            for (int t = 0; t + 2 < hullVerts.Count; t += 3)
+            for (int t = start; t + 2 < hullVerts.Count; t += 3)
             {
                 // 反绕序：正面朝内，背面剔除后只剩轮廓外圈可见 —— 即描边。
                 hullTris.Add(baseIdx + localOf[t - start + 2]);
@@ -547,6 +581,16 @@ namespace RimFirstPerson3D
             mesh.SetVertices(verts);
             mesh.SetNormals(normals);
             mesh.SetUVs(0, uvs);
+            // 形体明暗（F013）：原型网格按法线烘一份与位置无关的方向形状。
+            // 件与件所处的明暗由实例材质乘子给（Lighting3D.InstanceLevel），两者相乘。
+            // 太阳方位换档时调用方要 Clear 原型缓存重烘。
+            if (Lighting3D.Enabled)
+            {
+                var cols = new List<Color32>(verts.Count);
+                for (int i = 0; i < verts.Count; i++)
+                    cols.Add(Lighting3D.To32(Lighting3D.FormShape(normals[i])));
+                mesh.SetColors(cols);
+            }
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
             return mesh;
@@ -565,6 +609,35 @@ namespace RimFirstPerson3D
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        /// <summary>将当前 ModelBuilder 累积的实体顶点与反绕描边壳直接追加到外部列表（供区块合批零分配使用）。</summary>
+        public void AppendToLists(
+            List<Vector3> dstVerts, List<Vector3> dstNormals, List<Vector2> dstUvs, List<int> dstTris,
+            List<Vector3> dstHullVerts, List<Vector3> dstHullNormals, List<Vector2> dstHullUvs, List<int> dstHullTris,
+            float hullWidth)
+        {
+            if (tris.Count > 0 && dstVerts != null)
+            {
+                int baseV = dstVerts.Count;
+                dstVerts.AddRange(verts);
+                dstNormals.AddRange(normals);
+                dstUvs.AddRange(uvs);
+                for (int i = 0; i < tris.Count; i++)
+                    dstTris.Add(baseV + tris[i]);
+            }
+            if (hullTris.Count > 0 && dstHullVerts != null && hullWidth > 0f)
+            {
+                int baseH = dstHullVerts.Count;
+                for (int i = 0; i < hullUnique.Count; i++)
+                {
+                    dstHullVerts.Add(hullUnique[i] + hullUniqueNormals[i] * hullWidth);
+                    dstHullNormals.Add(hullUniqueNormals[i]);
+                    dstHullUvs.Add(Vector2.zero);
+                }
+                for (int i = 0; i < hullTris.Count; i++)
+                    dstHullTris.Add(baseH + hullTris[i]);
+            }
         }
     }
 }

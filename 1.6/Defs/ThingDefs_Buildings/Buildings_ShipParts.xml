@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <!-- 坠毁的机械族毒性飞船核心 (3D 封闭重构资产) -->
+  <ThingDef ParentName="CrashedShipPartBase">
+    <defName>FPS3D_CrashedPoisonShipPart</defName>
+    <label>坠毁的毒性飞船核心 (3D)</label>
+    <description>一段从古老机械族母舰上暴力撕裂坠毁的毒性舱体残骸。在第一人称三维视角下呈现出完整的360度封闭硬表面低模资产：左端突出法兰短管与圆弧耐压底盖、带有对角破损撕裂线与物理板厚截面的六边形外装甲、凸起的外挂加固卡箍厚板、外露内舱筒、3D悬空折弯黄铜高压管路与内嵌发光外星符文。</description>
+    <graphicData>
+      <texPath>Things/Building/Exotic/CrashedPoisonShipPart</texPath>
+      <graphicClass>Graphic_Single</graphicClass>
+      <drawSize>(6, 3)</drawSize>
+    </graphicData>
+    <size>(6, 3)</size>
+    <statBases>
+      <MaxHitPoints>1500</MaxHitPoints>
+      <Flammability>0</Flammability>
+      <Beauty>-150</Beauty>
+    </statBases>
+    <comps>
+      <li Class="CompProperties_WakeUpDormant"/>
+      <li Class="CompProperties_PlantHarmRadius">
+        <radiusPerDayCurve>
+          <points>
+            <li>0, 5</li>
+            <li>1.5, 18</li>
+            <li>6, 40</li>
+            <li>20, 100</li>
+          </points>
+        </radiusPerDayCurve>
+      </li>
+    </comps>
+  </ThingDef>
+</Defs>

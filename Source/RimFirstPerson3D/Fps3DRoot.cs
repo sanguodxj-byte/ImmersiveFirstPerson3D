@@ -1,4 +1,5 @@
 // AI生成
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -66,6 +67,8 @@ namespace RimFirstPerson3D
 
             CameraRig3D.UpdateCamera(Time.deltaTime);
             Viewmodel3D.Tick(Time.deltaTime);
+            HitFx3D.Tick(Time.deltaTime);
+            ShotFx3D.Tick(Time.deltaTime);
             // 调试冻结位姿（cmdAction termPose <p>）：常驻绘制终端、不进状态机
             if (HandTerminal3D.DebugHold >= 0f && !MapScreen3D.Open)
                 HandTerminal3D.Draw(CameraRig3D.Cam, Mathf.Clamp01(HandTerminal3D.DebugHold), 1f);
@@ -77,7 +80,7 @@ namespace RimFirstPerson3D
             var camPos = CameraRig3D.Cam != null ? CameraRig3D.Cam.transform.position : Vector3.zero;
             // 刷新本帧相机视锥（供各层 chunk 与逐件绘制的屏幕外/超远剔除）
             Frustum3D.Update();
-            SkyScenery.DrawDistantRing(camPos);
+            SkyScenery.DrawDistantRing();
             foreach (var m in Streaming3D.RenderMaps(Find.CurrentMap))
             {
                 if (m == null || m.Disposed) continue;
@@ -118,17 +121,63 @@ namespace RimFirstPerson3D
                 snapshotTimer = 0f;
                 var s = FirstPerson3DMod.settings;
                 if (s != null) s.perfSnapshot = PerfMon3D.SnapshotJson();
+                LightDumpToFile();
+            }
+        }
+
+        // 光照导出落盘（F013 验收通道）：与 PerfMon 的 perf 日志同一手法、同一目录。
+        // 走文件而不是桥调调试动作，是因为实机菜单路径解析不稳（Actions/<分组> 取不到），
+        // 而连续时间的昼夜与灯具变化本来就该由一串 dump 看趋势，不该靠一次性抓取。
+        private float lightDumpTimer;
+        private void LightDumpToFile()
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null || !s.lightFileDump) return;
+            // 本块本身就是 1 Hz 才进来一次，所以按秒累加；
+            // 用 Time.deltaTime 累加等于每 6 分钟才导出一行（实机踩过）。
+            lightDumpTimer += 1f;
+            if (lightDumpTimer < 6f) return;
+            lightDumpTimer = 0f;
+            try
+            {
+                string path = System.IO.Path.Combine(Application.persistentDataPath,
+                    "FirstPerson3D_light.log");
+                System.IO.File.AppendAllText(path, Lighting3D.DumpJson() + "\n");
+            }
+            catch (System.Exception e)
+            {
+                // 静默吞过一次就再也查不到为什么没文件，这里点名一次
+                Log.WarningOnce(ModEntry.LogPrefix + "light dump failed: " + e.GetType().Name
+                    + ": " + e.Message + "\n" + e.StackTrace, 12001);
+            }
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus)
+            {
+                CameraRig3D.ReleaseMouseLook();
+            }
+        }
+
+        private void OnApplicationPause(bool pauseStatus)
+        {
+            if (pauseStatus)
+            {
+                CameraRig3D.ReleaseMouseLook();
             }
         }
 
         private void Leave3D(bool forceOff, bool releaseRig, bool forceCloseScreen)
         {
             suppressed = false;
+            HitFx3D.Clear();
+            ShotFx3D.Clear();
             VanillaSuppressor.RestoreCameras();
             RenderSettings.fog = false;
             SkyScenery.Restore();
             if (forceOff)
-                Fps3DState.Mode = ViewMode.Off;
+                Fps3DState.ResetInMemory();
             if (forceCloseScreen)
                 MapScreen3D.ForceClose();
             if (releaseRig)
@@ -152,6 +201,8 @@ namespace RimFirstPerson3D
                 // 终端占据视野时准星、名牌、手和背包让位。性能条留下，方便对照开关前后的帧时间。
                 if (!MapScreen3D.Animating && !MapScreen3D.Viewing)
                 {
+                    // 受击红雾压在场景之上、准星之下：准星和 HUD 必须一直读得出来
+                    HitFx3D.DrawVignette();
                     Crosshair3D.Draw();
                     NameLabels3D.Draw();
                     Hand3D.Draw();
@@ -176,11 +227,13 @@ namespace RimFirstPerson3D
                 string a = s.cmdAction.Trim();
                 s.cmdAction = "";
                 if (a == "createUpper") DebugActions3D.M3CreateUpper();
+                else if (a == "modeFirstPerson") Fps3DState.Mode = ViewMode.FirstPerson;
                 else if (a == "levelUp") DebugActions3D.LevelUp();
                 else if (a == "levelDown") DebugActions3D.LevelDown();
                 else if (a == "streamEast") Streaming3D.StreamEast();
                 else if (a == "unloadStreamed") Streaming3D.UnloadStreamed();
                 else if (a == "mapScreen") MapScreen3D.Toggle();
+                else if (a == "interact") CameraRig3D.Interact();
                 else if (a == "camdiag")
                 {
                     if (s != null) s.diagCross = VanillaSuppressor.CameraDiagnose();
@@ -197,8 +250,38 @@ namespace RimFirstPerson3D
                         System.Globalization.CultureInfo.InvariantCulture, out float p);
                     HandTerminal3D.DebugHold = p;
                 }
+                else if (a.StartsWith("skyPreset"))
+                {
+                    string preset = a.Length > 9 ? a.Substring(9).Trim() : "";
+                    SkyScenery.DebugPreset = (preset == "off" || preset == "none") ? "" : preset;
+                    var curMap = Find.CurrentMap;
+                    if (curMap != null)
+                    {
+                        try
+                        {
+                            var plants = curMap.listerThings.ThingsInGroup(ThingRequestGroup.Plant);
+                            for (int i = 0; i < plants.Count; i++)
+                            {
+                                if (plants[i] is Plant pl && pl.def != null && pl.def.plant != null && pl.def.plant.IsTree && pl.Growth < 0.85f)
+                                    pl.Growth = 1.0f;
+                            }
+                        }
+                        catch { }
+                        var sc = SceneRegistry.GetOrCreate(curMap);
+                        if (sc != null)
+                        {
+                            sc.ForcePrimeLighting();
+                        }
+                    }
+                }
+                else if (a == "lightDump")
+                {
+                    // 光照导出（F013）：结果落进 settings.lightSnapshot，GABS 直接回读
+                    DebugActions3D.DumpLighting();
+                }
                 else Log.Warning(ModEntry.LogPrefix + "unknown cmdAction '" + a + "'");
             }
+            if (!Application.isFocused || !MouseLookDelta.IsGameWindowActive()) return;
             if (Input.GetKeyDown(KeyCode.F8))
             {
                 Fps3DState.Mode = Fps3DState.Mode switch
@@ -215,6 +298,17 @@ namespace RimFirstPerson3D
             {
                 Fps3DState.ShowPerfHud = !Fps3DState.ShowPerfHud;
             }
+            // F9：顶点色载体探针（F013 验证用）。开著时所有烘焙顶点色变成常数灰，
+            // 画面不跟着整片变暗就说明着色器不吃顶点色，光照得换载体。
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                var sp = FirstPerson3DMod.settings;
+                if (sp != null)
+                {
+                    sp.lightProbe = !sp.lightProbe;
+                    Log.Message(ModEntry.LogPrefix + "carrier probe -> " + sp.lightProbe);
+                }
+            }
             if (Input.GetKeyDown(KeyCode.F10))
             {
                 SceneRegistry.DisposeAll();
@@ -226,20 +320,47 @@ namespace RimFirstPerson3D
             {
                 // M：指挥面板。终端抬起，地图和原版操作界面都在屏幕上，主画面保持第一人称。
                 if (Input.GetKeyDown(KeyCode.M)) MapScreen3D.Toggle();
-                // B：第一人称背包面板（屏幕活动期不开）
-                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.B)) FpsHud3D.ToggleInventory();
-                // E：直接交互（门开关 / 拾取 / 装备 / 挖掘）；背包开着时先收背包
+                // B / Tab：第一人称背包面板（屏幕活动期不开）
+                if (!MapScreen3D.BlocksGameplay
+                    && (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.Tab)))
+                    FpsHud3D.ToggleInventory();
+                // E：直接交互（门开关 / 拾取 / 装备 / 挖掘 / 收割 / 使用 / 救援）；背包开着时先收背包
                 if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.E))
                 {
                     if (FpsHud3D.inventoryOpen) FpsHud3D.CloseInventory();
                     else CameraRig3D.Interact();
                 }
-                // 接管期原版 UI 被跳过（空格暂停的原版通道一并被接管），
-                // 这里补上同一功能，游戏节奏控制不丢失。
-                if (CameraRig3D.VanillaInputTakenOver
-                    && Input.GetKeyDown(KeyCode.Space)
-                    && Find.TickManager != null)
-                    Find.TickManager.TogglePaused();
+                // F：打开准星处的完整原版地图浮动菜单。
+                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.F))
+                    CameraRig3D.OpenAimedFloatMenu();
+                // G：拆解准星处建筑（危险动作单列，避免与 E 混用误拆）
+                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.G))
+                    CameraRig3D.DemolishAimed();
+                // 数字键 1..6：使用背包第 n 件物品（装备 / 穿戴 / 食用）
+                if (!MapScreen3D.BlocksGameplay && !FpsHud3D.inventoryOpen)
+                {
+                    for (int i = 1; i <= Backpack3D.HotbarSlots; i++)
+                    {
+                        if (Input.GetKeyDown(KeyCode.Alpha0 + i))
+                        {
+                            Backpack3D.UseSlot(i);
+                            break;
+                        }
+                    }
+                }
+                // 接管期原版 UI 被跳过，原版时间控制热键随之失效；这里用玩家自己的原版键位补回。
+                // 绝不占用空格：空格是第一人称跳跃（CameraRig3D.IntegrateVertical / F003 AC-3）。
+                if (CameraRig3D.VanillaInputTakenOver && Find.TickManager != null)
+                {
+                    if (KeyBindingDefOf.TogglePause.KeyDownEvent)
+                        Find.TickManager.TogglePaused();
+                    else if (KeyBindingDefOf.TimeSpeed_Normal.KeyDownEvent)
+                        Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
+                    else if (KeyBindingDefOf.TimeSpeed_Fast.KeyDownEvent)
+                        Find.TickManager.CurTimeSpeed = TimeSpeed.Fast;
+                    else if (KeyBindingDefOf.TimeSpeed_Superfast.KeyDownEvent)
+                        Find.TickManager.CurTimeSpeed = TimeSpeed.Superfast;
+                }
                 if (Input.GetKeyDown(KeyCode.PageUp))
                 {
                     if (LevelStack3D.SwitchLevel(1))

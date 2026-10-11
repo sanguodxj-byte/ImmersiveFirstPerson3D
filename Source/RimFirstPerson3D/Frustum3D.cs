@@ -13,9 +13,9 @@ namespace RimFirstPerson3D
         private static Vector3 camPos;
         private static bool valid;
 
-        // 供剔除的距离半径（世界单位）；比 FarClip 略收，避免贴边抖动。
-        // 取 0 表示只用视锥（含相机 FarClip 远平面）判定，不再额外按距离剔。
-        public static float MaxDist { get; set; }
+        // 供剔除的距离半径（世界单位）；默认按 SceneCullDist (140m) 剔除地面物件，
+        // 即使相机 FarClip 扩到 1200m 以容纳真实世界尺度天穹，地面性能预算依然不变。
+        public static float MaxDist { get; set; } = Fps3DState.SceneCullDist;
 
         // 每帧更新一次（在绘制前调用，幂等）。
         public static void Update()
@@ -46,12 +46,22 @@ namespace RimFirstPerson3D
         }
 
         // 逐件绘制用：给定世界坐标与半径，判断是否在视锥/距离内。
-        // 未初始化时放行（保守），避免误剔。
+        // 未初始化时放行（保守），避免误剔。使用球体-平面距离判断，速度极快且零堆分配。
         public static bool VisiblePoint(Vector3 worldPos, float radius)
         {
             if (!valid) return true;
-            var b = new Bounds(worldPos, new Vector3(radius * 2f, radius * 2f, radius * 2f));
-            return Visible(b);
+            if (MaxDist > 0f)
+            {
+                float dSqr = (camPos - worldPos).sqrMagnitude;
+                float maxD = MaxDist + radius;
+                if (dSqr > maxD * maxD) return false;
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                if (planes[i].GetDistanceToPoint(worldPos) < -radius)
+                    return false;
+            }
+            return true;
         }
     }
 }

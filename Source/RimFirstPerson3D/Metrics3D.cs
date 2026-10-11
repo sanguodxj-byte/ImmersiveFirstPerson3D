@@ -103,6 +103,23 @@ namespace RimFirstPerson3D
         // ---- 建筑 ----
 
         public const float CeilingHeight = 2.70f;        // 室内净层高
+        // 山体顶。高于室内天花 2.70，低于上一层地面 3.00（StoryHeight = CeilingHeight + 0.30）。
+        // 人站在岩壁下抬头仍看见岩，又不会穿进楼上的地板。
+        public const float RockHeight = 2.92f;
+
+        // 山体高程与坡度独立于室内层高；格距仍按一米计。
+        public const float MountainMaxHeight = 24f;
+        public const float MountainFootSlopeDegrees = 35f;
+        public const float MountainMainSlopeDegrees = 50f;
+        public const float MountainMaxSlopeDegrees = 55f;
+        public const float MountainFootDistance = 2f;
+        public const float MountainShoulderDistance = 8f;
+        public const float MountainNoiseScale = 8f;
+        public const float MountainNoiseAmplitude = 1f;
+        public const int MountainSmoothingPasses = 2;
+        public const float MountainCaveCeiling = CeilingHeight;
+        public const float MountainTextureMeters = 1f;
+
         public const float DoorHeight = 2.05f;
         public const float DoorWidth = 0.95f;
         /// <summary>门扇厚度（薄于墙，视觉上像门板嵌在墙洞里）。</summary>
@@ -125,6 +142,8 @@ namespace RimFirstPerson3D
         public const float JumpApex = 1.00f;
         /// <summary>重力加速度（米/秒²）。</summary>
         public const float Gravity = 20f;
+        /// <summary>身处水体时身体下沉/浮起的过渡速度（米/秒）。</summary>
+        public const float WaterSinkSpeed = 4f;
 
         // ---- 零散物件 ----
 
@@ -246,8 +265,10 @@ namespace RimFirstPerson3D
         public const float WaterDepthChest = 1.10f;
         /// <summary>深水：原版 WaterDeep / WaterOceanDeep，不可通行。</summary>
         public const float WaterDepthDeep = 1.60f;
-        /// <summary>水面高出地面基准的量（避免与岸边地面 z-fighting）。</summary>
+        /// <summary>水面高出地面基准的量（仅沼泽覆盖用，避免与岸边地面 z-fighting）。</summary>
         public const float WaterSurfaceLift = 0.02f;
+        /// <summary>水面比周围地面低的高度（米）：让水"凹"下去，露出岸壁落差（原版水面与地面齐平）。</summary>
+        public const float WaterSurfaceDrop = 0.30f;
 
         // ---- 动物 ----
 

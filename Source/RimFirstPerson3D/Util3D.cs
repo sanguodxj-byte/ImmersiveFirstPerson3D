@@ -6,6 +6,7 @@ using Verse;
 namespace RimFirstPerson3D
 {
     // 面向本模组的网格与材质工具。
+    [StaticConstructorOnStartup]
     public static class Util3D
     {
         public static bool VerboseLog = false;
@@ -36,8 +37,8 @@ namespace RimFirstPerson3D
             {
                 if (groundQuad != null) return groundQuad;
                 groundQuad = BuildQuad(
-                    new Vector3(-0.5f, 0f, 0.5f), new Vector3(0.5f, 0f, 0.5f),
-                    new Vector3(0.5f, 0f, -0.5f), new Vector3(-0.5f, 0f, -0.5f));
+                    new Vector3(-0.5f, 0f, -0.5f), new Vector3(0.5f, 0f, -0.5f),
+                    new Vector3(0.5f, 0f, 0.5f), new Vector3(-0.5f, 0f, 0.5f));
                 groundQuad.name = "Fps3D_GroundQuad";
                 return groundQuad;
             }
@@ -63,6 +64,13 @@ namespace RimFirstPerson3D
                 crossMesh.SetUVs(0, uvs);
                 crossMesh.SetTriangles(tris, 0);
                 crossMesh.RecalculateNormals();
+                var cols = new Color32[verts.Count];
+                for (int i = 0; i < verts.Count; i++)
+                {
+                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(135f, 255f, Mathf.Clamp01(verts[i].y)));
+                    cols[i] = new Color32(v, v, v, 255);
+                }
+                crossMesh.colors32 = cols;
                 crossMesh.RecalculateBounds();
                 crossMesh.name = "Fps3D_Cross";
                 return crossMesh;
@@ -129,10 +137,13 @@ namespace RimFirstPerson3D
             }
         }
 
-        // 用摇摆着色器派生植物材质：保留源材质的贴图与色调；源为空时返回白底摇摆材质。
+        // 派生植物材质：保留源材质的贴图与色调；源为空时返回白底 Cutout 材质。
+        // 原版 CutoutPlant (plantwindsway) 把顶点色用作风摆权重而不乘 RGB，会导致草丛/植物完全不受光，
+        // 故统一使用 ShaderDatabase.Cutout 以支持逐顶点受光与阴影。
         public static Material NewPlantMat(Material src)
         {
-            var sh = PlantSwayShader;
+            Shader sh = null;
+            try { sh = ShaderDatabase.Cutout; } catch { }
             Material m = sh != null ? new Material(sh) : (src != null ? new Material(src) : null);
             if (m == null) return null;
             if (src != null)
@@ -168,6 +179,13 @@ namespace RimFirstPerson3D
                 starMesh.SetUVs(0, uvs);
                 starMesh.SetTriangles(tris, 0);
                 starMesh.RecalculateNormals();
+                var cols = new Color32[verts.Count];
+                for (int i = 0; i < verts.Count; i++)
+                {
+                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(135f, 255f, Mathf.Clamp01(verts[i].y)));
+                    cols[i] = new Color32(v, v, v, 255);
+                }
+                starMesh.colors32 = cols;
                 starMesh.RecalculateBounds();
                 return starMesh;
             }
@@ -181,37 +199,159 @@ namespace RimFirstPerson3D
         private static readonly Dictionary<Mesh, Vector3[]> srcVerts = new Dictionary<Mesh, Vector3[]>();
         private static readonly Dictionary<Mesh, Vector2[]> srcUVs = new Dictionary<Mesh, Vector2[]>();
         private static readonly Dictionary<Mesh, int[]> srcTris = new Dictionary<Mesh, int[]>();
+        private static readonly Dictionary<Mesh, Color32[]> srcColors = new Dictionary<Mesh, Color32[]>();
 
-        public static Mesh BuildInstancedMesh(Mesh src, List<Matrix4x4> mats)
+        /// <summary>
+        /// field 非空时（F013）逐实例取该处放置亮度并乘进顶点色：实例矩阵的平移减去 worldOffset
+        /// 就是它在图内的局部位置，立牌朝向相机的旋转不参与取样。源网格自带的顶点色（模型原型的形体明暗）
+        /// 在这里一起乘上，并夹在 LightFloor 下限之上。描边壳传 field=null，轮廓保持暗色。
+        /// </summary>
+        public static Mesh BuildInstancedMesh(Mesh src, List<Matrix4x4> mats, LightField3D field = null, Vector3 worldOffset = default)
         {
+            return BuildInstancedMesh(src, mats, field, worldOffset, out _, out _, 0f);
+        }
+
+        public static Mesh BuildInstancedMesh(Mesh src, List<Matrix4x4> mats, LightField3D field, Vector3 worldOffset,
+            out Vector3[] instPositions, out Color32[] colorBuffer, float sampleOffsetY = 0f)
+        {
+            instPositions = null;
+            colorBuffer = null;
             if (src == null || mats == null || mats.Count == 0) return null;
             if (!srcVerts.TryGetValue(src, out var sv))
             {
                 sv = src.vertices; srcVerts[src] = sv;
                 srcUVs[src] = src.uv; srcTris[src] = src.triangles;
+                srcColors[src] = src.colors32;
             }
             var su = srcUVs[src];
             var st = srcTris[src];
+            var sc = srcColors[src];
+            // 源网格可能没有 UV 通道（如描边壳）：空数组/空引用按零 UV 烘焙，不炸索引。
+            bool hasUv = su != null && su.Length == sv.Length;
+            bool hasCol = sc != null && sc.Length == sv.Length;
             int vn = sv.Length, tn = st.Length, n = mats.Count;
             var verts = new Vector3[vn * n];
-            var uvs = new Vector2[vn * n];
+            var uvs = hasUv ? new Vector2[vn * n] : null;
+            var cols = new Color32[vn * n];
+            var posArr = new Vector3[n];
             var tris = new int[tn * n];
+            byte floorByte = (byte)Mathf.RoundToInt(Lighting3D.LightFloor * 255f);
+            var env = Lighting3D.Current;
+            bool sunActive = field != null && env.glow > 0.01f && env.sunDir.y > 0.01f;
             int vi = 0, ti = 0;
             for (int k = 0; k < n; k++)
             {
                 var m = mats[k];
                 int b = vi;
-                for (int i = 0; i < vn; i++) { verts[vi] = m.MultiplyPoint3x4(sv[i]); uvs[vi] = su[i]; vi++; }
+                var mp = m.GetColumn(3);
+                var localPos = new Vector3(mp.x - worldOffset.x, mp.y - worldOffset.y + sampleOffsetY, mp.z - worldOffset.z);
+                posArr[k] = localPos;
+                var lit = field != null ? Lighting3D.To32(field.Placement(localPos)) : new Color32(255, 255, 255, 255);
+                float sunLit = sunActive ? field.SunLitAt(localPos, Vector3.up) * env.glow : 0f;
+                if (hasUv)
+                {
+                    for (int i = 0; i < vn; i++) { verts[vi] = m.MultiplyPoint3x4(sv[i]); uvs[vi] = su[i]; vi++; }
+                }
+                else
+                {
+                    for (int i = 0; i < vn; i++) { verts[vi] = m.MultiplyPoint3x4(sv[i]); vi++; }
+                }
+                int v0 = vi - vn;
+                if (hasCol && (!Lighting3D.CarrierProbe || field == null))
+                {
+                    for (int i = 0; i < vn; i++)
+                    {
+                        var c0 = sc[i];
+                        float scale = c0.r / 255f;
+                        if (field != null && env.glow > 0.05f)
+                        {
+                            float h01 = Mathf.Clamp01((c0.r - 135f) / 120f);
+                            var sv0 = sv[i];
+                            float ndl = sv0.x * env.sunDir.x + sv0.z * env.sunDir.z;
+                            float boost = sunLit > 0.01f
+                                ? (1f + sunLit * (0.55f * h01 + 0.22f * Mathf.Clamp01(ndl + 0.3f)))
+                                : Mathf.Lerp(1f, 0.82f, env.glow);
+                            scale *= boost;
+                        }
+                        byte minB = field != null ? floorByte : (byte)0;
+                        byte r = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.r * scale), minB, 255);
+                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.g * scale), minB, 255);
+                        byte bl = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.b * scale), minB, 255);
+                        cols[v0 + i] = new Color32(r, g, bl, c0.a);
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < vn; i++) cols[v0 + i] = lit;
+                }
                 for (int i = 0; i < tn; i++) tris[ti++] = b + st[i];
             }
             var mesh = new Mesh { name = src.name + "_merged" };
             // >65535 顶点必须用 32 位索引，否则顶点被截断。
             if (verts.Length > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.vertices = verts;
-            mesh.uv = uvs;
+            if (uvs != null) mesh.uv = uvs;
+            mesh.colors32 = cols;
             mesh.triangles = tris;
             mesh.RecalculateBounds();
+            instPositions = posArr;
+            colorBuffer = cols;
             return mesh;
+        }
+
+        /// <summary>
+        /// 光照变化时原地重刷合并网格的顶点色（零 Mesh 重建、零顶点/三角数组分配）。
+        /// </summary>
+        public static void RecolorInstancedMesh(Mesh mesh, Mesh src, Vector3[] instPositions, Color32[] cols, LightField3D field)
+        {
+            if (mesh == null || src == null || instPositions == null || cols == null) return;
+            if (!srcVerts.TryGetValue(src, out var sv))
+            {
+                sv = src.vertices; srcVerts[src] = sv;
+                srcUVs[src] = src.uv; srcTris[src] = src.triangles;
+                srcColors[src] = src.colors32;
+            }
+            var sc = srcColors[src];
+            bool hasCol = sc != null && sc.Length == sv.Length;
+            int vn = sv.Length, n = instPositions.Length;
+            if (cols.Length != vn * n) return;
+            byte floorByte = field != null ? (byte)Mathf.RoundToInt(Lighting3D.LightFloor * 255f) : (byte)0;
+            var env = Lighting3D.Current;
+            bool sunActive = field != null && env.glow > 0.01f && env.sunDir.y > 0.01f;
+            for (int k = 0; k < n; k++)
+            {
+                var lp = instPositions[k];
+                var lit = field != null ? Lighting3D.To32(field.Placement(lp)) : new Color32(255, 255, 255, 255);
+                float sunLit = sunActive ? field.SunLitAt(lp, Vector3.up) * env.glow : 0f;
+                int v0 = k * vn;
+                if (hasCol && (!Lighting3D.CarrierProbe || field == null))
+                {
+                    for (int i = 0; i < vn; i++)
+                    {
+                        var c0 = sc[i];
+                        float scale = c0.r / 255f;
+                        if (field != null && env.glow > 0.05f)
+                        {
+                            float h01 = Mathf.Clamp01((c0.r - 135f) / 120f);
+                            var sv0 = sv[i];
+                            float ndl = sv0.x * env.sunDir.x + sv0.z * env.sunDir.z;
+                            float boost = sunLit > 0.01f
+                                ? (1f + sunLit * (0.55f * h01 + 0.22f * Mathf.Clamp01(ndl + 0.3f)))
+                                : Mathf.Lerp(1f, 0.82f, env.glow);
+                            scale *= boost;
+                        }
+                        byte r = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.r * scale), floorByte, 255);
+                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.g * scale), floorByte, 255);
+                        byte bl = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.b * scale), floorByte, 255);
+                        cols[v0 + i] = new Color32(r, g, bl, c0.a);
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < vn; i++) cols[v0 + i] = lit;
+                }
+            }
+            mesh.colors32 = cols;
         }
 
         private static readonly Dictionary<Texture, Material> cutoutMats = new Dictionary<Texture, Material>();
@@ -419,6 +559,7 @@ namespace RimFirstPerson3D
         public static int BuildingQuads;
         public static int PlantInstances;
         public static int PlantBatches;
+        public static int PlantMeshesDrawn;
         public static int ItemInstances;
         public static int ItemBatches;
         public static int PawnQuads;
@@ -426,9 +567,12 @@ namespace RimFirstPerson3D
         public static int WaterQuads;
         public static int GrassInstances;
         public static int AnimalMeshes;
+        public static int GlowDraws;
+        public static int HitFxDraws;
         public static float LastTerrainBuildMs;
         public static float LastBuildingBuildMs;
         public static float LastPlantBuildMs;
+        public static float LastLightSweepMs;
 
         public static void ResetFrame()
         {
@@ -438,6 +582,7 @@ namespace RimFirstPerson3D
             BuildingQuads = 0;
             PlantInstances = 0;
             PlantBatches = 0;
+            PlantMeshesDrawn = 0;
             ItemInstances = 0;
             ItemBatches = 0;
             PawnQuads = 0;
@@ -445,6 +590,8 @@ namespace RimFirstPerson3D
             WaterQuads = 0;
             GrassInstances = 0;
             AnimalMeshes = 0;
+            GlowDraws = 0;
+            HitFxDraws = 0;
         }
     }
 }

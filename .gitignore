@@ -1,4 +1,6 @@
 Source/**/obj/
+**/bin/
+**/obj/
 scripts/__pycache__/
 *.user
 
@@ -28,3 +30,24 @@ docs/furniture/audit/raw/
 docs/furniture/fit/
 # 部件清单缓存（furn_guard.py --refresh 重取）
 docs/furniture/guard/
+
+# F013 光照验收产物
+temp_light/
+temp_light_*.log
+
+# 运行/验收生成物：保留在本地作为归档，不进入仓库
+*.log
+temp_*/
+verify_*.png
+shots/
+viewer/shots/
+viewer/__pycache__/
+
+# 临时出图与检查脚本（正式工具脚本仍正常入库）
+scripts/*_live.py
+scripts/*_shots.py
+scripts/*_check.py
+scripts/patch_sky.py
+
+# 本地归档目录：日志、截图、临时脚本可移入此处保存
+archive/

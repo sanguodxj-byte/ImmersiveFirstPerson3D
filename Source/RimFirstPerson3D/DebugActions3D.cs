@@ -45,6 +45,140 @@ namespace RimFirstPerson3D
             Log.Message(ModEntry.LogPrefix + "perf " + PerfMon3D.SnapshotJson());
         }
 
+        // 光照导出（F013）：写进 settings.lightSnapshot 供 GABS 回读，同时打进日志。
+        // scripts/light_check.py 吃的就是这份 JSON（各层网格顶点色按法线分桶的统计）。
+        [DebugAction("FirstPerson3D", "dump lighting")]
+        public static void DumpLighting()
+        {
+            var s = FirstPerson3DMod.settings;
+            string j = Lighting3D.DumpJson();
+            if (s != null) s.lightSnapshot = j;
+            // 机检从日志里按 LIGHTDUMP 标记取这一行（scripts/light_check.py live）
+            Log.Message(ModEntry.LogPrefix + "LIGHTDUMP " + j);
+        }
+
+        [DebugAction("FirstPerson3D", "lighting: toggle")]
+        private static void ToggleLighting()
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            s.lightOn = !s.lightOn;
+            Log.Message(ModEntry.LogPrefix + "lighting -> " + (s.lightOn ? "on" : "off"));
+        }
+
+        // 受击反馈验收（F014）：toggle 做反证；hurt 不走伤害管线，直接把附身者的红闪与
+        // 暗角点亮 —— 实机对照不该要求先在场面上找个人打架。
+        [DebugAction("FirstPerson3D", "hitfx: toggle")]
+        private static void ToggleHitFx()
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            s.hitFx = !s.hitFx;
+            Log.Message(ModEntry.LogPrefix + "hitfx -> " + (s.hitFx ? "on" : "off"));
+        }
+
+        [DebugAction("FirstPerson3D", "hitfx: hurt")]
+        private static void HurtHitFx()
+        {
+            var me = CameraRig3D.Possessed;
+            HitFx3D.Force(me, 1f);
+            Log.Message(ModEntry.LogPrefix + "hitfx: hurt " + (me != null ? me.LabelShort : "no pawn"));
+        }
+
+        // 射击效果开关（F015）：真开火走原版射击作业，GABS 侧用 cmdClick 就能打一枪，
+        // 所以这里只留反证用的 toggle，不做「假开火」—— 那会绕开 Launch/Impact 两个真值。
+        [DebugAction("FirstPerson3D", "shotfx: toggle")]
+        private static void ToggleShotFx()
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            s.shotFx = !s.shotFx;
+            Log.Message(ModEntry.LogPrefix + "shotfx -> " + (s.shotFx ? "on" : "off"));
+        }
+
+        // 光照验收开关（F013）：GABS 侧只有 execute_debug_action 能写这些参数
+        //（get_mod_settings 是只读通道），所以每个判据要的对比组都在这里点名。
+        [DebugAction("FirstPerson3D", "lighting: lamp on")]
+        private static void LampOn() { SetLamp(1f); }
+
+        [DebugAction("FirstPerson3D", "lighting: lamp off")]
+        private static void LampOff() { SetLamp(0f); }
+
+        [DebugAction("FirstPerson3D", "lighting: shadows on")]
+        private static void ShadowsOn() { SetBool(s => s.lightShadows = true, "shadows on"); }
+
+        [DebugAction("FirstPerson3D", "lighting: shadows off")]
+        private static void ShadowsOff() { SetBool(s => s.lightShadows = false, "shadows off"); }
+
+        [DebugAction("FirstPerson3D", "lighting: floor zero")]
+        private static void FloorZero() { SetFloor(0f); }
+
+        [DebugAction("FirstPerson3D", "lighting: floor normal")]
+        private static void FloorNormal() { SetFloor(0.16f); }
+
+        [DebugAction("FirstPerson3D", "sky: noon")]
+        private static void SkyNoon() { SetSky("noon"); }
+
+        [DebugAction("FirstPerson3D", "sky noon")]
+        private static void SkyNoonPlain() { SetSky("noon"); }
+
+        [DebugAction("FirstPerson3D", "sky: dusk")]
+        private static void SkyDusk() { SetSky("dusk"); }
+
+        [DebugAction("FirstPerson3D", "sky dusk")]
+        private static void SkyDuskPlain() { SetSky("dusk"); }
+
+        [DebugAction("FirstPerson3D", "sky: night")]
+        private static void SkyNight() { SetSky("night"); }
+
+        [DebugAction("FirstPerson3D", "sky night")]
+        private static void SkyNightPlain() { SetSky("night"); }
+
+        [DebugAction("FirstPerson3D", "sky: preset off")]
+        private static void SkyOff() { SetSky(""); }
+
+        [DebugAction("FirstPerson3D", "sky live")]
+        private static void SkyLivePlain() { SetSky(""); }
+
+        [DebugAction("FirstPerson3D", "lamp on")]
+        private static void LampOnPlain() { SetLamp(1f); }
+
+        [DebugAction("FirstPerson3D", "lamp off")]
+        private static void LampOffPlain() { SetLamp(0f); }
+
+        [DebugAction("FirstPerson3D", "lighting toggle")]
+        private static void ToggleLightingPlain() { ToggleLighting(); }
+
+        private static void SetLamp(float v)
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            s.lightLamp = v;
+            Log.Message(ModEntry.LogPrefix + "lightLamp -> " + v);
+        }
+
+        private static void SetFloor(float v)
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            s.lightFloor = v;
+            Log.Message(ModEntry.LogPrefix + "lightFloor -> " + v);
+        }
+
+        private static void SetSky(string p)
+        {
+            SkyScenery.DebugPreset = p;
+            Log.Message(ModEntry.LogPrefix + "skyPreset -> '" + p + "'");
+        }
+
+        private static void SetBool(System.Action<FirstPerson3DSettings> f, string label)
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            f(s);
+            Log.Message(ModEntry.LogPrefix + "lighting " + label);
+        }
+
         [DebugAction("FirstPerson3D", "level up")]
         public static void LevelUp()
         {
@@ -175,6 +309,17 @@ namespace RimFirstPerson3D
         {
             SceneRegistry.DisposeAll();
             Log.Message(ModEntry.LogPrefix + "scenes disposed (will rebuild)");
+        }
+
+        private static readonly string[] SkyPresets = { "", "dawn", "noon", "dusk", "night", "aurora", "rain", "storm", "snow", "fog_sand" };
+
+        [DebugAction("FirstPerson3D", "env: cycle sky/weather preset")]
+        private static void CycleSkyPreset()
+        {
+            int cur = System.Array.IndexOf(SkyPresets, SkyScenery.DebugPreset ?? "");
+            int next = (cur + 1) % SkyPresets.Length;
+            SkyScenery.DebugPreset = SkyPresets[next];
+            Log.Message(ModEntry.LogPrefix + "skyPreset -> " + (string.IsNullOrEmpty(SkyScenery.DebugPreset) ? "live" : SkyScenery.DebugPreset));
         }
     }
 }

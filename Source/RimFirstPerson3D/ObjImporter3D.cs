@@ -57,8 +57,10 @@ namespace RimFirstPerson3D
                 }
                 else if (key == "o")
                 {
-                    // 左右握把是模型底部两块黑色手柄，指挥面板不画。
-                    skipObj = body == "grip_l" || body == "grip_r";
+                    // 握把是底部黑手柄。电池包贴在壳体背面、朝向相机，
+                    // 内侧面会盖住屏幕中部。screen 面留着：它在机身正面之前，
+                    // 正面壳板在它后面，地图实际画在这块面上。
+                    skipObj = body == "grip_l" || body == "grip_r" || body == "battery";
                     if (skipObj) cur = null;
                 }
                 else if (key == "f")

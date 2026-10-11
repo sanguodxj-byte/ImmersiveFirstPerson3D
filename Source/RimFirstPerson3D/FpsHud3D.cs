@@ -1,18 +1,21 @@
 // AI生成
 using System.Collections.Generic;
-using RimWorld;
 using UnityEngine;
 using Verse;
 
 namespace RimFirstPerson3D
 {
-    // 第一人称常驻 HUD：左下角角色状态（名字 + 实心血条）与背包面板（E 开关）。
-    // 全部实心填充；文字只用游戏数据本身（角色名/物品标签/数字），不自造文案。
+    // 第一人称常驻 HUD：左下角角色状态条 + 背包界面（B / Tab 开关）。
+    // 背包本身只是一个视图：物品的枚举与动作全部交给独立组件 Backpack3D，
+    // 本类不直接碰 pawn.inventory —— 这样"存什么、怎么用"只有一处实现。
+    // 整个背包仅在第一人称可用（Chase/Off 下不显示、也不响应开关）。
+    [StaticConstructorOnStartup]
     public static class FpsHud3D
     {
         public static bool inventoryOpen;
 
         private static Texture2D solid;
+        private static Vector2 scroll;
 
         // 背包开着时移动输入让位（环视保持）。
         public static bool BlockMovement => inventoryOpen;
@@ -20,25 +23,36 @@ namespace RimFirstPerson3D
         public static void ToggleInventory()
         {
             if (MapScreen3D.BlocksGameplay) return;
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return;
             inventoryOpen = !inventoryOpen && CameraRig3D.Possessed != null;
+            scroll = Vector2.zero;
         }
 
         public static void CloseInventory() { inventoryOpen = false; }
 
         public static void Draw()
         {
+            // 仅第一人称显示背包与状态；其它视角一律收起来。
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson)
+            {
+                inventoryOpen = false;
+                return;
+            }
             var pawn = CameraRig3D.Possessed;
             if (pawn == null) { inventoryOpen = false; return; }
-            if (solid == null)
-            {
-                solid = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-                solid.SetPixel(0, 0, Color.white);
-                solid.Apply();
-                solid.name = "Fps3D_HudSolid";
-            }
+            EnsureSolid();
 
             DrawStatus(pawn);
-            if (inventoryOpen) DrawInventory(pawn);
+            if (inventoryOpen) DrawInventory();
+        }
+
+        private static void EnsureSolid()
+        {
+            if (solid != null) return;
+            solid = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            solid.SetPixel(0, 0, Color.white);
+            solid.Apply();
+            solid.name = "Fps3D_HudSolid";
         }
 
         private static void DrawStatus(Pawn pawn)
@@ -72,68 +86,84 @@ namespace RimFirstPerson3D
             GUI.color = Color.white;
         }
 
-        private static void DrawInventory(Pawn pawn)
+        // 背包界面：装备栏（只读）+ 背包物品列表（每行一个主要动作按钮 + 丢弃）。
+        private static void DrawInventory()
         {
-            float w = 330f;
-            Thing primary = null;
-            var rows = new List<Thing>();
-            try
-            {
-                if (pawn.equipment != null) primary = pawn.equipment.Primary;
-                if (pawn.inventory != null && pawn.inventory.innerContainer != null)
-                    foreach (var th in pawn.inventory.innerContainer)
-                        if (th != null && th.def != null) rows.Add(th);
-            }
-            catch { }
+            var pawn = CameraRig3D.Possessed;
+            if (pawn == null) { inventoryOpen = false; return; }
 
-            float h = 32f + (primary != null ? 26f : 0f) + rows.Count * 28f + 10f;
+            var items = Backpack3D.Items();
+            Thing primary = Backpack3D.PrimaryWeapon;
+
+            float w = 372f;
+            float h = Mathf.Min(UI.screenHeight * 0.82f, 140f + items.Count * 30f);
             var r = new Rect(UI.screenWidth * 0.5f - w * 0.5f, (UI.screenHeight - h) * 0.5f, w, h);
-            Fill(r, new Color(0f, 0f, 0f, 0.72f));
+            Fill(r, new Color(0f, 0f, 0f, 0.78f));
 
             Text.Font = GameFont.Small;
             Text.Anchor = TextAnchor.MiddleLeft;
             GUI.color = new Color(0.95f, 0.97f, 1f);
-            float y = r.y + 8f;
-            // 标题只用游戏数据（角色名），不自造文案。
-            string head = pawn.Name != null ? pawn.Name.ToStringShort : pawn.def.label;
-            Widgets.Label(new Rect(r.x + 12f, y, w - 24f, 22f), head);
-            y += 24f;
 
-            // 装备中的主武器（只读）。
+            float y = r.y + 8f;
+            string head = pawn.Name != null ? pawn.Name.ToStringShort : pawn.def.label;
+            Widgets.Label(new Rect(r.x + 12f, y, w - 90f, 22f), head);
+            // 关闭按钮
+            if (Widgets.ButtonText(new Rect(r.x + w - 74f, y - 1f, 62f, 24f), T("Close", "关闭")))
+                inventoryOpen = false;
+            y += 28f;
+
+            // 装备中的主武器（只读，附带说明拿在手上）。
             if (primary != null)
             {
-                Fill(new Rect(r.x + 8f, y - 2f, w - 16f, 24f), new Color(1f, 1f, 1f, 0.08f));
-                Widgets.Label(new Rect(r.x + 16f, y, w - 32f, 22f), primary.def.label);
-                y += 26f;
-            }
-
-            // 背包内物品：点一行即取出，丢到附身者脚下。
-            foreach (var th in rows)
-            {
-                string label = th.def.label + (th.stackCount > 1 ? " x" + th.stackCount : "");
-                if (Widgets.ButtonText(new Rect(r.x + 10f, y - 2f, w - 20f, 24f), label))
-                    Drop(pawn, th);
+                Fill(new Rect(r.x + 8f, y - 2f, w - 16f, 24f), new Color(1f, 1f, 1f, 0.10f));
+                Widgets.Label(new Rect(r.x + 16f, y, w - 32f, 22f),
+                    primary.def.label + "  " + T("Equipped", "已装备"));
                 y += 28f;
             }
+
+            // 列表区域
+            var outRect = new Rect(r.x + 8f, y, w - 16f, r.yMax - 12f - y);
+            float rowH = 30f;
+            var viewRect = new Rect(0f, 0f, outRect.width - 18f, Mathf.Max(outRect.height, items.Count * rowH));
+            Widgets.BeginScrollView(outRect, ref scroll, viewRect);
+            float ry = 0f;
+            for (int i = 0; i < items.Count; i++)
+            {
+                var th = items[i];
+                int slot = i + 1;
+                var row = new Rect(0f, ry, viewRect.width, rowH - 4f);
+                Fill(row, new Color(1f, 1f, 1f, 0.06f));
+
+                // 前 N 件标出快捷栏号（数字键直接使用）。
+                if (slot <= Backpack3D.HotbarSlots)
+                    Widgets.Label(new Rect(row.x + 6f, row.y + 3f, 16f, 20f), slot.ToString());
+
+                string label = th.def.label + (th.stackCount > 1 ? " x" + th.stackCount : "");
+                Widgets.Label(new Rect(row.x + 26f, row.y + 3f, row.width - 150f, 20f), label);
+
+                string act = Backpack3D.PrimaryActionLabel(th);
+                if (!string.IsNullOrEmpty(act))
+                {
+                    if (Widgets.ButtonText(new Rect(row.x + row.width - 118f, row.y + 1f, 58f, 22f), act))
+                        Backpack3D.PrimaryAction(th);
+                }
+                if (Widgets.ButtonText(new Rect(row.x + row.width - 56f, row.y + 1f, 54f, 22f), T("DropThing", "丢弃")))
+                    Backpack3D.Drop(th);
+
+                ry += rowH;
+            }
+            if (items.Count == 0)
+                Widgets.Label(new Rect(0f, 0f, viewRect.width, 22f), T("InventoryEmpty", "背包是空的"));
+            Widgets.EndScrollView();
+
             Text.Anchor = TextAnchor.UpperLeft;
             GUI.color = Color.white;
         }
 
-        // 从背包把一件物品丢到附身者脚下（取出）。
-        private static void Drop(Pawn pawn, Thing th)
+        private static string T(string key, string fallback)
         {
-            try
-            {
-                if (th == null || th.Destroyed) return;
-                var map = pawn.MapHeld;
-                if (map == null || pawn.inventory == null || pawn.inventory.innerContainer == null) return;
-                if (!pawn.inventory.innerContainer.Contains(th)) return;
-                Thing dropped;
-                if (pawn.inventory.innerContainer.TryDrop(th, pawn.PositionHeld, map, ThingPlaceMode.Near, out dropped)
-                    && dropped != null)
-                    dropped.SetForbidden(false, false);
-            }
-            catch { }
+            string s = key.Translate();
+            return string.IsNullOrEmpty(s) || s == key ? fallback : s;
         }
 
         private static void Fill(Rect r, Color c)

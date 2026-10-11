@@ -76,6 +76,35 @@ namespace RimFirstPerson3D
         public float windStrength = 1.0f;   // 草/植物随风摇摆强度（0 关闭）
         public bool animalModels = true;    // 动物用程序化 3D 模型（关闭则退回立牌）
 
+        // ---- 光照（F013，规范见 docs/features/F013-lighting.md）----
+        // 关闭 lightOn 后顶点色不再写，画面应与光照落地前完全一致（AC-1 的反证）。
+        public bool lightOn = true;         // 光照总开关
+        public bool lightShadows = true;    // 体素向阳投影（射线）
+        public bool lightAo = true;         // 顶点接触阴影
+        public bool lightGlow = true;       // 灯具可见发光片
+        public float lightFloor = 0.16f;    // 无任何光时的可辨认下限
+        public float lightSun = 1.0f;       // 直射项增益
+        public float lightLamp = 1.0f;      // 灯具项增益（数值本身来自原版 glowGrid）
+        public float lightAoStrength = 0.45f; // 接触阴影深度
+        public float lightSoftFoot = -0.10f;  // 向阳项软化区间下沿（与上沿相等=硬分档）
+        public float lightSoftTop = 0.35f;    // 向阳项软化区间上沿
+        public float lightAmbTint = 0.55f;  // 环境光按天空色相染色的强度
+        public float lightSweepRows = 6f;   // 光照场每帧扫描的行数（分摊重建压力）
+        public float lightQuadStep = 2f;    // 受光几何的最大面片边长（米）
+        public string lightSnapshot = "";   // 光照导出 JSON，供 GABS 回读与机检
+        public bool lightFileDump = false;  // 每 2 s 把光照导出追加进 persistentDataPath/FirstPerson3D_light.log
+        public bool lightProbe = false;     // 载体探针：顶点色一律烘成常数灰，验着色器吃不吃顶点色
+
+        // ---- 受击反馈（F014，规范见 docs/features/F014-hit-feedback.md）----
+        // 关掉后既不给生物罩红闪、也不画玩家暗角，画面应与落地前完全一致（判据的反证）。
+        public bool hitFx = true;           // 总开关
+        public float hitFxScale = 1.0f;     // 浓度倍率（0.2..2），只缩放不改变曲线形状
+
+        // ---- 武器射击效果（F015，规范见 docs/features/F015-shot-effects.md）----
+        // 关掉后弹丸、拖焰、枪口火光、落点烟尘全不画（原版绘制本来就被压掉，等于子弹不可见）。
+        public bool shotFx = true;          // 总开关
+        public float shotFxScale = 1.0f;    // 浓度/长度倍率，只缩放不改曲线
+
         public override void ExposeData()
         {
             Scribe_Values.Look(ref mode, "mode", "Off");
@@ -119,6 +148,26 @@ namespace RimFirstPerson3D
             Scribe_Values.Look(ref grassRadius, "grassRadius", 28f);
             Scribe_Values.Look(ref windStrength, "windStrength", 1.0f);
             Scribe_Values.Look(ref animalModels, "animalModels", true);
+            Scribe_Values.Look(ref lightOn, "lightOn", true);
+            Scribe_Values.Look(ref lightShadows, "lightShadows", true);
+            Scribe_Values.Look(ref lightAo, "lightAo", true);
+            Scribe_Values.Look(ref lightGlow, "lightGlow", true);
+            Scribe_Values.Look(ref lightFloor, "lightFloor", 0.16f);
+            Scribe_Values.Look(ref lightSun, "lightSun", 1.0f);
+            Scribe_Values.Look(ref lightLamp, "lightLamp", 1.0f);
+            Scribe_Values.Look(ref lightAoStrength, "lightAoStrength", 0.45f);
+            Scribe_Values.Look(ref lightSoftFoot, "lightSoftFoot", -0.10f);
+            Scribe_Values.Look(ref lightSoftTop, "lightSoftTop", 0.35f);
+            Scribe_Values.Look(ref lightAmbTint, "lightAmbTint", 0.55f);
+            Scribe_Values.Look(ref lightSweepRows, "lightSweepRows", 6f);
+            Scribe_Values.Look(ref lightQuadStep, "lightQuadStep", 2f);
+            Scribe_Values.Look(ref lightFileDump, "lightFileDump", false);
+            Scribe_Values.Look(ref lightProbe, "lightProbe", false);
+            Scribe_Values.Look(ref hitFx, "hitFx", true);
+            Scribe_Values.Look(ref hitFxScale, "hitFxScale", 1.0f);
+            Scribe_Values.Look(ref shotFx, "shotFx", true);
+            Scribe_Values.Look(ref shotFxScale, "shotFxScale", 1.0f);
+            FirstPerson3DMod.settings = this;
             base.ExposeData();
         }
     }

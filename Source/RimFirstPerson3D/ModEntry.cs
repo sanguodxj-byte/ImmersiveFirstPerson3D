@@ -17,14 +17,17 @@ namespace RimFirstPerson3D
             var harmony = new Harmony(HarmonyId);
             VanillaSuppressor.Patch(harmony);
             CommandPanel3D.Patch(harmony);
+            PanelUi3D.Patch(harmony);
             GodView3D.Patch(harmony);
             ChangeNotify.Patch(harmony);
+            HitFx3D.Patch(harmony);
+            ShotFx3D.Patch(harmony);
 
             var go = new GameObject("FirstPerson3D_Root");
             Object.DontDestroyOnLoad(go);
             go.AddComponent<Fps3DRoot>();
 
-            Log.Message(LogPrefix + "initialized (r46)");
+            Log.Message(LogPrefix + "initialized (r58)");
         }
     }
 }

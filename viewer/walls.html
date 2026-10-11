@@ -1,0 +1,798 @@
+<!-- AI生成 · 墙体与围护建筑原版贴图取样与 3D 建模预览（与 WallModels3D.cs / BuildingLayer3D.cs 一一对应） -->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>墙体与围护 3D 建模预览</title>
+<style>
+  html,body{margin:0;height:100%;background:#20242c;font-family:Consolas,monospace;overflow:hidden}
+  #app{position:fixed;inset:0}
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.6;
+       background:rgba(0,0,0,.55);padding:9px 11px;border-radius:4px;z-index:9}
+  #hud b{color:#7fd1ff}
+  #sp{position:fixed;right:10px;top:42px;z-index:9;display:flex;gap:5px;flex-wrap:wrap;
+      justify-content:flex-end;max-width:68vw}
+  #vw{position:fixed;right:10px;top:8px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
+         padding:4px 8px;font-size:12px;cursor:pointer}
+  button:hover{background:#3d465c}
+  button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<div id="vw"></div>
+<div id="sp"></div>
+<script>
+addEventListener('error', function(e){
+  const h = document.getElementById('hud');
+  if (h) h.textContent = 'ERR ' + e.message + ' @' + String(e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const VER = 'wall1';
+const UV_TOP = 0, UV_SIDE = 1, UV_DETAIL = 2, UV_EXTRA = 3;
+
+const uvJson = await (await fetch('./wall_uv.json?' + VER)).json();
+const tex = await new Promise((resolve) => {
+  new THREE.TextureLoader().load('./wall_atlas.png?' + VER, t => resolve(t), undefined, () => resolve(null));
+});
+if (tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.flipY = false;
+}
+const matHull = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+const matCache = new Map();
+
+function getTintedMat(rgb) {
+  const k = rgb.join(',');
+  if (matCache.has(k)) return matCache.get(k);
+  const c = new THREE.Color(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
+  const m = new THREE.MeshLambertMaterial({ map: tex, color: c, side: THREE.FrontSide });
+  matCache.set(k, m);
+  return m;
+}
+
+// ---------------------------------------------------------------- 26 种代表性墙体、掩体、围栏与穿墙/壁挂件定义
+export const WALL_ITEMS = [
+  // 建造砖墙（原版石材染色）
+  { key: 'wall_sandstone',   arch: 'WallBricks',    prefix: 'bricks',       tint: [126, 104,  94], cn: '砂岩砖墙' },
+  { key: 'wall_granite',     arch: 'WallBricks',    prefix: 'bricks',       tint: [105,  95,  97], cn: '花岗岩砖墙' },
+  { key: 'wall_limestone',   arch: 'WallBricks',    prefix: 'bricks',       tint: [158, 153, 135], cn: '石灰岩砖墙' },
+  { key: 'wall_slate',       arch: 'WallBricks',    prefix: 'bricks',       tint: [ 70,  70,  70], cn: '板岩砖墙' },
+  { key: 'wall_marble',      arch: 'WallBricks',    prefix: 'bricks',       tint: [132, 135, 132], cn: '大理石砖墙' },
+  // 建造木板墙与金属/宝石光滑墙
+  { key: 'wall_wood',        arch: 'WallPlanks',    prefix: 'planks',       tint: [133,  97,  67], cn: '原木板墙' },
+  { key: 'wall_steel',       arch: 'WallSmooth',    prefix: 'smooth',       tint: [105, 105, 105], cn: '钢铁墙' },
+  { key: 'wall_plasteel',    arch: 'WallSmooth',    prefix: 'smooth',       tint: [160, 178, 181], cn: '玻璃钢墙' },
+  { key: 'wall_gold',        arch: 'WallSmooth',    prefix: 'smooth',       tint: [255, 235, 122], cn: '黄金墙' },
+  // 平滑岩石墙
+  { key: 'smoothed_sandstone', arch: 'RockSmooth',  prefix: 'rocksmooth',   tint: [126, 104,  94], cn: '平滑砂岩墙' },
+  { key: 'smoothed_granite',   arch: 'RockSmooth',  prefix: 'rocksmooth',   tint: [105,  95,  97], cn: '平滑花岗岩墙' },
+  { key: 'smoothed_marble',    arch: 'RockSmooth',  prefix: 'rocksmooth',   tint: [132, 135, 132], cn: '平滑大理石墙' },
+  // 特殊与 DLC 满格墙
+  { key: 'fortified_wall',   arch: 'FortifiedWall', prefix: 'fortified',    tint: [127, 135, 127], cn: '远古加固墙' },
+  { key: 'gravship_hull',    arch: 'GravshipHull',  prefix: 'gravshiphull', tint: [225, 230, 235], cn: '飞船船体墙' },
+  { key: 'burrow_wall',      arch: 'BurrowWall',    prefix: 'burrow',       tint: [255, 255, 255], cn: '虫穴岩土墙' },
+  { key: 'smoothed_ice',     arch: 'SmoothedIce',   prefix: 'smoothedice',  tint: [220, 243, 243], cn: '平滑冰墙' },
+  { key: 'solid_ice',        arch: 'SolidIce',      prefix: 'solidice',     tint: [220, 243, 243], cn: '天然冰墙' },
+  { key: 'gray_wall',        arch: 'GrayWall',      prefix: 'graywall',     tint: [255, 255, 255], cn: '迷宫灰墙' },
+  { key: 'voidmetal_wall',   arch: 'VoidmetalWall', prefix: 'voidmetal',    tint: [255, 255, 255], cn: '虚空金属墙' },
+  { key: 'fleshmass_wall',   arch: 'FleshmassWall', prefix: 'fleshmass',    tint: [255, 255, 255], cn: '扭曲血肉墙' },
+  // 矮墙掩体与围栏
+  { key: 'sandbags',         arch: 'Sandbags',      prefix: 'sandbags',     tint: [139, 122,  87], cn: '沙袋掩体' },
+  { key: 'barricade_wood',   arch: 'Barricade',     prefix: 'barricade',    tint: [133,  97,  67], cn: '原木路障' },
+  { key: 'barricade_steel',  arch: 'Barricade',     prefix: 'barricade',    tint: [125, 130, 135], cn: '钢铁路障' },
+  { key: 'fence_wood',       arch: 'FenceSmooth',   prefix: 'fence_smooth', tint: [133,  97,  67], cn: '木栅栏' },
+  { key: 'fence_steel',      arch: 'FenceMetal',    prefix: 'fence_metal',  tint: [135, 140, 145], cn: '金属栅栏' },
+  { key: 'ancient_fence',    arch: 'AncientFence',  prefix: 'ancientfence', tint: [255, 255, 255], cn: '远古混凝土栏' },
+  // 穿墙与壁挂设备
+  { key: 'vent',             arch: 'Vent',          prefix: 'vent',         tint: [255, 255, 255], cn: '穿墙通风口' },
+  { key: 'cooler',           arch: 'Cooler',        prefix: 'cooler',       tint: [255, 255, 255], cn: '穿墙制冷机' },
+  { key: 'wall_lamp',        arch: 'WallLamp',      prefix: 'walllamp',     tint: [255, 255, 255], cn: '壁灯' },
+  { key: 'wall_torch',       arch: 'WallTorch',     prefix: 'walltorch',    tint: [255, 255, 255], cn: '壁炬' },
+];
+
+const ITEM_MAP = Object.fromEntries(WALL_ITEMS.map(x => [x.key, x]));
+
+const MISSING = new Set();
+function getUvRect(prefix, slot) {
+  const k = `${prefix}.${slot}`;
+  let a = uvJson.uv[k];
+  if (!a && slot === 'detail') a = uvJson.uv[`${prefix}.cold`] || uvJson.uv[`${prefix}.top`];
+  if (!a && slot === 'extra')  a = uvJson.uv[`${prefix}.hot`]  || uvJson.uv[`${prefix}.detail`] || uvJson.uv[`${prefix}.top`];
+  if (!a) {
+    MISSING.add(k);
+    return [0.42, 0.42, 0.58, 0.58];
+  }
+  return [a[0], 1 - a[3], a[2], 1 - a[1]];
+}
+
+// ---------------------------------------------------------------- 欧拉旋转（同 Unity Z->X->Y）
+function rotVec(v, pitch, yaw, roll) {
+  const rx = pitch * Math.PI / 180;
+  const ry = yaw   * Math.PI / 180;
+  const rz = roll  * Math.PI / 180;
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  const x1 = v[0] * cz - v[1] * sz;
+  const y1 = v[0] * sz + v[1] * cz;
+  const z1 = v[2];
+  const x2 = x1;
+  const y2 = y1 * cx - z1 * sx;
+  const z2 = y1 * sx + z1 * cx;
+  return [x2 * cy + z2 * sy, y2, -x2 * sy + z2 * cy];
+}
+const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+
+class Model3D {
+  constructor() { this.parts = []; }
+  add(kind, pos, size, opts = {}) {
+    this.parts.push({
+      kind,
+      pos: [pos[0], pos[1], pos[2]],
+      size: [size[0], size[1], size[2]],
+      yaw: opts.yaw || 0,
+      pitch: opts.pitch || 0,
+      roll: opts.roll || 0,
+      taper: opts.taper || 0,
+      noOutline: !!opts.noOutline,
+      uv: opts.uv !== undefined ? opts.uv : UV_TOP,
+    });
+  }
+}
+
+function addExposedFaceRelief(m, arch, d, wallH, cellHash = 0) {
+  const yaw = d === 0 ? 180 : (d === 1 ? 0 : (d === 2 ? 90 : -90));
+  const facePos = (uOff, y, outD) => rotVec([uOff, y, 0.5 + outD], 0, yaw, 0);
+
+  switch (arch) {
+    case 'WallBricks':
+      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.20, 0.028], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+    case 'WallPlanks':
+      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.18, 0.028], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(-0.43, 0.18, 0.010), [0.10, wallH - 0.34, 0.024], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos( 0.43, 0.18, 0.010), [0.10, wallH - 0.34, 0.024], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+    case 'WallSmooth':
+      m.add('box', facePos(0, wallH - 0.14, 0.012), [0.98, 0.14, 0.028], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, 0.00, 0.010), [0.98, 0.14, 0.024], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+    case 'RockSmooth':
+      m.add('box', facePos(0, wallH - 0.18, 0.018), [0.98, 0.18, 0.040], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.42, 0.012), [0.96, 0.20, 0.028], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.22, 0.032], { yaw, noOutline: true, uv: UV_DETAIL });
+      break;
+    case 'FortifiedWall':
+      m.add('box', facePos(0, wallH - 0.28, 0.024), [0.98, 0.28, 0.052], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, 0.00, 0.028), [0.84, 1.08, 0.060], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('wedge', facePos(0, 1.07, 0.028), [0.84, 0.26, 0.060], { yaw: yaw + 180, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(-0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos( 0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+    case 'GravshipHull':
+      m.add('box', facePos(-0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos( 0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos( 0.00, wallH - 0.24, 0.010), [0.12, 0.22, 0.024], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos( 0.00, 1.28, 0.010), [0.96, 0.16, 0.024], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(-0.25, 1.46, 0.018), [0.42, 0.88, 0.040], { yaw, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos( 0.25, 1.46, 0.018), [0.42, 0.88, 0.040], { yaw, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos(-0.25, 0.14, 0.020), [0.42, 1.12, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos( 0.25, 0.14, 0.020), [0.42, 1.12, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
+      break;
+    case 'BurrowWall': {
+      const s = ((cellHash + d) & 1) === 0 ? 1 : -1;
+      m.add('box', facePos(-0.06 * s, 0.22, 0.020), [0.84, 0.34, 0.044], { yaw, roll: 3 * s, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos( 0.05 * s, 1.06, 0.022), [0.86, 0.32, 0.048], { yaw, roll: -4 * s, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos(-0.04 * s, 1.88, 0.018), [0.82, 0.30, 0.040], { yaw, roll: 2 * s, noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+    case 'SmoothedIce':
+      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.40, 0.011), [0.96, 0.18, 0.026], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.18, 0.028], { yaw, noOutline: true, uv: UV_DETAIL });
+      break;
+    case 'SolidIce':
+      m.add('box', facePos(0, wallH - 0.34, 0.022), [0.94, 0.34, 0.050], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(-0.18, 0.30, 0.020), [0.52, 1.45, 0.044], { yaw, roll: 4, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos( 0.20, 0.65, 0.018), [0.46, 1.35, 0.040], { yaw, roll: -5, noOutline: true, uv: UV_SIDE });
+      break;
+    case 'GrayWall':
+      m.add('box', facePos(0, wallH - 0.20, 0.016), [0.98, 0.20, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.32, 0.020), [0.98, 0.12, 0.044], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.20, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+    case 'VoidmetalWall':
+      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('cone', facePos(-0.28, 0.04, 0.035), [0.22, 0.78, 0.12], { yaw, pitch: 12, roll: -8, taper: 0.06, noOutline: true, uv: UV_DETAIL });
+      m.add('cone', facePos( 0.02, 0.02, 0.040), [0.26, 0.96, 0.14], { yaw, pitch: 14, roll: 4, taper: 0.05, noOutline: true, uv: UV_DETAIL });
+      m.add('cone', facePos( 0.30, 0.06, 0.032), [0.20, 0.68, 0.11], { yaw, pitch: 10, roll: 10, taper: 0.06, noOutline: true, uv: UV_DETAIL });
+      break;
+    case 'FleshmassWall':
+      m.add('sph', facePos(-0.22, 1.52, 0.025), [0.44, 0.42, 0.16], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('sph', facePos( 0.20, 1.10, 0.028), [0.48, 0.46, 0.18], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('sph', facePos(-0.14, 0.48, 0.022), [0.40, 0.38, 0.15], { yaw, noOutline: true, uv: UV_SIDE });
+      m.add('sph', facePos( 0.24, 1.88, 0.020), [0.32, 0.30, 0.13], { yaw, noOutline: true, uv: UV_TOP });
+      break;
+  }
+}
+
+function addInWallDeviceRelief(m, arch, wallH, exp = [true, true, true, true]) {
+  const frontDir = 1, backDir = 0; // 预览中默认南面(+Z)为正面，北面(-Z)为背面
+  for (let d = 0; d < 4; d++) {
+    if (!exp[d]) continue;
+    const yaw = d === 0 ? 180 : (d === 1 ? 0 : (d === 2 ? 90 : -90));
+    const FP = (u, y, outD) => rotVec([u, y, 0.5 + outD], 0, yaw, 0);
+    if (arch === 'Vent') {
+      if (d === frontDir || d === backDir) {
+        m.add('box', FP(0, 0.36, 0.016), [0.78, 1.44, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+        for (let i = 0; i < 5; i++) {
+          m.add('box', FP(0, 0.48 + i * 0.24, 0.032), [0.68, 0.13, 0.042], { yaw, pitch: 14, noOutline: true, uv: UV_DETAIL });
+        }
+      }
+    } else if (arch === 'Cooler') {
+      m.add('box', FP(0, wallH - 0.18, 0.014), [0.96, 0.18, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      if (d === frontDir || d === backDir) {
+        m.add('box', FP(0, 0.28, 0.020), [0.80, 1.36, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
+        m.add('box', FP(0, 1.72, 0.024), [0.82, 0.42, 0.052], { yaw, noOutline: true, uv: UV_TOP });
+        const indUv = d === frontDir ? UV_DETAIL : UV_EXTRA;
+        m.add('box', FP(0, 1.80, 0.042), [0.34, 0.26, 0.036], { yaw, noOutline: true, uv: indUv });
+      }
+    }
+  }
+}
+
+export function buildWallModel(arch, linkMask = 0) {
+  const m = new Model3D();
+  const n = !!(linkMask & 1), s = !!(linkMask & 2), w = !!(linkMask & 4), e = !!(linkMask & 8);
+
+  const fullWalls = new Set([
+    'WallBricks', 'WallPlanks', 'WallSmooth', 'RockSmooth', 'FortifiedWall',
+    'GravshipHull', 'BurrowWall', 'SmoothedIce', 'SolidIce', 'GrayWall',
+    'VoidmetalWall', 'FleshmassWall', 'Vent', 'Cooler'
+  ]);
+  if (fullWalls.has(arch)) {
+    const h = arch === 'SolidIce' ? 2.92 : 2.70;
+    m.add('box', [0, 0, 0], [1.00, h, 1.00], { uv: UV_TOP });
+    const exp = [!n, !s, !w, !e];
+    if (arch === 'Vent' || arch === 'Cooler') {
+      addInWallDeviceRelief(m, arch, h, exp);
+    } else {
+      for (let d = 0; d < 4; d++) {
+        if (exp[d]) addExposedFaceRelief(m, arch, d, h, 0);
+      }
+    }
+    return m;
+  }
+
+  switch (arch) {
+    case 'Sandbags': {
+      let ln = n, ls = s, lw = w, le = e;
+      if (!ln && !ls && !lw && !le) { lw = true; le = true; }
+      m.add('box', [0, 0.00, 0], [0.48, 0.20, 0.46], { uv: UV_SIDE });
+      m.add('box', [0, 0.18, 0], [0.46, 0.20, 0.48], { yaw: 8, uv: UV_DETAIL });
+      m.add('box', [0, 0.36, 0], [0.44, 0.19, 0.44], { yaw: -6, uv: UV_TOP });
+      const addArm = dirYaw => {
+        m.add('box', rotVec([0, 0.00, 0.31], 0, dirYaw, 0), [0.46, 0.20, 0.38], { yaw: dirYaw, uv: UV_SIDE });
+        m.add('box', rotVec([0, 0.18, 0.28], 0, dirYaw, 0), [0.44, 0.20, 0.38], { yaw: dirYaw + 4, uv: UV_DETAIL });
+        m.add('box', rotVec([0, 0.36, 0.30], 0, dirYaw, 0), [0.42, 0.19, 0.38], { yaw: dirYaw - 3, uv: UV_TOP });
+      };
+      if (ls) addArm(0);
+      if (ln) addArm(180);
+      if (le) addArm(90);
+      if (lw) addArm(-90);
+      break;
+    }
+    case 'Barricade': {
+      let ln = n, ls = s, lw = w, le = e;
+      if (!ln && !ls && !lw && !le) { lw = true; le = true; }
+      m.add('box', [0, 0.00, 0], [0.44, 0.60, 0.44], { uv: UV_TOP });
+      m.add('box', [0, 0.18, 0], [0.46, 0.22, 0.46], { noOutline: true, uv: UV_DETAIL });
+      const addBeam = dirYaw => {
+        m.add('box', rotVec([0, 0.00, 0.32], 0, dirYaw, 0), [0.38, 0.36, 0.36], { yaw: dirYaw, uv: UV_SIDE });
+        m.add('box', rotVec([0, 0.34, 0.32], 0, dirYaw, 0), [0.40, 0.24, 0.36], { yaw: dirYaw, uv: UV_TOP });
+      };
+      if (ls) addBeam(0);
+      if (ln) addBeam(180);
+      if (le) addBeam(90);
+      if (lw) addBeam(-90);
+      break;
+    }
+    case 'FenceSmooth':
+    case 'FenceMetal': {
+      if (!n && !s && !w && !e) {
+        m.add('box', [-0.30, 0.00, 0], [0.16, 0.96, 0.16], { uv: UV_SIDE });
+        m.add('box', [-0.30, 0.94, 0], [0.19, 0.06, 0.19], { noOutline: true, uv: UV_DETAIL });
+        m.add('box', [ 0.30, 0.00, 0], [0.16, 0.96, 0.16], { uv: UV_SIDE });
+        m.add('box', [ 0.30, 0.94, 0], [0.19, 0.06, 0.19], { noOutline: true, uv: UV_DETAIL });
+        m.add('box', [ 0.00, 0.64, 0], [0.88, 0.16, 0.10], { uv: UV_TOP });
+        m.add('box', [ 0.00, 0.26, 0], [0.88, 0.16, 0.10], { uv: UV_SIDE });
+        m.add('box', [ 0.00, 0.00, 0], [0.64, 0.04, 0.08], { noOutline: true, uv: UV_SIDE });
+        break;
+      }
+      m.add('box', [0, 0.00, 0], [0.18, 0.96, 0.18], { uv: UV_SIDE });
+      m.add('box', [0, 0.94, 0], [0.21, 0.06, 0.21], { noOutline: true, uv: UV_DETAIL });
+      const addRail = dirYaw => {
+        m.add('box', rotVec([0, 0.64, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_TOP });
+        m.add('box', rotVec([0, 0.26, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_SIDE });
+      };
+      if (s) addRail(0);
+      if (n) addRail(180);
+      if (e) addRail(90);
+      if (w) addRail(-90);
+      break;
+    }
+    case 'AncientFence': {
+      if (!n && !s && !w && !e) {
+        m.add('box', [-0.32, 0.00, 0], [0.22, 0.98, 0.22], { uv: UV_DETAIL });
+        m.add('box', [-0.32, 0.95, 0], [0.25, 0.06, 0.25], { noOutline: true, uv: UV_TOP });
+        m.add('box', [ 0.32, 0.00, 0], [0.22, 0.98, 0.22], { uv: UV_DETAIL });
+        m.add('box', [ 0.32, 0.95, 0], [0.25, 0.06, 0.25], { noOutline: true, uv: UV_TOP });
+        m.add('box', [ 0.00, 0.00, 0], [0.66, 0.64, 0.14], { uv: UV_SIDE });
+        m.add('box', [ 0.00, 0.62, 0], [0.68, 0.08, 0.17], { noOutline: true, uv: UV_TOP });
+        break;
+      }
+      m.add('box', [0, 0.00, 0], [0.24, 0.98, 0.24], { uv: UV_DETAIL });
+      m.add('box', [0, 0.95, 0], [0.27, 0.06, 0.27], { noOutline: true, uv: UV_TOP });
+      const addPanel = dirYaw => {
+        m.add('box', rotVec([0, 0.00, 0.28], 0, dirYaw, 0), [0.14, 0.64, 0.44], { yaw: dirYaw, uv: UV_SIDE });
+        m.add('box', rotVec([0, 0.62, 0.28], 0, dirYaw, 0), [0.17, 0.08, 0.44], { yaw: dirYaw, uv: UV_TOP });
+      };
+      if (s) addPanel(0);
+      if (n) addPanel(180);
+      if (e) addPanel(90);
+      if (w) addPanel(-90);
+      break;
+    }
+    case 'WallLamp': {
+      // 局部地面基准 (y=0)，面向 +Z
+      m.add('box', [0, 0.00, 0.00], [0.46, 0.16, 0.10], { uv: UV_TOP });
+      m.add('box', [0, 0.02, 0.06], [0.40, 0.12, 0.10], { uv: UV_SIDE });
+      m.add('box', [0, 0.03, 0.09], [0.36, 0.09, 0.06], { noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+    case 'WallTorch': {
+      m.add('box', [0, 0.00, -0.02], [0.16, 0.18, 0.10], { uv: UV_SIDE });
+      m.add('box', [0, 0.05,  0.06], [0.14, 0.08, 0.16], { noOutline: true, uv: UV_SIDE });
+      m.add('cyl', [0, 0.02,  0.08], [0.11, 0.34, 0.11], { pitch: 24, taper: 1.25, uv: UV_SIDE });
+      m.add('sph', [0, 0.30,  0.20], [0.20, 0.22, 0.20], { noOutline: true, uv: UV_TOP });
+      m.add('cone',[0, 0.42,  0.20], [0.16, 0.18, 0.16], { taper: 0.15, noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+  }
+  return m;
+}
+
+function compileMesh(prefix, m, outlineW) {
+  const pos = [], norms = [], uvs = [], idx = [];
+  const hPos = [], hIdx = [];
+  const partBoxes = [];
+
+  const rTop  = getUvRect(prefix, 'top');
+  const rSide = getUvRect(prefix, 'side');
+  const rDet  = getUvRect(prefix, 'detail');
+  const rExt  = getUvRect(prefix, 'extra');
+
+  for (const p of m.parts) {
+    let topRect = rTop, sideRect = rSide;
+    if (p.uv === UV_SIDE) { topRect = rSide; sideRect = rSide; }
+    else if (p.uv === UV_DETAIL) { topRect = rDet; sideRect = rDet; }
+    else if (p.uv === UV_EXTRA)  { topRect = rExt; sideRect = rExt; }
+
+    const mapRect = (rect, u, v) => [
+      rect[0] + (rect[2] - rect[0]) * Math.min(1, Math.max(0, u)),
+      rect[1] + (rect[3] - rect[1]) * Math.min(1, Math.max(0, v)),
+    ];
+    const xform = lp => add3(p.pos, rotVec(lp, p.pitch, p.yaw, p.roll));
+
+    const pVerts = [], pUvs = [], pTris = [];
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+    const vtx = (lp, uv, rect = topRect) => {
+      const wp = xform(lp);
+      if (wp[0] < x0) x0 = wp[0]; if (wp[0] > x1) x1 = wp[0];
+      if (wp[1] < y0) y0 = wp[1]; if (wp[1] > y1) y1 = wp[1];
+      if (wp[2] < z0) z0 = wp[2]; if (wp[2] > z1) z1 = wp[2];
+      pVerts.push(wp);
+      pUvs.push(mapRect(rect, uv[0], uv[1]));
+      return pVerts.length - 1;
+    };
+    const tri = (a, b, c) => { pTris.push(a, b, c); };
+    // 注意：Three.js 中 flipY=false 时 v=0 在贴图顶部，v=1 在贴图底部；
+    // 因此立面底部 y=0 对应 v=1，顶部 y=hy 对应 v=0，与 Unity 的 v=0(底)..v=1(顶) 精确对齐。
+    const quad = (a, b, c, d, ua, ub, uc, ud, rect = topRect) => {
+      const i0 = vtx(a, ua, rect), i1 = vtx(b, ub, rect), i2 = vtx(c, uc, rect), i3 = vtx(d, ud, rect);
+      pTris.push(i0, i1, i2, i0, i2, i3);
+    };
+
+    const [sx, sy, sz] = p.size;
+    if (p.kind === 'box') {
+      const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
+      quad([-hx, 0, -hz], [-hx, hy, -hz], [ hx, hy, -hz], [ hx, 0, -hz], [0,1],[0,0],[1,0],[1,1], sideRect);
+      quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,1],[0,0],[1,0],[1,1], sideRect);
+      quad([-hx, 0,  hz], [-hx, hy,  hz], [-hx, hy, -hz], [-hx, 0, -hz], [0,1],[0,0],[1,0],[1,1], sideRect);
+      quad([ hx, 0, -hz], [ hx, hy, -hz], [ hx, hy,  hz], [ hx, 0,  hz], [0,1],[0,0],[1,0],[1,1], sideRect);
+      quad([-hx, hy, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, hy, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
+      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideRect);
+    } else if (p.kind === 'wedge') {
+      const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
+      quad([-hx, 0, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, 0, -hz], [0,1],[0,0],[1,0],[1,1], topRect);
+      quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,1],[0,0],[1,0],[1,1], sideRect);
+      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideRect);
+      tri(vtx([-hx, 0, -hz], [0,1], sideRect), vtx([-hx, 0, hz], [1,1], sideRect), vtx([-hx, hy, hz], [0.5,0], sideRect));
+      tri(vtx([ hx, 0,  hz], [0,1], sideRect), vtx([ hx, 0, -hz], [1,1], sideRect), vtx([ hx, hy, hz], [0.5,0], sideRect));
+    } else if (p.kind === 'cyl' || p.kind === 'cone') {
+      const seg = 12, cone = p.kind === 'cone';
+      const r = sx * 0.5, rz = (sz > 0.001 ? sz : sx) * 0.5, h = sy;
+      const ratio = p.taper > 0.001 ? p.taper : (cone ? 0.02 : 1.0);
+      const topR = r * ratio, topRz = rz * ratio;
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+        quad([c0 * r, 0, s0 * rz], [c0 * topR, h, s0 * topRz], [c1 * topR, h, s1 * topRz], [c1 * r, 0, s1 * rz],
+          [i / seg, 1], [i / seg, 0], [(i + 1) / seg, 0], [(i + 1) / seg, 1], sideRect);
+      }
+      if (!cone && ratio > 0.08) {
+        const tc = vtx([0, h, 0], [0.5, 0.5], topRect);
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+          const v0 = vtx([Math.cos(a0) * topR, h, Math.sin(a0) * topRz], [0.5 + Math.cos(a0) * 0.45, 0.5 + Math.sin(a0) * 0.45], topRect);
+          const v1 = vtx([Math.cos(a1) * topR, h, Math.sin(a1) * topRz], [0.5 + Math.cos(a1) * 0.45, 0.5 + Math.sin(a1) * 0.45], topRect);
+          tri(tc, v1, v0);
+        }
+      }
+      const bc = vtx([0, 0, 0], [0.5, 0.5], sideRect);
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const v0 = vtx([Math.cos(a0) * r, 0, Math.sin(a0) * rz], [0.5, 0.5], sideRect);
+        const v1 = vtx([Math.cos(a1) * r, 0, Math.sin(a1) * rz], [0.5, 0.5], sideRect);
+        tri(bc, v0, v1);
+      }
+    } else {
+      const lon = 14, lat = 10;
+      const rx = sx * 0.5, ry = sy * 0.5, rz = sz * 0.5;
+      for (let iy = 0; iy < lat; iy++) {
+        const v0 = (iy / lat) * Math.PI, v1 = ((iy + 1) / lat) * Math.PI;
+        const y0s = ry - Math.cos(v0) * ry, y1s = ry - Math.cos(v1) * ry;
+        const r0 = Math.sin(v0), r1 = Math.sin(v1);
+        for (let ix = 0; ix < lon; ix++) {
+          const u0 = (ix / lon) * Math.PI * 2, u1 = ((ix + 1) / lon) * Math.PI * 2;
+          const p00 = [Math.cos(u0) * r0 * rx, y0s, Math.sin(u0) * r0 * rz];
+          const p10 = [Math.cos(u1) * r0 * rx, y0s, Math.sin(u1) * r0 * rz];
+          const p11 = [Math.cos(u1) * r1 * rx, y1s, Math.sin(u1) * r1 * rz];
+          const p01 = [Math.cos(u0) * r1 * rx, y1s, Math.sin(u0) * r1 * rz];
+          const suv = pt => [
+            0.5 + 0.45 * (rx > 0.001 ? pt[0] / rx : 0),
+            0.5 - 0.45 * (ry > 0.001 ? (pt[1] - ry) / ry : 0),
+          ];
+          quad(p00, p01, p11, p10, suv(p00), suv(p01), suv(p11), suv(p10), topRect);
+        }
+      }
+    }
+
+    partBoxes.push({ k: p.kind, uv: p.uv, x0, x1, y0, y1, z0, z1 });
+
+    const avg = pVerts.map(() => [0, 0, 0]);
+    const keyOf = v => `${Math.round(v[0]*1000)},${Math.round(v[1]*1000)},${Math.round(v[2]*1000)}`;
+    const groups = new Map();
+    for (let i = 0; i < pVerts.length; i++) {
+      const k = keyOf(pVerts[i]);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    for (let i = 0; i < pTris.length; i += 3) {
+      const ia = pTris[i], ib = pTris[i + 1], ic = pTris[i + 2];
+      const pa = pVerts[ia], pb = pVerts[ib], pc = pVerts[ic];
+      const ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2];
+      const vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      avg[ia][0] += nx; avg[ia][1] += ny; avg[ia][2] += nz;
+      avg[ib][0] += nx; avg[ib][1] += ny; avg[ib][2] += nz;
+      avg[ic][0] += nx; avg[ic][1] += ny; avg[ic][2] += nz;
+    }
+
+    const baseV = pos.length / 3;
+    for (let i = 0; i < pVerts.length; i++) {
+      pos.push(pVerts[i][0], pVerts[i][1], pVerts[i][2]);
+      uvs.push(pUvs[i][0], pUvs[i][1]);
+      if (p.kind === 'box' || p.kind === 'wedge') {
+        const len = Math.hypot(avg[i][0], avg[i][1], avg[i][2]) || 1;
+        norms.push(avg[i][0] / len, avg[i][1] / len, avg[i][2] / len);
+      } else {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        norms.push(sxn / len, syn / len, szn / len);
+      }
+    }
+    for (let i = 0; i < pTris.length; i++) idx.push(baseV + pTris[i]);
+
+    if (!p.noOutline && outlineW > 0) {
+      const hBase = hPos.length / 3;
+      for (let i = 0; i < pVerts.length; i++) {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        hPos.push(
+          pVerts[i][0] + (sxn / len) * outlineW,
+          pVerts[i][1] + (syn / len) * outlineW,
+          pVerts[i][2] + (szn / len) * outlineW
+        );
+      }
+      for (let i = 0; i < pTris.length; i += 3) {
+        hIdx.push(hBase + pTris[i], hBase + pTris[i + 2], hBase + pTris[i + 1]);
+      }
+    }
+  }
+
+  const bodyGeo = new THREE.BufferGeometry();
+  bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  bodyGeo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+  bodyGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  bodyGeo.setIndex(idx);
+
+  const hullGeo = new THREE.BufferGeometry();
+  hullGeo.setAttribute('position', new THREE.Float32BufferAttribute(hPos, 3));
+  hullGeo.setIndex(hIdx);
+
+  return { bodyGeo, hullGeo, partBoxes };
+}
+
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
+renderer.setClearColor(0x20242c, 1);
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x20242c);
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.02, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.65));
+const L1 = new THREE.DirectionalLight(0xffffff, 1.55); L1.position.set(3.5, 6.5, 4.5); scene.add(L1);
+const L2 = new THREE.DirectionalLight(0xffffff, 0.55); L2.position.set(-4, 3.5, -3.5); scene.add(L2);
+
+const grid = new THREE.GridHelper(16, 16, 0x4a5568, 0x2e3446);
+grid.position.y = -0.002;
+scene.add(grid);
+
+const q = new URLSearchParams(location.search);
+const STILL   = q.get('still') === '1';
+const GALLERY = q.get('gallery') === '1';
+const PARTS   = q.get('parts') === '1';
+const SHEET   = q.get('sheet');
+
+const AUDIT_GROUPS = [
+  [
+    'wall_sandstone', 'wall_granite', 'wall_limestone', 'wall_slate', 'wall_marble',
+    'wall_wood', 'wall_steel', 'wall_plasteel', 'wall_gold',
+    'smoothed_sandstone', 'smoothed_granite', 'smoothed_marble',
+    'fortified_wall', 'gravship_hull', 'burrow_wall',
+  ],
+  [
+    'smoothed_ice', 'solid_ice', 'gray_wall', 'voidmetal_wall', 'fleshmass_wall',
+    'sandbags', 'barricade_wood', 'barricade_steel',
+    'fence_wood', 'fence_steel', 'ancient_fence',
+    'vent', 'cooler', 'wall_lamp', 'wall_torch',
+  ],
+];
+
+function hideChrome() {
+  if (!STILL && !GALLERY && !PARTS && SHEET === null) return;
+  for (const id of ['hud', 'sp', 'vw']) {
+    const e = document.getElementById(id);
+    if (e) e.style.display = 'none';
+  }
+}
+
+let root = null, curKey = q.get('item') || 'fortified_wall', curV = q.get('view') || '45°';
+
+const VIEWS = {
+  '45°':     { off: [ 0.78, 0.58,  0.82] },
+  '侧视·东': { off: [-1.05, 0.26,  0.00] },
+  '主视·南': { off: [ 0.00, 0.28,  1.08] },
+  '俯视':    { off: [ 0.02, 1.25,  0.18] },
+};
+
+function buildOneGroup(key, linkMask = 0) {
+  const item = ITEM_MAP[key] || WALL_ITEMS[0];
+  const m = buildWallModel(item.arch, linkMask);
+  const ow = (item.arch === 'WallLamp' || item.arch === 'WallTorch') ? 0.014 : 0.024;
+  const { bodyGeo, hullGeo, partBoxes } = compileMesh(item.prefix, m, ow);
+  const grp = new THREE.Group();
+  const bodyMesh = new THREE.Mesh(bodyGeo, getTintedMat(item.tint));
+  const hullMesh = new THREE.Mesh(hullGeo, matHull);
+  bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
+  grp.add(hullMesh);
+  grp.add(bodyMesh);
+  return { grp, item, partBoxes, bodyGeo };
+}
+
+function focus() {
+  if (!root) return;
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.y * 0.92, size.z, 0.40);
+  const r = span * 1.55;
+  const o = (VIEWS[curV] || VIEWS['45°']).off;
+  camera.position.set(center.x + o[0] * r, center.y + o[1] * r, center.z + o[2] * r);
+  controls.target.copy(center);
+  controls.update();
+}
+
+function show(key) {
+  hideChrome();
+  if (root) {
+    scene.remove(root);
+    root.traverse(o => { o.geometry?.dispose?.(); });
+  }
+  MISSING.clear();
+  const { grp, item, partBoxes } = buildOneGroup(key);
+  root = grp;
+  scene.add(root);
+  focus();
+  const hud = document.getElementById('hud');
+  if (hud) {
+    hud.innerHTML =
+      `<b>${item.cn} (${key})</b> · 原型 <b>${item.arch}</b> · 视图 <b>${curV}</b> · 部件数 <b>${partBoxes.length}</b>` +
+      (MISSING.size ? `<br><b style="color:#ff8f8f">缺取样区 ${[...MISSING].join(' ')}</b>` : '');
+  }
+}
+
+const vbar = document.getElementById('vw'), sbar = document.getElementById('sp');
+Object.keys(VIEWS).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = k; b.dataset.v = k;
+  b.onclick = () => {
+    curV = k;
+    [...vbar.children].forEach(x => x.classList.toggle('on', x.dataset.v === k));
+    focus();
+  };
+  vbar.appendChild(b);
+});
+WALL_ITEMS.forEach(it => {
+  const b = document.createElement('button');
+  b.textContent = it.key; b.dataset.s = it.key;
+  b.onclick = () => {
+    curKey = it.key;
+    [...sbar.children].forEach(x => x.classList.toggle('on', x.dataset.s === it.key));
+    show(it.key);
+  };
+  sbar.appendChild(b);
+});
+
+if (PARTS) {
+  hideChrome();
+  const out = {};
+  for (const it of WALL_ITEMS) {
+    const masks = ['Sandbags', 'Barricade', 'FenceSmooth', 'FenceMetal', 'AncientFence'].includes(it.arch)
+      ? [0, 3, 12, 15]
+      : [0];
+    for (const mk of masks) {
+      MISSING.clear();
+      const { partBoxes } = buildOneGroup(it.key, mk);
+      out[`${it.key}#${mk}`] = { arch: it.arch, parts: partBoxes, missing: [...MISSING] };
+    }
+  }
+  const pre = document.createElement('pre');
+  pre.id = 'partjson';
+  pre.textContent = JSON.stringify(out);
+  document.body.appendChild(pre);
+} else if (GALLERY) {
+  hideChrome();
+  grid.visible = false;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  scene.background = new THREE.Color(0x28303e);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(80, 80),
+    new THREE.MeshLambertMaterial({ color: 0x4b5668 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.003;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const keyLight = new THREE.DirectionalLight(0xfff3e0, 0.90);
+  keyLight.position.set(6, 11, 8);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  const sc = keyLight.shadow.camera;
+  sc.left = -16; sc.right = 16; sc.top = 16; sc.bottom = -16; sc.far = 45;
+  scene.add(keyLight);
+
+  const SETS = [
+    ['wall_sandstone', 'wall_granite', 'wall_limestone', 'wall_slate', 'wall_marble', 'wall_wood', 'wall_steel', 'wall_plasteel', 'wall_gold', 'smoothed_sandstone', 'smoothed_granite', 'smoothed_marble'],
+    ['fortified_wall', 'gravship_hull', 'burrow_wall', 'smoothed_ice', 'solid_ice', 'gray_wall', 'voidmetal_wall', 'fleshmass_wall', 'vent', 'cooler'],
+    ['sandbags', 'barricade_wood', 'barricade_steel', 'fence_wood', 'fence_steel', 'ancient_fence', 'wall_lamp', 'wall_torch'],
+  ];
+  const GW = 1420, GH = 440;
+  renderer.setSize(GW, GH);
+  camera.aspect = GW / GH;
+  camera.updateProjectionMatrix();
+  const rowIdx = +(q.get('row') || 0);
+  const row = SETS[rowIdx] || SETS[0];
+  let x = 0;
+  for (const key of row) {
+    const { grp, bodyGeo } = buildOneGroup(key, 0);
+    bodyGeo.computeBoundingBox();
+    const bb = bodyGeo.boundingBox;
+    const w = Math.max(0.65, bb.max.x - bb.min.x);
+    grp.position.set(x + w * 0.5, 0, 0);
+    scene.add(grp);
+    x += w + 0.42;
+  }
+  const midX = (x - 0.42) * 0.5;
+  const dist = Math.max(4.5, x * 0.64);
+  camera.position.set(midX, 1.62, dist);
+  controls.target.set(midX, rowIdx === 2 ? 0.45 : 1.15, 0);
+  controls.update();
+  renderer.render(scene, camera);
+} else if (SHEET !== null) {
+  hideChrome();
+  grid.visible = false;
+  const list = AUDIT_GROUPS[+SHEET] || AUDIT_GROUPS[0];
+  const viewKeys = ['侧视·东', '主视·南', '45°'];
+  const CW = 220, CH = 160;
+  const totalW = CW * viewKeys.length, totalH = CH * list.length;
+  renderer.setSize(totalW, totalH);
+  renderer.setScissorTest(true);
+  camera.aspect = CW / CH;
+  camera.updateProjectionMatrix();
+
+  for (let r = 0; r < list.length; r++) {
+    const key = list[r];
+    const { grp } = buildOneGroup(key, 0);
+    scene.add(grp);
+    const box = new THREE.Box3().setFromObject(grp);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y * 0.90, size.z, 0.38);
+    const dist = span * 1.48;
+    const wy = (list.length - 1 - r) * CH;
+    for (let c = 0; c < viewKeys.length; c++) {
+      const o = VIEWS[viewKeys[c]].off;
+      camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+      L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+      L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+      camera.lookAt(center);
+      const wx = c * CW;
+      renderer.setViewport(wx, wy, CW, CH);
+      renderer.setScissor(wx, wy, CW, CH);
+      renderer.render(scene, camera);
+    }
+    scene.remove(grp);
+    grp.traverse(o => { o.geometry?.dispose?.(); });
+  }
+} else {
+  show(curKey);
+  const loop = () => {
+    requestAnimationFrame(loop);
+    controls.update();
+    renderer.render(scene, camera);
+  };
+  loop();
+}
+</script>
+</body>
+</html>

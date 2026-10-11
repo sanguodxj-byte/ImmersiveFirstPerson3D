@@ -27,38 +27,67 @@ namespace RimFirstPerson3D
     // 摇摆：材质改用原版 materials/map/plantwindsway 着色器（GPU 顶点动画，由地图
     // WindManager 每帧驱动），因此植被随风摆动，且与合并网格兼容、零 CPU 开销
     // ——不再需要逐帧改矩阵，也不受"烘焙后朝向固定"限制。
+    [StaticConstructorOnStartup]
     public class PlantLayer3D
     {
         private readonly Map map;
         public Vector3 worldOffset = Vector3.zero;
+
+        // 光照场（F013）：实例批按每株所在位置取放置亮度，写进合并网格的顶点色。
+        public LightField3D light;
+        private LightField3D LF => light != null && Lighting3D.Enabled ? light : null;
+
+        public const int ChunkSize = 32;
+        private readonly int chunksX, chunksZ;
         private readonly float baseY;
 
-        private class Entry
-        {
-            public Plant plant;
-            public Material mat;      // 分档色调后的材质
-            public Vector3 pos;
-            public Vector2 lastVisualSize;
-            public float height;      // 世界高度（米），按类别固定
-            public bool tree;
-        }
-
-        private readonly List<Entry> entries = new List<Entry>();
-
-        // 一个材质对应一个合并网格（所有同材质的实例烘焙进一份网格）。
         private class Batch
         {
             public Material mat;
+            public Mesh srcMesh;
             public Mesh mesh;
+            public Vector3[] positions;
+            public Color32[] colors;
         }
 
-        private readonly List<Batch> batches = new List<Batch>();
-        private Mesh shadowMesh;
+        private class ModelBatch
+        {
+            public Mesh srcBody;
+            public Mesh body;
+            public Mesh hull;
+            public Vector3[] positions;
+            public Color32[] colors;
+            public int tint;
+            public int count;
+        }
 
-        private bool dirty = true;
-        private bool batchesDirty = true;
+        private class PlantChunk
+        {
+            public readonly List<Batch> batches = new List<Batch>();
+            public readonly List<ModelBatch> modelBatches = new List<ModelBatch>();
+            public Mesh shadowMesh;
+            public Bounds bounds;
+            public int plantCount;
+            public bool dirty = true;
+            public bool colorDirty;
+        }
+
+        private readonly Dictionary<int, PlantChunk> chunks = new Dictionary<int, PlantChunk>();
+        private readonly List<int> sortedDirtyKeys = new List<int>();
+        private readonly List<int> colorDirtyKeys = new List<int>();
+        private bool allDirty = true;
         private float builtScale = -1f;
-        private float growthPollTimer;
+
+        /// <summary>把本层实例批网格的颜色统计并进探针（只在按需导出时走）。</summary>
+        public void Summarize(Lighting3D.Probe p)
+        {
+            foreach (var kv in chunks)
+            {
+                var ch = kv.Value;
+                for (int i = 0; i < ch.batches.Count; i++) p.Add(ch.batches[i].mesh);
+                for (int i = 0; i < ch.modelBatches.Count; i++) p.Add(ch.modelBatches[i].body);
+            }
+        }
 
         private static Material shadowMat;
         private static readonly Dictionary<Material, Material[]> tintCache = new Dictionary<Material, Material[]>();
@@ -67,13 +96,44 @@ namespace RimFirstPerson3D
         {
             this.map = map;
             this.baseY = baseY;
+            chunksX = (map.Size.x + ChunkSize - 1) / ChunkSize;
+            chunksZ = (map.Size.z + ChunkSize - 1) / ChunkSize;
         }
 
-        public void MarkAllDirty() => dirty = true;
+        public void MarkAllDirty() => allDirty = true;
+
+        public void MarkAllColorDirty()
+        {
+            foreach (var kv in chunks)
+                if (!kv.Value.dirty && kv.Value.plantCount > 0)
+                    kv.Value.colorDirty = true;
+        }
+
+        public void MarkCellDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch)) ch.dirty = true;
+        }
+
+        public void MarkCellColorDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch) && !ch.dirty && ch.plantCount > 0)
+                ch.colorDirty = true;
+        }
 
         public void NotifyThingChanged(Thing t)
         {
-            if (t != null && t.def != null && t.def.category == ThingCategory.Plant) dirty = true;
+            if (t == null || t.def == null || t.def.category != ThingCategory.Plant) return;
+            var pos = t.Position;
+            if (!pos.InBounds(map)) return;
+            int key = (pos.x / ChunkSize) * 10000 + (pos.z / ChunkSize);
+            if (!chunks.TryGetValue(key, out var ch))
+            {
+                ch = new PlantChunk();
+                chunks[key] = ch;
+            }
+            ch.dirty = true;
         }
 
         // ---- 共享材质 ----
@@ -86,8 +146,8 @@ namespace RimFirstPerson3D
                 shadowMat = new Material(ShaderDatabase.Transparent)
                 {
                     name = "Fps3D_PlantShadow",
-                    mainTexture = ProcTex3D.Radial(32, 0.15f, 1.6f),
-                    color = new Color(0f, 0f, 0f, 0.32f)
+                    mainTexture = ProcTex3D.Radial(64, 0.25f, 1.25f),
+                    color = new Color(0f, 0f, 0f, 0.56f)
                 };
                 return shadowMat;
             }
@@ -142,58 +202,6 @@ namespace RimFirstPerson3D
             catch { }
         }
 
-        // ---- 更新 ----
-
-        public void Update()
-        {
-            if (dirty)
-            {
-                RebuildEntries();
-                dirty = false;
-                growthPollTimer = 0f;
-            }
-            else
-            {
-                growthPollTimer += Time.deltaTime;
-                if (growthPollTimer > 2.5f)
-                {
-                    growthPollTimer = 0f;
-                    if (PollGrowthChanged()) batchesDirty = true;
-                }
-            }
-        }
-
-        private void RebuildEntries()
-        {
-            entries.Clear();
-            foreach (var t in map.listerThings.AllThings)
-            {
-                if (t == null || !t.Spawned) continue;
-                if (t.def.category != ThingCategory.Plant) continue;
-                var plant = t as Plant;
-                if (plant == null) continue;
-                try
-                {
-                    var src = MatFor(plant);
-                    if (src == null || src.mainTexture == null) continue;
-                    var dp = plant.DrawPos;
-                    int tintIdx = (plant.thingIDNumber * 7919) % 3;
-                    if (tintIdx < 0) tintIdx += 3;
-                    entries.Add(new Entry
-                    {
-                        plant = plant,
-                        mat = TintOf(src, tintIdx),
-                        pos = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z),
-                        lastVisualSize = SizeOf(plant),
-                        height = WorldHeightOf(plant),
-                        tree = plant.def.plant != null && plant.def.plant.IsTree
-                    });
-                }
-                catch { }
-            }
-            batchesDirty = true;
-        }
-
         public static Vector2 SizeOf(Plant plant)
         {
             try
@@ -235,78 +243,264 @@ namespace RimFirstPerson3D
             return m;
         }
 
-        private bool PollGrowthChanged()
+        private void DisposeChunk(PlantChunk chunk)
         {
-            bool changed = false;
-            for (int i = 0; i < entries.Count; i++)
+            if (chunk == null) return;
+            for (int i = 0; i < chunk.batches.Count; i++) Util3D.SafeDestroy(chunk.batches[i].mesh);
+            chunk.batches.Clear();
+            for (int i = 0; i < chunk.modelBatches.Count; i++)
             {
-                var e = entries[i];
-                var plant = e.plant;
-                if (plant == null || plant.Destroyed || !plant.Spawned) { dirty = true; return false; }
-                var size = SizeOf(plant);
-                if ((size - e.lastVisualSize).sqrMagnitude > 0.0036f)
+                Util3D.SafeDestroy(chunk.modelBatches[i].body);
+                Util3D.SafeDestroy(chunk.modelBatches[i].hull);
+            }
+            chunk.modelBatches.Clear();
+            Util3D.SafeDestroy(chunk.shadowMesh);
+            chunk.shadowMesh = null;
+            chunk.plantCount = 0;
+        }
+
+        private void EnsureChunkRecords()
+        {
+            for (int cx = 0; cx < chunksX; cx++)
+            {
+                for (int cz = 0; cz < chunksZ; cz++)
                 {
-                    e.lastVisualSize = size;
-                    changed = true;
+                    int key = cx * 10000 + cz;
+                    if (!chunks.TryGetValue(key, out var ch))
+                    {
+                        ch = new PlantChunk();
+                        chunks[key] = ch;
+                    }
+                    ch.dirty = true;
                 }
             }
-            return changed;
         }
 
-        // ---- 合并网格重建（脏时一次性完成）----
-
-        private void DestroyBatches()
+        private void RebuildChunk(int cx, int cz, PlantChunk chunk)
         {
-            for (int i = 0; i < batches.Count; i++) Util3D.SafeDestroy(batches[i].mesh);
-            batches.Clear();
-            Util3D.SafeDestroy(shadowMesh);
-            shadowMesh = null;
-        }
+            DisposeChunk(chunk);
+            chunk.dirty = false;
+            chunk.colorDirty = false;
+            int x0 = cx * ChunkSize;
+            int z0 = cz * ChunkSize;
+            int x1 = Mathf.Min(x0 + ChunkSize, map.Size.x);
+            int z1 = Mathf.Min(z0 + ChunkSize, map.Size.z);
+            if (x0 >= x1 || z0 >= z1) return;
 
-        private void RebuildBatches()
-        {
-            DestroyBatches();
-            batchesDirty = false;
-            var st = FirstPerson3DMod.settings;
-            float hScale = st != null ? st.plantScale : 1f;
-            builtScale = hScale;
-
-            // 树与小株按"材质 + 造型"分别烘焙：树用三片星形（体积感），小株用十字交叉。
             var starByMat = new Dictionary<Material, List<Matrix4x4>>();
             var crossByMat = new Dictionary<Material, List<Matrix4x4>>();
             var shadowList = new List<Matrix4x4>();
-            for (int i = 0; i < entries.Count; i++)
+            var byArchTint = PlantModels3D.TintMat(0) != null
+                ? new Dictionary<string, List<Matrix4x4>>()
+                : null;
+
+            var st = FirstPerson3DMod.settings;
+            float hScale = st != null ? st.plantScale : 1f;
+            int count = 0;
+
+            for (int z = z0; z < z1; z++)
             {
-                var e = entries[i];
-                var size = e.lastVisualSize;
-                if (size.x <= 0.01f) continue;
-                if (e.tree)
-                    shadowList.Add(Matrix4x4.TRS(e.pos + new Vector3(0f, 0.015f, 0f), Quaternion.identity,
-                        new Vector3(size.x * 0.9f, 1f, size.x * 0.9f)));
-                // 宽 = 原版冠幅 drawSize.x；高 = 类别约定的世界高度（米）× plantScale。
-                float worldH = e.height > 0.01f ? e.height : 1f;
-                var target = e.tree ? starByMat : crossByMat;
-                var m = Matrix4x4.TRS(e.pos, Quaternion.identity,
-                    new Vector3(size.x, Mathf.Max(0.05f, worldH * hScale), size.x));
-                if (!target.TryGetValue(e.mat, out var list))
+                for (int x = x0; x < x1; x++)
                 {
-                    list = new List<Matrix4x4>(256);
-                    target[e.mat] = list;
+                    var c = new IntVec3(x, 0, z);
+                    var plant = c.GetPlant(map);
+                    if (plant == null || !plant.Spawned) continue;
+                    count++;
+
+                    try
+                    {
+                        var arch = PlantModels3D.ArchOf(plant);
+                        var proto = arch != null ? PlantModels3D.Prototype(arch) : null;
+                        if (proto != null && proto.body != null && byArchTint != null)
+                        {
+                            int h = plant.thingIDNumber;
+                            int tint = ((h * 7919) % 3 + 3) % 3;
+                            float yaw = ((h * 7919) % 360 + 360) % 360;
+                            float scale = PlantModels3D.GrowthScale(plant.Growth) * Mathf.Max(0.05f, hScale);
+                            var dp = plant.DrawPos;
+                            var m = Matrix4x4.TRS(
+                                new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z),
+                                Quaternion.AngleAxis(yaw, Vector3.up),
+                                new Vector3(scale, scale, scale));
+                            string key = arch + "#" + tint;
+                            if (!byArchTint.TryGetValue(key, out var list))
+                            {
+                                list = new List<Matrix4x4>(16);
+                                byArchTint[key] = list;
+                            }
+                            list.Add(m);
+
+                            var size = SizeOf(plant);
+                            bool isTreeModel = plant.def.plant != null && plant.def.plant.IsTree;
+                            float shRadius = isTreeModel ? Mathf.Max(1.85f, size.x * 1.45f) : Mathf.Max(0.80f, size.x * 0.90f);
+                            shadowList.Add(Matrix4x4.TRS(
+                                new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
+                                Quaternion.identity,
+                                new Vector3(shRadius, 1f, shRadius)));
+                            continue;
+                        }
+
+                        var src = MatFor(plant);
+                        if (src == null || src.mainTexture == null) continue;
+                        var plantDp = plant.DrawPos;
+                        int tintIdx = (plant.thingIDNumber * 7919) % 3;
+                        if (tintIdx < 0) tintIdx += 3;
+                        var mat = TintOf(src, tintIdx);
+                        if (mat == null) continue;
+
+                        var visualSize = SizeOf(plant);
+                        if (visualSize.x <= 0.01f) continue;
+                        bool isTree = plant.def.plant != null && plant.def.plant.IsTree;
+                        float height = WorldHeightOf(plant);
+                        float worldH = height > 0.01f ? height : 1f;
+
+                        var pos = new Vector3(plantDp.x + worldOffset.x, baseY, plantDp.z + worldOffset.z);
+                        float shR = isTree ? Mathf.Max(1.85f, visualSize.x * 1.45f) : Mathf.Max(0.72f, visualSize.x * 0.85f);
+                        shadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
+                            new Vector3(shR, 1f, shR)));
+
+                        var target = isTree ? starByMat : crossByMat;
+                        var pMatrix = Matrix4x4.TRS(pos, Quaternion.identity,
+                            new Vector3(visualSize.x, Mathf.Max(0.05f, worldH * hScale), visualSize.x));
+                        if (!target.TryGetValue(mat, out var pList))
+                        {
+                            pList = new List<Matrix4x4>(32);
+                            target[mat] = pList;
+                        }
+                        pList.Add(pMatrix);
+                    }
+                    catch { }
                 }
-                list.Add(m);
             }
-            foreach (var kv in starByMat)
+
+            chunk.plantCount = count;
+            if (count > 0)
             {
-                var mesh = Util3D.BuildInstancedMesh(Util3D.StarMesh, kv.Value);
-                if (mesh != null) batches.Add(new Batch { mat = kv.Key, mesh = mesh });
+                var lf = LF;
+                foreach (var kv in starByMat)
+                {
+                    var mesh = Util3D.BuildInstancedMesh(Util3D.StarMesh, kv.Value, lf, worldOffset, out var posArr, out var colBuf, 2.2f);
+                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.StarMesh, mesh = mesh, positions = posArr, colors = colBuf });
+                }
+                foreach (var kv in crossByMat)
+                {
+                    var mesh = Util3D.BuildInstancedMesh(Util3D.CrossMesh, kv.Value, lf, worldOffset, out var posArr, out var colBuf, 0f);
+                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.CrossMesh, mesh = mesh, positions = posArr, colors = colBuf });
+                }
+                if (shadowList.Count > 0)
+                    chunk.shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowList);
+
+                if (byArchTint != null)
+                {
+                    foreach (var kv in byArchTint)
+                    {
+                        string arch = kv.Key.Substring(0, kv.Key.IndexOf('#'));
+                        int tint = int.Parse(kv.Key.Substring(kv.Key.IndexOf('#') + 1));
+                        var proto = PlantModels3D.Prototype(arch);
+                        if (proto == null || proto.body == null) continue;
+                        float sampleOffY = PlantModels3D.IsTreeArch(arch) ? 2.2f : 0f;
+                        var bodyMesh = Util3D.BuildInstancedMesh(proto.body, kv.Value, lf, worldOffset, out var posArr, out var colBuf, sampleOffY);
+                        var mb = new ModelBatch
+                        {
+                            srcBody = proto.body,
+                            body = bodyMesh,
+                            hull = Fps3DState.DrawOutlines ? Util3D.BuildInstancedMesh(proto.hull, kv.Value) : null,
+                            positions = posArr,
+                            colors = colBuf,
+                            tint = tint,
+                            count = kv.Value.Count
+                        };
+                        if (mb.body != null) chunk.modelBatches.Add(mb);
+                    }
+                }
+
+                Vector3 center = new Vector3((x0 + x1) * 0.5f + worldOffset.x, baseY + 1.5f, (z0 + z1) * 0.5f + worldOffset.z);
+                Vector3 size = new Vector3(x1 - x0, 5.0f, z1 - z0);
+                chunk.bounds = new Bounds(center, size);
             }
-            foreach (var kv in crossByMat)
+        }
+
+        private void RecolorChunk(PlantChunk chunk)
+        {
+            chunk.colorDirty = false;
+            var lf = LF;
+            for (int i = 0; i < chunk.batches.Count; i++)
             {
-                var mesh = Util3D.BuildInstancedMesh(Util3D.CrossMesh, kv.Value);
-                if (mesh != null) batches.Add(new Batch { mat = kv.Key, mesh = mesh });
+                var b = chunk.batches[i];
+                Util3D.RecolorInstancedMesh(b.mesh, b.srcMesh, b.positions, b.colors, lf);
             }
-            shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowList);
-            PerfCounters.LastPlantBuildMs = 0f;
+            for (int i = 0; i < chunk.modelBatches.Count; i++)
+            {
+                var mb = chunk.modelBatches[i];
+                Util3D.RecolorInstancedMesh(mb.body, mb.srcBody, mb.positions, mb.colors, lf);
+            }
+        }
+
+        // ---- 更新 ----
+
+        public void Update()
+        {
+            var st = FirstPerson3DMod.settings;
+            float hScale = st != null ? st.plantScale : 1f;
+            if (Mathf.Abs(hScale - builtScale) > 0.0001f)
+            {
+                builtScale = hScale;
+                allDirty = true;
+            }
+
+            if (allDirty)
+            {
+                EnsureChunkRecords();
+                allDirty = false;
+            }
+
+            sortedDirtyKeys.Clear();
+            colorDirtyKeys.Clear();
+            foreach (var kv in chunks)
+            {
+                if (kv.Value.dirty) sortedDirtyKeys.Add(kv.Key);
+                else if (kv.Value.colorDirty) colorDirtyKeys.Add(kv.Key);
+            }
+
+            if (sortedDirtyKeys.Count > 0 || colorDirtyKeys.Count > 0)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                if (sortedDirtyKeys.Count > 3)
+                {
+                    Vector3 camPos = CameraRig3D.LastCamPos - worldOffset;
+                    float camX = camPos.x, camZ = camPos.z;
+                    sortedDirtyKeys.Sort((a, b) =>
+                    {
+                        float ax = (a / 10000 + 0.5f) * ChunkSize - camX;
+                        float az = (a % 10000 + 0.5f) * ChunkSize - camZ;
+                        float bx = (b / 10000 + 0.5f) * ChunkSize - camX;
+                        float bz = (b % 10000 + 0.5f) * ChunkSize - camZ;
+                        return (ax * ax + az * az).CompareTo(bx * bx + bz * bz);
+                    });
+                }
+
+                int budget = Fps3DState.ChunkRebuildBudget;
+                for (int i = 0; i < sortedDirtyKeys.Count && budget > 0; i++)
+                {
+                    int k = sortedDirtyKeys[i];
+                    if (chunks.TryGetValue(k, out var ch) && ch.dirty)
+                    {
+                        RebuildChunk(k / 10000, k % 10000, ch);
+                        budget--;
+                    }
+                }
+                int colorBudget = budget * 2 + 2;
+                for (int i = 0; i < colorDirtyKeys.Count && colorBudget > 0; i++)
+                {
+                    int k = colorDirtyKeys[i];
+                    if (chunks.TryGetValue(k, out var ch) && ch.colorDirty && !ch.dirty)
+                    {
+                        RecolorChunk(ch);
+                        colorBudget--;
+                    }
+                }
+                PerfCounters.LastPlantBuildMs = (float)sw.Elapsed.TotalMilliseconds;
+            }
         }
 
         // ---- 绘制 ----
@@ -315,30 +509,55 @@ namespace RimFirstPerson3D
 
         public void Draw(Vector3 camPos)
         {
-            if (entries.Count == 0) return;
-            var st = FirstPerson3DMod.settings;
-            float hScale = st != null ? st.plantScale : 1f;
-            if (batchesDirty || Mathf.Abs(hScale - builtScale) > 0.0001f) RebuildBatches();
-
-            for (int i = 0; i < batches.Count; i++)
+            int inst = 0;
+            int batchesCount = 0;
+            var shadowM = ShadowMat;
+            Matrix4x4 shadowMatrix = Matrix4x4.identity;
+            var env = Lighting3D.Current;
+            if (env.glow > 0.05f && env.sunDir.y > 0.05f)
             {
-                var b = batches[i];
-                Graphics.DrawMesh(b.mesh, Matrix4x4.identity, b.mat, 0);
-                PerfCounters.PlantBatches++;
+                float offScale = Mathf.Clamp(0.28f / Mathf.Max(0.25f, env.sunDir.y), 0.12f, 0.55f);
+                shadowMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * offScale, 0f, -env.sunDir.z * offScale));
             }
-            PerfCounters.PlantInstances += entries.Count;
 
-            if (shadowMesh != null)
+            foreach (var kv in chunks)
             {
-                Graphics.DrawMesh(shadowMesh, Matrix4x4.identity, ShadowMat, 0);
-                PerfCounters.PlantBatches++;
+                var ch = kv.Value;
+                if (ch.plantCount == 0 || ch.batches.Count == 0 && ch.modelBatches.Count == 0) continue;
+
+                if (!Frustum3D.Visible(ch.bounds)) continue;
+
+                for (int i = 0; i < ch.batches.Count; i++)
+                {
+                    var b = ch.batches[i];
+                    Graphics.DrawMesh(b.mesh, Matrix4x4.identity, b.mat, 0);
+                    batchesCount++;
+                }
+                for (int i = 0; i < ch.modelBatches.Count; i++)
+                {
+                    var mb = ch.modelBatches[i];
+                    Graphics.DrawMesh(mb.body, Matrix4x4.identity, PlantModels3D.TintMat(mb.tint), 0);
+                    if (mb.hull != null && Fps3DState.DrawOutlines)
+                        Graphics.DrawMesh(mb.hull, Matrix4x4.identity, Util3D.OutlineMat, 0);
+                    batchesCount++;
+                    PerfCounters.PlantMeshesDrawn++;
+                }
+                if (ch.shadowMesh != null && shadowM != null)
+                {
+                    Graphics.DrawMesh(ch.shadowMesh, shadowMatrix, shadowM, 0);
+                    batchesCount++;
+                }
+                inst += ch.plantCount;
             }
+
+            PerfCounters.PlantInstances = inst;
+            PerfCounters.PlantBatches += batchesCount;
         }
 
         public void Dispose()
         {
-            DestroyBatches();
-            entries.Clear();
+            foreach (var kv in chunks) DisposeChunk(kv.Value);
+            chunks.Clear();
         }
     }
 }

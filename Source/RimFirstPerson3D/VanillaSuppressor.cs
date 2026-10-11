@@ -8,6 +8,7 @@ using Verse;
 namespace RimFirstPerson3D
 {
     // 屏蔽原版平铺绘制并停用原版地图相机；恢复时原样还原。
+    [StaticConstructorOnStartup]
     public static class VanillaSuppressor
     {
         private static bool applied;
@@ -48,7 +49,7 @@ namespace RimFirstPerson3D
             // 第一人称接管期：原版整套 UI（窗口栈/主按钮/地图点击/设计器/快捷键）
             // 暂停处理，输入与绘制一并跳过，由模组全权消费，不穿透到原界面。
             harmony.Patch(AccessTools.Method(typeof(UIRoot_Play), nameof(UIRoot_Play.UIRootOnGUI)),
-                prefix: new HarmonyMethod(typeof(VanillaSuppressor), nameof(SkipVanillaUIOnGUI)));
+                prefix: new HarmonyMethod(typeof(VanillaSuppressor), nameof(SkipVanillaUIOnGUI)) { priority = Priority.Last });
             // 原版 ThingOverlays 名牌/量表按俯视相机投影（锚在脚底+z 北偏），
             // 3D 模式全部悬空错位，一并屏蔽；名牌由 NameLabels3D 按头顶重画。
             harmony.Patch(AccessTools.Method(typeof(ThingOverlays), nameof(ThingOverlays.ThingOverlaysOnGUI)),
@@ -151,14 +152,11 @@ namespace RimFirstPerson3D
             var st = FirstPerson3DMod.settings;
             SkyScenery.Apply();
             mapCamera.orthographic = false;
-            mapCamera.clearFlags = CameraClearFlags.SolidColor;
+            mapCamera.clearFlags = SkyScenery.HasNativeSkybox ? CameraClearFlags.Skybox : CameraClearFlags.SolidColor;
             mapCamera.fieldOfView = st != null ? st.fov : Fps3DState.FovDeg;
             mapCamera.nearClipPlane = Fps3DState.NearClip;
             mapCamera.farClipPlane = Fps3DState.FarClip;
-            mapCamera.backgroundColor = new Color(
-                st != null ? st.skyR : 0.09f,
-                st != null ? st.skyG : 0.11f,
-                st != null ? st.skyB : 0.16f);
+            mapCamera.backgroundColor = SkyScenery.CurrentHorizonColor;
             // 第一人称主相机必须直接写入 backbuffer。
             if (mapCamera.targetTexture != null) mapCamera.targetTexture = null;
             if (mapCamera.rect.width < 0.9f || mapCamera.rect.height < 0.9f)
@@ -449,8 +447,7 @@ namespace RimFirstPerson3D
         private static bool SkipThingOverlays() => !Suppress;
         private static bool SkipVanillaUIOnGUI()
         {
-            // 指挥面板查看期必须让原版 UI 跑起来，CommandPanel3D 再把它收进终端屏幕。
-            // 这里若返回 false，后面的前缀和函数体都不会执行。
+            // 查看期原版 UIRoot 照常跑，点击和窗口都是原版的。画面由指挥面板记走，不留在第一人称上。
             if (MapScreen3D.Viewing) return true;
             return !(Suppress && CameraRig3D.VanillaInputTakenOver);
         }

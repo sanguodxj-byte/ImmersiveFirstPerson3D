@@ -48,20 +48,27 @@ namespace RimFirstPerson3D
                 || Time.time - t >= SceneBuildDelay;
         }
 
+        private static readonly List<Map> cachedRenderMaps = new List<Map>();
+
         // 渲染集合：当前地图垂直栈 + 全部已登记世界位置地图（主图与流式邻图对称）。
         public static List<Map> RenderMaps(Map current)
         {
-            var list = new List<Map>();
-            if (current != null && !current.Disposed && SceneReady(current)) list.Add(current);
-            foreach (var m in LevelStack3D.StackMapsAt(current))
-                if (m != null && !m.Disposed && SceneReady(m) && !list.Contains(m)) list.Add(m);
+            cachedRenderMaps.Clear();
+            if (current != null && !current.Disposed && SceneReady(current)) cachedRenderMaps.Add(current);
+            var stack = LevelStack3D.StackMapsAt(current);
+            for (int i = 0; i < stack.Count; i++)
+            {
+                var m = stack[i];
+                if (m != null && !m.Disposed && SceneReady(m) && !cachedRenderMaps.Contains(m))
+                    cachedRenderMaps.Add(m);
+            }
             foreach (var kv in byId)
             {
                 var m = kv.Value;
                 if (m == null || m.Disposed || !SceneReady(m)) continue;
-                if (!list.Contains(m)) list.Add(m);
+                if (!cachedRenderMaps.Contains(m)) cachedRenderMaps.Add(m);
             }
-            return list;
+            return cachedRenderMaps;
         }
 
         // 东向流式：在当前 tile 的正东真实邻接 tile 上生成 100x100 常规地图

@@ -9,6 +9,7 @@ namespace RimFirstPerson3D
     // 每帧以第一人称相机空间矩阵提交绘制。抬起动画 = 局部位姿从画外下方
     // 插值到眼前；屏幕面为独立 submesh 贴程序生成的终端 UI 纹理，
     // 附扫描亮带滚动与启动渐亮遮罩。OBJ 缺失时回退程序化盒体。
+    [StaticConstructorOnStartup]
     public static class HandTerminal3D
     {
         // 抬起动画两端位姿（相机局部空间）：画外下方沉没 -> 眼前。
@@ -28,6 +29,10 @@ namespace RimFirstPerson3D
         private static Material bodyMat, darkMat, metalMat, screenMat, scanMat, maskMat;
         private static Texture screenTex;
         private static Mesh screenQuad, scanQuad, maskQuad;
+        // 真正露在外面的屏幕面（OBJ 的 screen 组）。射线打这块，不打后面那块程序四边形。
+        static bool screenPlaneReady;
+        static float planeZ, planeMinX, planeMaxX, planeMinY, planeMaxY;
+        static bool planeUGrowsX = true, planeVGrowsY = true;
 
         // 调试冻结位姿（GABS 验收通道）：>=0 时按该进度持续绘制终端、不推进状态机。
         public static float DebugHold = -1f;
@@ -62,6 +67,7 @@ namespace RimFirstPerson3D
                     Log.Warning(ModEntry.LogPrefix + "terminal OBJ missing, fallback box in use");
                 }
                 SplitByGroup(whole, wholeGroups);
+                CaptureScreenPlane();
                 BuildMaterials();
             }
             catch (System.Exception e)
@@ -96,8 +102,8 @@ namespace RimFirstPerson3D
             return cam.transform.localToWorldMatrix * local;
         }
 
-        // 屏幕四边形在相机局部 z=0.0184，半宽 0.145、半高 0.1025。UV 左下为 (0,0)。
-        // 半幅是模型坐标，不乘 PanelScale：逆矩阵已经除掉缩放。
+        // 屏幕面在模型坐标里。UV 左下为 (0,0)，和贴图、PanelUi3D 的像素同一套。
+        // 半幅不乘 PanelScale：逆矩阵已经除掉缩放。
         public static bool TryScreenUV(Camera cam, float raise, out Vector2 uv)
         {
             uv = default;
@@ -107,15 +113,39 @@ namespace RimFirstPerson3D
             Ray ray = cam.ScreenPointToRay(Input.mousePosition);
             Vector3 o = inv.MultiplyPoint(ray.origin);
             Vector3 d = inv.MultiplyVector(ray.direction);
-            const float z = 0.0184f;
-            const float halfW = 0.145f;
-            const float halfH = 0.1025f;
+            float z, x0, x1, y0, y1;
+            bool uGrows, vGrows;
+            if (screenPlaneReady)
+            {
+                z = planeZ;
+                x0 = planeMinX;
+                x1 = planeMaxX;
+                y0 = planeMinY;
+                y1 = planeMaxY;
+                uGrows = planeUGrowsX;
+                vGrows = planeVGrowsY;
+            }
+            else
+            {
+                z = 0.0184f;
+                x0 = -0.145f;
+                x1 = 0.145f;
+                y0 = -0.1025f;
+                y1 = 0.1025f;
+                uGrows = true;
+                vGrows = true;
+            }
             if (Mathf.Abs(d.z) < 1e-6f) return false;
             float dist = (z - o.z) / d.z;
             if (dist < 0f) return false;
             Vector3 hit = o + d * dist;
-            if (Mathf.Abs(hit.x) > halfW || Mathf.Abs(hit.y) > halfH) return false;
-            uv = new Vector2(hit.x / (halfW * 2f) + 0.5f, hit.y / (halfH * 2f) + 0.5f);
+            const float pad = 0.002f;
+            if (hit.x < x0 - pad || hit.x > x1 + pad || hit.y < y0 - pad || hit.y > y1 + pad) return false;
+            float u = Mathf.InverseLerp(x0, x1, hit.x);
+            float v = Mathf.InverseLerp(y0, y1, hit.y);
+            if (!uGrows) u = 1f - u;
+            if (!vGrows) v = 1f - v;
+            uv = new Vector2(Mathf.Clamp01(u), Mathf.Clamp01(v));
             return true;
         }
 
@@ -220,6 +250,59 @@ namespace RimFirstPerson3D
                 m.RecalculateBounds();
                 groupMeshes.Add(m);
                 groups.Add(s < grp.Count ? grp[s] : "");
+            }
+        }
+
+        // 取 screen 组的实际外包和 UV 朝向。这块面在壳体之前，界面画在上面。
+        static void CaptureScreenPlane()
+        {
+            screenPlaneReady = false;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (groups[i] != "screen") continue;
+                var mesh = groupMeshes[i];
+                var v = mesh.vertices;
+                var uv = mesh.uv;
+                if (v == null || v.Length == 0) return;
+                planeMinX = planeMaxX = v[0].x;
+                planeMinY = planeMaxY = v[0].y;
+                planeZ = v[0].z;
+                float uAtMinX = 0f, uAtMaxX = 1f, vAtMinY = 0f, vAtMaxY = 1f;
+                bool haveUv = uv != null && uv.Length == v.Length;
+                if (haveUv)
+                {
+                    uAtMinX = uAtMaxX = uv[0].x;
+                    vAtMinY = vAtMaxY = uv[0].y;
+                }
+                for (int k = 1; k < v.Length; k++)
+                {
+                    planeZ += v[k].z;
+                    if (v[k].x < planeMinX)
+                    {
+                        planeMinX = v[k].x;
+                        if (haveUv) uAtMinX = uv[k].x;
+                    }
+                    if (v[k].x > planeMaxX)
+                    {
+                        planeMaxX = v[k].x;
+                        if (haveUv) uAtMaxX = uv[k].x;
+                    }
+                    if (v[k].y < planeMinY)
+                    {
+                        planeMinY = v[k].y;
+                        if (haveUv) vAtMinY = uv[k].y;
+                    }
+                    if (v[k].y > planeMaxY)
+                    {
+                        planeMaxY = v[k].y;
+                        if (haveUv) vAtMaxY = uv[k].y;
+                    }
+                }
+                planeZ /= v.Length;
+                planeUGrowsX = uAtMaxX >= uAtMinX;
+                planeVGrowsY = vAtMaxY >= vAtMinY;
+                screenPlaneReady = planeMaxX - planeMinX > 0.01f && planeMaxY - planeMinY > 0.01f;
+                return;
             }
         }
 

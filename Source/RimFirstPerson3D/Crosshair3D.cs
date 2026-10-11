@@ -7,6 +7,7 @@ namespace RimFirstPerson3D
     // 第一人称准星：屏幕正中的实心十字。
     // 全局规范要求实心填充、禁止空心轮廓，因此用实心矩形块拼出十字，不画描边线。
     // 只绘制不接收输入（不调用任何 GUI 控件），不会阻断底层 UI。
+    [StaticConstructorOnStartup]
     public static class Crosshair3D
     {
         private const float ArmLength = 7f;   // 单臂长度（像素）

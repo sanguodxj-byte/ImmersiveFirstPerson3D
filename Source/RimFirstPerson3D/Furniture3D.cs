@@ -24,10 +24,11 @@ namespace RimFirstPerson3D
     //
     // 【尺寸】一律取 Metrics3D（现实家具尺寸），不从原版 def 反推；
     // def 只用于定位：占几格、朝向。
+    [StaticConstructorOnStartup]
     public static class Furniture3D
     {
         private enum Arch { Bed, Bedroll, Stool, Chair, Nightstand, Cabinet, ShelfUnit,
-                          Armchair, Throne, GrandThrone, Drape, Stele,
+                           Armchair, Throne, GrandThrone, Drape, Stele, ProductionBench,
                           Table, Lamp, Column, Pot, Marker, FloodLight }
 
         /// <summary>一条配方：defName 关键字 -> 几何配方 + 取样件名（与 scripts/furn_atlas.py SPEC 同名）。</summary>
@@ -85,6 +86,12 @@ namespace RimFirstPerson3D
             new Recipe(new[] { "shelfsmall" }, Arch.ShelfUnit, "shelfsmall"),
             new Recipe(new[] { "shelf" }, Arch.ShelfUnit, "shelf"),
             new Recipe(new[] { "stool" }, Arch.Stool, "stool"),
+            // Production phase 1: exact vanilla defs only. Do not broaden these to a
+            // table/smithy keyword: modded workbenches must retain the safe fallback.
+            new Recipe(new[] { "tablebutcher" }, Arch.ProductionBench, "tablebutcher"),
+            new Recipe(new[] { "tablesculpting" }, Arch.ProductionBench, "tablesculpting"),
+            new Recipe(new[] { "fueledsmithy" }, Arch.ProductionBench, "tablesmithingfueled"),
+            new Recipe(new[] { "electricsmithy" }, Arch.ProductionBench, "tablesmithingelectric"),
         };
 
         private class Built
@@ -112,19 +119,40 @@ namespace RimFirstPerson3D
 
         // ---- 归类：只看 defName 关键字（def 不作尺寸依据）----
 
+        private struct RecipeCache
+        {
+            public bool handled;
+            public Arch arch;
+            public string item;
+        }
+
+        private static readonly Dictionary<ThingDef, RecipeCache> recipeDefCache = new Dictionary<ThingDef, RecipeCache>();
+
         private static bool RecipeOf(ThingDef d, out Arch arch, out string key)
         {
+            if (d == null) { arch = Arch.Stool; key = null; return false; }
+            if (recipeDefCache.TryGetValue(d, out var rc))
+            {
+                arch = rc.arch;
+                key = rc.item;
+                return rc.handled;
+            }
             arch = Arch.Stool; key = null;
-            if (d == null) return false;
             string n = (d.defName ?? "").ToLowerInvariant();
+            bool handled = false;
             for (int i = 0; i < Recipes.Length; i++)
             {
                 var r = Recipes[i];
-                if (!Has(n, r.keys)) continue;
-                if (!regionItems.Contains(r.item)) return false;   // 没有该件的区 -> 不接管
-                arch = r.arch; key = r.item; return true;
+                // Production recipes are deliberately exact; the legacy furniture
+                // catalogue keeps its established family matching below.
+                bool match = (r.arch == Arch.ProductionBench)
+                    ? (n == r.keys[0]) : Has(n, r.keys);
+                if (!match) continue;
+                if (!regionItems.Contains(r.item)) break;   // 没有该件的区 -> 不接管
+                arch = r.arch; key = r.item; handled = true; break;
             }
-            return false;
+            recipeDefCache[d] = new RecipeCache { handled = handled, arch = arch, item = key };
+            return handled;
         }
 
         /// <summary>图集表里出现过的取样件名（键的第一段）。</summary>
@@ -366,6 +394,18 @@ namespace RimFirstPerson3D
             "throne.south.front",
             "throne.south.top",
             "throne.south.wood",
+            "tablebutcher.east.device", "tablebutcher.east.front", "tablebutcher.east.top", "tablebutcher.east.wood",
+            "tablebutcher.north.device", "tablebutcher.north.front", "tablebutcher.north.top", "tablebutcher.north.wood",
+            "tablebutcher.south.device", "tablebutcher.south.front", "tablebutcher.south.top", "tablebutcher.south.wood",
+            "tablesculpting.east.device", "tablesculpting.east.front", "tablesculpting.east.top", "tablesculpting.east.wood",
+            "tablesculpting.north.device", "tablesculpting.north.front", "tablesculpting.north.top", "tablesculpting.north.wood",
+            "tablesculpting.south.device", "tablesculpting.south.front", "tablesculpting.south.top", "tablesculpting.south.wood",
+            "tablesmithingfueled.east.device", "tablesmithingfueled.east.front", "tablesmithingfueled.east.top", "tablesmithingfueled.east.wood",
+            "tablesmithingfueled.north.device", "tablesmithingfueled.north.front", "tablesmithingfueled.north.top", "tablesmithingfueled.north.wood",
+            "tablesmithingfueled.south.device", "tablesmithingfueled.south.front", "tablesmithingfueled.south.top", "tablesmithingfueled.south.wood",
+            "tablesmithingelectric.east.device", "tablesmithingelectric.east.front", "tablesmithingelectric.east.top", "tablesmithingelectric.east.wood",
+            "tablesmithingelectric.north.device", "tablesmithingelectric.north.front", "tablesmithingelectric.north.top", "tablesmithingelectric.north.wood",
+            "tablesmithingelectric.south.device", "tablesmithingelectric.south.front", "tablesmithingelectric.south.top", "tablesmithingelectric.south.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -557,6 +597,23 @@ namespace RimFirstPerson3D
         private const float ThroneBackHeight = 1.35f;
         private const float DrapeRodHeight = 1.42f;
         private const float ClothThickness = 0.06f;
+        // Production phase 1 dimensions are authored constants, independent of
+        // ThingDef drawSize/occupancy. The four vanilla benches are 2x1 in the
+        // source defs; these values are the 3D presentation contract.
+        private const float ProductionBenchLong = 2.00f;
+        private const float ProductionBenchShort = 1.00f;
+        private const float ProductionBenchBodyHeight = 0.72f;
+        private const float ProductionBenchTopThickness = 0.08f;
+        private const float ProductionBenchSupportThickness = 0.10f;
+        private const float ProductionBenchDeviceHeight = 0.22f;
+
+        private static void ProductionSize(string key, Rot4 rot, out float w, out float d)
+        {
+            bool longZ = rot == Rot4.North || rot == Rot4.South;
+            float a = ProductionBenchLong, b = ProductionBenchShort;
+            w = longZ ? b : a;
+            d = longZ ? a : b;
+        }
 
         private static bool HasRegion(string key, string region)
         {
@@ -573,6 +630,8 @@ namespace RimFirstPerson3D
         {
             var m = new Model3D();
             var uvs = new List<UvSpec>();
+            if (arch == Arch.ProductionBench)
+                ProductionSize(key, rot, out w, out d);
             var xz = new Vector2(w, d);
             // 0 = 主体（顶面 + 四立面）
             uvs.Add(FaceUv(key, rot, xz));
@@ -805,6 +864,56 @@ namespace RimFirstPerson3D
                     });
                     uvs.Add(UvNames(key, rot, xz, "wood", "front"));   // 2 = 腿
                     Legs(m, 2, Mathf.Min(w, d) * 0.5f - 0.14f, h, Metrics3D.LegThickness);
+                    break;
+                }
+                case Arch.ProductionBench:
+                {
+                    // Reusable workbench prototype: slab + substantial body/
+                    // supports + a visible device feature. Each part uses the
+                    // same bench's own south/east/north atlas samples.
+                    float topY = ProductionBenchBodyHeight;
+                    uvs.Add(UvNames(key, rot, xz, "top", "front")); // 1 body
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, topY, 0f),
+                        size = new Vector3(w - 0.04f, ProductionBenchTopThickness, d - 0.04f),
+                        uv = 1
+                    });
+                    uvs.Add(UvNames(key, rot, xz, "wood", "front")); // 2 cabinet/support
+                    m.parts.Add(new Part
+                    {
+                        kind = Prim.Box,
+                        pos = new Vector3(0f, topY * 0.5f, 0f),
+                        size = new Vector3(w - 0.16f, topY, d - 0.16f),
+                        noTop = true,
+                        uv = 2
+                    });
+                    // End supports read as legs on butcher/sculpting tables and
+                    // as smithy uprights on the two smithies.
+                    float supportX = Mathf.Max(0.05f, w * 0.5f - ProductionBenchSupportThickness);
+                    uvs.Add(WoodUv(key, rot, xz)); // 3 device/support material
+                    for (int sx = -1; sx <= 1; sx += 2)
+                        m.parts.Add(new Part
+                        {
+                            kind = Prim.Box,
+                            pos = new Vector3(sx * supportX, 0f, 0f),
+                            size = new Vector3(ProductionBenchSupportThickness, topY, d * 0.72f),
+                            noTop = true,
+                            uv = 3
+                        });
+                    uvs.Add(UvNames(key, rot, xz, "device", "device")); // 4 equipment feature
+                    bool smithy = key == "tablesmithingfueled" || key == "tablesmithingelectric";
+                    m.parts.Add(new Part
+                    {
+                        kind = smithy ? Prim.Cylinder : Prim.Box,
+                        pos = new Vector3(0f, topY + ProductionBenchTopThickness, 0f),
+                        size = smithy
+                            ? new Vector3(0.34f, ProductionBenchDeviceHeight, 0.34f)
+                            : new Vector3(0.52f, ProductionBenchDeviceHeight, 0.38f),
+                        taper = smithy ? 0.82f : 0f,
+                        uv = 4
+                    });
                     break;
                 }
                 case Arch.Lamp:
@@ -1318,8 +1427,9 @@ namespace RimFirstPerson3D
             cache.Clear();
         }
 
-        /// <summary>画一件家具；返回 false 表示本层没接管（调用方走原回退路径）。</summary>
-        public static bool TryDraw(Thing t, Vector3 pos)
+        /// <summary>画一件家具；返回 false 表示本层没接管（调用方走原回退路径）。
+        /// lit 是该件所在处的放置亮度（F013 实例乘子），与原型网格烘好的形体明暗相乘。</summary>
+        public static bool TryDraw(Thing t, Vector3 pos, Color lit)
         {
             if (!Handles(t)) return false;
             var m = Mat;
@@ -1333,7 +1443,7 @@ namespace RimFirstPerson3D
             var b = Get(arch, key, rot, w, d);
             if (b == null || b.body == null) return false;
             var matrix = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
-            Graphics.DrawMesh(b.body, matrix, m, 0);
+            Graphics.DrawMesh(b.body, matrix, Lighting3D.MatFor(m, lit), 0);
             PerfCounters.BuildingMeshesDrawn++;
             if (Fps3DState.DrawOutlines && b.hull != null)
             {

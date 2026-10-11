@@ -21,9 +21,38 @@ namespace RimFirstPerson3D
 
         public static void Reset() { ready = false; }
 
+        // 游戏窗口是否真正处于前台激活状态：
+        // 1. Unity 的 Application.isFocused 必须为 true；
+        // 2. Windows 下校验 Win32 当前前台激活窗口（GetForegroundWindow）必须属于本进程且非最小化；
+        // 任何一项不满足，均判定为切到后台，严禁回中或读取光标，杜绝与桌面其他应用争夺鼠标。
+        public static bool IsGameWindowActive()
+        {
+            if (!Application.isFocused) return false;
+            if (!IsWindows) return true;
+            try
+            {
+                IntPtr hwnd = GetForegroundWindow();
+                if (hwnd == IntPtr.Zero) return false;
+                if (IsIconic(hwnd)) return false;
+                GetWindowThreadProcessId(hwnd, out uint fgPid);
+                uint myPid = GetCurrentProcessId();
+                return fgPid == myPid;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // 返回本帧像素位移；Y 向上为正，与既有 Pitch/Yaw 公式一致。
         public static Vector2 Read()
         {
+            if (!IsGameWindowActive())
+            {
+                ready = false;
+                return Vector2.zero;
+            }
+
             if (!TryGetCursor(out int cx, out int cy))
             {
                 // 非 Windows / 读取失败：退化为 Unity 位置差（Y 已向上），不做回中。
@@ -58,14 +87,17 @@ namespace RimFirstPerson3D
             Application.platform == RuntimePlatform.WindowsPlayer
             || Application.platform == RuntimePlatform.WindowsEditor;
 
-        // 把系统光标移回窗口客户区中心。
+        // 把系统光标移回窗口客户区中心（仅当游戏处于绝对前台时执行）。
         private static void TryRecenter()
         {
-            if (!IsWindows) return;
+            if (!IsWindows || !IsGameWindowActive()) return;
             try
             {
                 IntPtr hwnd = GetForegroundWindow();
                 if (hwnd == IntPtr.Zero) return;
+                GetWindowThreadProcessId(hwnd, out uint fgPid);
+                if (fgPid != GetCurrentProcessId()) return;
+                if (IsIconic(hwnd)) return;
                 if (!GetClientRect(hwnd, out RECT rc)) return;
                 var pt = new POINT { x = (rc.right - rc.left) / 2, y = (rc.bottom - rc.top) / 2 };
                 if (!ClientToScreen(hwnd, ref pt)) return;
@@ -94,6 +126,9 @@ namespace RimFirstPerson3D
         private struct POINT { public int x, y; }
 
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentProcessId();
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
         [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int X, int Y);

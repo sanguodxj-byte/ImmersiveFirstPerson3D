@@ -1,0 +1,896 @@
+<!-- AI生成 · 物块与资源类原版贴图取样与 3D 建模预览（与 ItemModels3D.cs 一一对应） -->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>物块建模预览</title>
+<style>
+  html,body{margin:0;height:100%;background:#20242c;font-family:Consolas,monospace;overflow:hidden}
+  #app{position:fixed;inset:0}
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.6;
+       background:rgba(0,0,0,.55);padding:9px 11px;border-radius:4px;z-index:9}
+  #hud b{color:#7fd1ff}
+  #sp{position:fixed;right:10px;top:42px;z-index:9;display:flex;gap:5px;flex-wrap:wrap;
+      justify-content:flex-end;max-width:72vw}
+  #vw{position:fixed;right:10px;top:8px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
+         padding:4px 8px;font-size:12px;cursor:pointer}
+  button:hover{background:#3d465c}
+  button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<div id="vw"></div>
+<div id="sp"></div>
+<script>
+addEventListener('error', function(e){
+  const h = document.getElementById('hud');
+  if (h) h.textContent = 'ERR ' + e.message + ' @' + String(e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const VER = 'item1';
+const UV_TOP = 0, UV_SIDE = 1, UV_SHADE = 2, UV_DETAIL = 3;
+const REGIONS = ['top', 'side', 'shade', 'detail'];
+
+const uvJson = await (await fetch('./item_uv.json?' + VER)).json();
+const tex = await new Promise((resolve) => {
+  new THREE.TextureLoader().load('./item_atlas.png?' + VER, t => resolve(t), undefined, () => resolve(null));
+});
+if (tex) {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.flipY = false;
+}
+const matAtlas = new THREE.MeshLambertMaterial({ map: tex, side: THREE.FrontSide });
+const matHull  = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+
+const MISSING = new Set();
+function getUvRect(itemKey, regName) {
+  const itemObj = uvJson.uv[itemKey];
+  const a = itemObj && itemObj[regName];
+  if (!a) {
+    MISSING.add(`${itemKey}.${regName}`);
+    return [0.42, 0.42, 0.58, 0.58];
+  }
+  return [a[0], 1 - a[3], a[2], 1 - a[1]];
+}
+
+const KEY_TO_ARCH = {
+  chunksandstone: 'ChunkRock',
+  chunkgranite: 'ChunkRock',
+  chunklimestone: 'ChunkRock',
+  chunkslate: 'ChunkRock',
+  chunkmarble: 'ChunkRock',
+  chunkvacstone: 'ChunkRock',
+  chunkslagsteel: 'ChunkSlag',
+  blockssandstone: 'StoneBlocks',
+  blocksgranite: 'StoneBlocks',
+  blockslimestone: 'StoneBlocks',
+  blocksslate: 'StoneBlocks',
+  blocksmarble: 'StoneBlocks',
+  blocksvacstone: 'StoneBlocks',
+  steel: 'Steel',
+  plasteel: 'Plasteel',
+  uranium: 'Uranium',
+  silver: 'NuggetHeap',
+  gold: 'NuggetHeap',
+  jade: 'Jade',
+  obsidian: 'Obsidian',
+  bioferrite: 'Bioferrite',
+  woodlog: 'WoodLog',
+  gravlitepanel: 'HexPanel',
+  cloth: 'FabricRoll',
+  synthread: 'FabricRoll',
+  devilstrandcloth: 'FabricRoll',
+  hyperweave: 'FabricRoll',
+  componentindustrial: 'CompInd',
+  componentspacer: 'CompSpacer',
+  chemfuel: 'Chemfuel',
+  neutroamine: 'Bottles',
+  medicineindustrial: 'MedBox',
+  medicineultratech: 'MedBox',
+  medicineherbal: 'MedHerbal',
+  wastepack: 'Wastepack',
+};
+
+export function archOf(key) {
+  return KEY_TO_ARCH[key] || 'ChunkRock';
+}
+
+function rotVec(v, pitch, yaw, roll) {
+  const rx = pitch * Math.PI / 180;
+  const ry = yaw   * Math.PI / 180;
+  const rz = roll  * Math.PI / 180;
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  const x1 = v[0] * cz - v[1] * sz;
+  const y1 = v[0] * sz + v[1] * cz;
+  const z1 = v[2];
+  const x2 = x1;
+  const y2 = y1 * cx - z1 * sx;
+  const z2 = y1 * sx + z1 * cx;
+  return [x2 * cy + z2 * sy, y2, -x2 * sy + z2 * cy];
+}
+
+const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const mul3 = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+
+class Model3D {
+  constructor() { this.parts = []; }
+  add(kind, pos, size, opts = {}) {
+    this.parts.push({
+      kind,
+      pos: [pos[0], pos[1], pos[2]],
+      size: [size[0], size[1], size[2]],
+      yaw: opts.yaw || 0,
+      pitch: opts.pitch || 0,
+      roll: opts.roll || 0,
+      taper: opts.taper || 0,
+      noOutline: !!opts.noOutline,
+      uv: opts.uv !== undefined ? opts.uv : UV_TOP,
+    });
+  }
+}
+
+function addSingleLog(m, baseCenter, d, len, yaw) {
+  const fwd = rotVec([0, 0, 1], 0, yaw, 0);
+  const r = d * 0.5;
+  const p0 = sub3(add3(baseCenter, [0, r, 0]), mul3(fwd, len * 0.5));
+  m.add('cyl', p0, [d, len, d], { yaw, pitch: 90, uv: UV_SIDE });
+  const capD = d * 0.82;
+  m.add('cyl', sub3(p0, mul3(fwd, 0.004)), [capD, 0.016, capD], { yaw, pitch: 90, noOutline: true, uv: UV_DETAIL });
+  m.add('cyl', add3(p0, mul3(fwd, len - 0.012)), [capD, 0.016, capD], { yaw, pitch: 90, noOutline: true, uv: UV_DETAIL });
+}
+
+export function buildItemModel(key, arch, variant = 2) {
+  const m = new Model3D();
+  const v = variant;
+
+  switch (arch) {
+    case 'ChunkRock': {
+      if (v === 0) {
+        m.add('box', [-0.08, 0.00,  0.04], [0.42, 0.28, 0.38], { yaw: -14, uv: UV_TOP });
+        m.add('wedge', [-0.08, 0.278, 0.04], [0.42, 0.13, 0.38], { yaw: 166, uv: UV_TOP });
+        m.add('box', [ 0.14, 0.00, -0.06], [0.38, 0.19, 0.32], { yaw: 12, uv: UV_SIDE });
+        m.add('wedge', [ 0.14, 0.188, -0.06], [0.38, 0.09, 0.32], { yaw: -168, uv: UV_SIDE });
+        m.add('box', [-0.19, 0.00, -0.07], [0.26, 0.21, 0.28], { yaw: 24, uv: UV_SHADE });
+      } else if (v === 1) {
+        m.add('box', [ 0.04, 0.00,  0.02], [0.46, 0.28, 0.40], { yaw: 18, uv: UV_TOP });
+        m.add('wedge', [ 0.04, 0.278, 0.02], [0.46, 0.13, 0.40], { yaw: -162, uv: UV_TOP });
+        m.add('box', [-0.15, 0.00, -0.05], [0.34, 0.20, 0.34], { yaw: -22, uv: UV_SIDE });
+        m.add('wedge', [-0.15, 0.198, -0.05], [0.34, 0.10, 0.34], { yaw: 158, uv: UV_SIDE });
+      } else {
+        m.add('box', [-0.06, 0.00,  0.06], [0.40, 0.31, 0.36], { yaw: -22, uv: UV_TOP });
+        m.add('wedge', [-0.06, 0.308, 0.06], [0.40, 0.13, 0.36], { yaw: 158, uv: UV_TOP });
+        m.add('box', [ 0.12, 0.00, -0.08], [0.36, 0.22, 0.32], { yaw: 26, uv: UV_SIDE });
+        m.add('wedge', [ 0.12, 0.218, -0.08], [0.36, 0.10, 0.32], { yaw: -154, uv: UV_SIDE });
+        m.add('box', [-0.15, 0.00, -0.09], [0.26, 0.19, 0.26], { yaw: 10, uv: UV_SHADE });
+      }
+      break;
+    }
+
+    case 'ChunkSlag': {
+      if (v === 0) {
+        m.add('box', [-0.10, 0.00, -0.10], [0.42, 0.12, 0.26], { yaw: 24, uv: UV_SHADE });
+        m.add('box', [ 0.14, 0.04,  0.04], [0.34, 0.22, 0.44], { yaw: -18, roll: -12, uv: UV_SIDE });
+        m.add('box', [-0.04, 0.06,  0.02], [0.22, 0.26, 0.58], { yaw: 34, pitch: 12, uv: UV_TOP });
+        m.add('box', [-0.04, 0.24,  0.02], [0.28, 0.05, 0.52], { yaw: 34, pitch: 12, noOutline: true, uv: UV_DETAIL });
+      } else if (v === 1) {
+        m.add('box', [0.00, 0.00, 0.00], [0.46, 0.20, 0.44], { yaw: -22, uv: UV_TOP });
+        m.add('box', [0.00, 0.14, 0.00], [0.34, 0.10, 0.32], { yaw: -22, pitch: 8, noOutline: true, uv: UV_DETAIL });
+        m.add('box', [-0.24, 0.02,  0.10], [0.18, 0.09, 0.10], { yaw: -22, uv: UV_SHADE });
+        m.add('box', [ 0.24, 0.02, -0.10], [0.18, 0.09, 0.10], { yaw: -22, uv: UV_SHADE });
+        m.add('box', [ 0.10, 0.02,  0.24], [0.10, 0.09, 0.18], { yaw: -22, uv: UV_SIDE });
+        m.add('box', [-0.10, 0.02, -0.24], [0.10, 0.09, 0.18], { yaw: -22, uv: UV_SIDE });
+      } else {
+        m.add('box', [ 0.00, 0.00, -0.06], [0.32, 0.14, 0.30], { yaw: 10, uv: UV_SHADE });
+        m.add('box', [-0.11, 0.06,  0.04], [0.18, 0.26, 0.48], { yaw: -24, pitch: 16, roll: 14, uv: UV_SIDE });
+        m.add('box', [ 0.12, 0.06,  0.02], [0.20, 0.28, 0.52], { yaw: 20, pitch: 14, roll: -12, uv: UV_TOP });
+        m.add('box', [ 0.00, 0.12, -0.02], [0.34, 0.08, 0.14], { yaw: 6, noOutline: true, uv: UV_DETAIL });
+      }
+      break;
+    }
+
+    case 'StoneBlocks': {
+      const yaw = -32;
+      const right = rotVec([1, 0, 0], 0, yaw, 0);
+      const bw = 0.21, bh = 0.15, bl = 0.44;
+      if (v === 0) {
+        m.add('box', [0, 0, 0], [bw, bh, bl], { yaw, uv: UV_TOP });
+      } else if (v === 1) {
+        m.add('box', mul3(right, -0.125), [bw, bh, bl], { yaw, uv: UV_TOP });
+        m.add('box', mul3(right,  0.125), [bw, bh, bl], { yaw, uv: UV_TOP });
+        m.add('box', [0, 0.01, 0], [0.28, 0.04, 0.24], { yaw, noOutline: true, uv: UV_SHADE });
+      } else {
+        m.add('box', mul3(right, -0.125), [bw, bh, bl], { yaw, uv: UV_TOP });
+        m.add('box', mul3(right,  0.125), [bw, bh, bl], { yaw, uv: UV_TOP });
+        m.add('box', [0, bh - 0.015, 0], [bw, bh, bl * 0.96], { yaw, uv: UV_TOP });
+      }
+      break;
+    }
+
+    case 'Steel': {
+      if (v === 0) {
+        m.add('box', [0.00, 0.00, 0.00], [0.34, 0.19, 0.28], { yaw: -14, uv: UV_TOP });
+        m.add('wedge', [0.00, 0.188, 0.00], [0.34, 0.09, 0.28], { yaw: 166, uv: UV_TOP });
+        m.add('box', [0.08, 0.02, 0.09], [0.18, 0.15, 0.14], { yaw: 8, noOutline: true, uv: UV_DETAIL });
+      } else if (v === 1) {
+        m.add('box', [-0.06, 0.00,  0.02], [0.36, 0.21, 0.30], { yaw: -16, uv: UV_TOP });
+        m.add('wedge', [-0.06, 0.208, 0.02], [0.36, 0.09, 0.30], { yaw: 164, uv: UV_TOP });
+        m.add('box', [ 0.12, 0.00, -0.04], [0.28, 0.18, 0.26], { yaw: 22, uv: UV_SIDE });
+        m.add('box', [-0.02, 0.03,  0.11], [0.18, 0.16, 0.14], { yaw: 6, noOutline: true, uv: UV_DETAIL });
+      } else {
+        m.add('box', [-0.10, 0.00, -0.06], [0.36, 0.23, 0.28], { yaw: -18, uv: UV_SIDE });
+        m.add('wedge', [-0.10, 0.228, -0.06], [0.36, 0.10, 0.28], { yaw: 162, uv: UV_TOP });
+        m.add('box', [-0.18, 0.02,  0.02], [0.18, 0.18, 0.16], { yaw: 6, noOutline: true, uv: UV_DETAIL });
+
+        m.add('box', [ 0.08, 0.00,  0.07], [0.38, 0.20, 0.30], { yaw: 14, uv: UV_TOP });
+        m.add('wedge', [ 0.08, 0.198,  0.07], [0.38, 0.10, 0.30], { yaw: -166, uv: UV_TOP });
+        m.add('box', [ 0.17, 0.02,  0.14], [0.18, 0.16, 0.15], { yaw: -8, noOutline: true, uv: UV_DETAIL });
+      }
+      break;
+    }
+
+    case 'Plasteel': {
+      const yaw = -24;
+      if (v === 0) {
+        m.add('box', [0, 0, 0], [0.20, 0.14, 0.38], { yaw, uv: UV_TOP });
+      } else if (v === 1) {
+        m.add('box', [0, 0, 0], [0.24, 0.15, 0.50], { yaw, uv: UV_TOP });
+      } else {
+        const right = rotVec([1, 0, 0], 0, yaw, 0);
+        const fwd = rotVec([0, 0, 1], 0, yaw, 0);
+        m.add('box', sub3(mul3(right, -0.135), mul3(fwd, 0.03)), [0.16, 0.16, 0.50], { yaw, uv: UV_TOP });
+        m.add('box', add3(mul3(right,  0.135), mul3(fwd, 0.03)), [0.16, 0.16, 0.50], { yaw, uv: UV_TOP });
+        m.add('box', [0, 0.005, 0], [0.18, 0.15, 0.28], { yaw: yaw + 40, noOutline: true, uv: UV_TOP });
+      }
+      break;
+    }
+
+    case 'Uranium': {
+      if (v === 0) {
+        m.add('box', [0, 0, 0], [0.26, 0.24, 0.26], { yaw: 18, uv: UV_TOP });
+      } else if (v === 1) {
+        m.add('box', [0, 0, 0], [0.36, 0.30, 0.34], { yaw: -16, uv: UV_TOP });
+        m.add('box', [0.02, 0.22, 0.00], [0.26, 0.14, 0.24], { yaw: 12, noOutline: true, uv: UV_TOP });
+      } else {
+        m.add('box', [ 0.00, 0.00,  0.00], [0.42, 0.24, 0.38], { yaw: -14, uv: UV_SIDE });
+        m.add('box', [-0.02, 0.16,  0.01], [0.32, 0.22, 0.28], { yaw: -10, pitch: 6, uv: UV_TOP });
+        m.add('box', [-0.03, 0.30,  0.02], [0.22, 0.12, 0.20], { yaw: -6, noOutline: true, uv: UV_TOP });
+        m.add('box', [ 0.14, 0.00, -0.06], [0.24, 0.20, 0.26], { yaw: 24, noOutline: true, uv: UV_SHADE });
+      }
+      break;
+    }
+
+    case 'NuggetHeap': {
+      if (v === 0) {
+        m.add('sph', [0, 0, 0], [0.26, 0.18, 0.22], { yaw: 15, uv: UV_TOP });
+      } else {
+        m.add('sph', [ 0.00, 0.00,  0.00], [0.46, 0.18, 0.40], { uv: UV_SIDE });
+        m.add('sph', [-0.14, 0.00,  0.08], [0.24, 0.17, 0.22], { uv: UV_SIDE });
+        m.add('sph', [ 0.15, 0.00,  0.07], [0.24, 0.17, 0.22], { uv: UV_TOP });
+        m.add('sph', [-0.12, 0.00, -0.10], [0.24, 0.16, 0.22], { uv: UV_SHADE });
+        m.add('sph', [ 0.13, 0.00, -0.09], [0.24, 0.16, 0.22], { uv: UV_SIDE });
+        if (v >= 2) {
+          m.add('sph', [-0.07, 0.10,  0.02], [0.24, 0.18, 0.22], { uv: UV_TOP });
+          m.add('sph', [ 0.08, 0.10,  0.01], [0.23, 0.17, 0.21], { uv: UV_TOP });
+          m.add('sph', [ 0.00, 0.16, -0.01], [0.22, 0.16, 0.20], { noOutline: true, uv: UV_TOP });
+        }
+      }
+      break;
+    }
+
+    case 'Jade': {
+      m.add('sph', [-0.08, 0.00,  0.05], [0.32, 0.24, 0.28], { uv: UV_SIDE });
+      m.add('sph', [ 0.10, 0.00,  0.04], [0.30, 0.22, 0.28], { uv: UV_TOP });
+      if (v >= 1) {
+        m.add('sph', [ 0.00, 0.00, -0.08], [0.34, 0.25, 0.30], { uv: UV_SHADE });
+        m.add('sph', [ 0.00, 0.11,  0.00], [0.30, 0.28, 0.28], { uv: UV_TOP });
+      }
+      if (v >= 2) {
+        m.add('sph', [-0.02, 0.22,  0.01], [0.22, 0.18, 0.20], { noOutline: true, uv: UV_DETAIL });
+      }
+      break;
+    }
+
+    case 'Obsidian': {
+      m.add('box', [ 0.00, 0.00,  0.00], [0.42, 0.18, 0.38], { yaw: -18, uv: UV_SHADE });
+      m.add('cone', [-0.04, 0.08,  0.02], [0.26, 0.34, 0.24], { pitch: -12, roll: -10, taper: 0.14, uv: UV_TOP });
+      if (v >= 1) {
+        m.add('cone', [ 0.11, 0.06,  0.04], [0.22, 0.28, 0.20], { pitch: -16, roll: -18, taper: 0.16, uv: UV_SIDE });
+        m.add('cone', [-0.12, 0.05, -0.06], [0.20, 0.24, 0.20], { pitch: 10, roll: 14, taper: 0.18, uv: UV_SIDE });
+      }
+      if (v >= 2) {
+        m.add('cone', [ 0.04, 0.10, -0.08], [0.22, 0.30, 0.20], { pitch: -18, roll: 8, taper: 0.15, uv: UV_DETAIL });
+      }
+      break;
+    }
+
+    case 'Bioferrite': {
+      m.add('box', [ 0.00, 0.00,  0.00], [0.44, 0.20, 0.40], { yaw: 22, uv: UV_SIDE });
+      m.add('box', [-0.06, 0.08,  0.04], [0.24, 0.26, 0.32], { yaw: -26, pitch: 18, roll: 14, uv: UV_TOP });
+      if (v >= 1) {
+        m.add('box', [ 0.10, 0.06, -0.04], [0.22, 0.24, 0.28], { yaw: 32, pitch: -16, roll: -14, uv: UV_DETAIL });
+        m.add('cone', [-0.12, 0.10, -0.06], [0.18, 0.24, 0.18], { pitch: -22, roll: 18, taper: 0.18, noOutline: true, uv: UV_DETAIL });
+      }
+      if (v >= 2) {
+        m.add('cone', [0.06, 0.12, 0.08], [0.18, 0.24, 0.18], { pitch: 20, roll: -16, taper: 0.18, noOutline: true, uv: UV_TOP });
+      }
+      break;
+    }
+
+    case 'WoodLog': {
+      const yaw = -32;
+      const d = 0.18, len = 0.56;
+      const right = rotVec([1, 0, 0], 0, yaw, 0);
+      if (v === 0) {
+        addSingleLog(m, [0, 0, 0], d, len, yaw);
+      } else if (v === 1) {
+        addSingleLog(m, mul3(right, -0.105), d, len, yaw);
+        addSingleLog(m, mul3(right,  0.105), d, len, yaw);
+        m.add('box', [0, 0.02, 0], [0.24, 0.06, 0.28], { yaw, noOutline: true, uv: UV_SHADE });
+      } else {
+        addSingleLog(m, mul3(right, -0.105), d, len, yaw);
+        addSingleLog(m, mul3(right,  0.105), d, len, yaw);
+        addSingleLog(m, [0, d * 0.78, 0], d * 0.96, len * 0.96, yaw);
+        m.add('box', [0, 0.02, 0], [0.24, 0.08, 0.28], { yaw, noOutline: true, uv: UV_SHADE });
+      }
+      break;
+    }
+
+    case 'HexPanel': {
+      const layers = v === 0 ? 1 : (v === 1 ? 2 : 3);
+      for (let i = 0; i < layers; i++) {
+        const ox = (i - (layers - 1) * 0.5) * 0.050;
+        const oz = (i - (layers - 1) * 0.5) * 0.038;
+        const y = i * 0.075;
+        m.add('box', [ox, y, oz], [0.38, 0.080, 0.38], { yaw: -28, uv: UV_TOP });
+        m.add('box', [ox, y + 0.002, oz], [0.38, 0.076, 0.38], { yaw: 17, noOutline: true, uv: UV_TOP });
+      }
+      break;
+    }
+
+    case 'FabricRoll': {
+      const yaw = -30;
+      const fwd = rotVec([0, 0, 1], 0, yaw, 0);
+      const right = rotVec([1, 0, 0], 0, yaw, 0);
+      m.add('box', mul3(right, 0.08), [0.34, 0.045, 0.48], { yaw, uv: UV_TOP });
+      const d = v === 0 ? 0.18 : (v === 1 ? 0.22 : 0.25);
+      const len = 0.54;
+      const p0 = sub3(add3(mul3(right, -0.04), [0, d * 0.48, 0]), mul3(fwd, len * 0.5));
+      m.add('cyl', p0, [d, len, d], { yaw, pitch: 90, uv: UV_TOP });
+      m.add('cyl', sub3(p0, mul3(fwd, 0.005)), [d * 0.76, 0.018, d * 0.76], { yaw, pitch: 90, noOutline: true, uv: UV_DETAIL });
+      m.add('cyl', sub3(p0, mul3(fwd, 0.008)), [d * 0.30, 0.020, d * 0.30], { yaw, pitch: 90, noOutline: true, uv: UV_SHADE });
+      m.add('cyl', add3(p0, mul3(fwd, len - 0.013)), [d * 0.76, 0.018, d * 0.76], { yaw, pitch: 90, noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+
+    case 'CompInd': {
+      m.add('box', [ 0.00, 0.00,  0.00], [0.38, 0.14, 0.36], { yaw: -16, uv: UV_SIDE });
+      m.add('box', [-0.08, 0.10, -0.06], [0.24, 0.16, 0.22], { yaw: 24, uv: UV_SHADE });
+      m.add('box', [-0.02, 0.12,  0.02], [0.14, 0.14, 0.48], { yaw: -38, uv: UV_TOP });
+      m.add('cyl', [ 0.11, 0.04,  0.09], [0.18, 0.22, 0.18], { uv: UV_DETAIL });
+      m.add('cyl', [-0.11, 0.06,  0.08], [0.18, 0.16, 0.18], { uv: UV_TOP });
+      break;
+    }
+
+    case 'CompSpacer': {
+      m.add('box', [ 0.00, 0.00,  0.00], [0.44, 0.16, 0.40], { uv: UV_SIDE });
+      m.add('box', [-0.03, 0.12, -0.02], [0.36, 0.12, 0.32], { uv: UV_TOP });
+      m.add('cyl', [ 0.10, 0.14, -0.06], [0.22, 0.15, 0.22], { uv: UV_TOP });
+      m.add('cyl', [ 0.10, 0.27, -0.06], [0.14, 0.03, 0.14], { noOutline: true, uv: UV_DETAIL });
+      m.add('box', [-0.08, 0.04,  0.16], [0.22, 0.12, 0.12], { noOutline: true, uv: UV_SHADE });
+      break;
+    }
+
+    case 'Chemfuel': {
+      m.add('box', [ 0.00, 0.00, 0.00], [0.36, 0.36, 0.24], { uv: UV_TOP });
+      m.add('box', [-0.03, 0.33, 0.00], [0.24, 0.08, 0.18], { uv: UV_TOP });
+      m.add('box', [-0.05, 0.39, 0.00], [0.18, 0.05, 0.10], { uv: UV_SIDE });
+      m.add('cyl', [ 0.11, 0.33, 0.00], [0.11, 0.10, 0.11], { roll: -32, uv: UV_DETAIL });
+      m.add('box', [ 0.00, 0.07, 0.00], [0.24, 0.22, 0.26], { noOutline: true, uv: UV_SIDE });
+      break;
+    }
+
+    case 'Bottles': {
+      m.add('box', [0.00, 0.01, -0.01], [0.18, 0.06, 0.14], { noOutline: true, uv: UV_TOP });
+      const centers = [
+        [-0.11, 0.00,  0.04],
+        [ 0.11, 0.00,  0.04],
+        [ 0.00, 0.00, -0.08],
+      ];
+      for (const c of centers) {
+        m.add('cyl', c, [0.18, 0.25, 0.18], { uv: UV_TOP });
+        m.add('cyl', [c[0], c[1] + 0.055, c[2]], [0.194, 0.11, 0.194], { noOutline: true, uv: UV_DETAIL });
+        m.add('cyl', [c[0], c[1] + 0.23, c[2]], [0.09, 0.07, 0.09], { noOutline: true, uv: UV_TOP });
+        m.add('cyl', [c[0], c[1] + 0.28, c[2]], [0.10, 0.05, 0.10], { uv: UV_SHADE });
+      }
+      break;
+    }
+
+    case 'MedBox': {
+      const ultra = key === 'medicineultratech';
+      for (let i = 0; i < 3; i++) {
+        m.add('box', [0, i * 0.075, 0], [0.44, 0.082, 0.38], { uv: UV_TOP });
+      }
+      const topY = 0.232;
+      m.add('box', [0, topY, 0], [0.30, 0.016, 0.26], { noOutline: true, uv: ultra ? UV_TOP : UV_SIDE });
+      m.add('box', [0, topY + 0.010, 0], [0.22, 0.020, 0.076], { noOutline: true, uv: UV_DETAIL });
+      m.add('box', [0, topY + 0.010, 0], [0.076, 0.020, 0.22], { noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+
+    case 'MedHerbal': {
+      for (let i = 0; i < 3; i++) {
+        m.add('box', [0, i * 0.072, 0], [0.42, 0.080, 0.36], { uv: UV_TOP });
+      }
+      m.add('box', [0, 0.005, 0], [0.442, 0.226, 0.072], { noOutline: true, uv: UV_SHADE });
+      m.add('box', [0, 0.005, 0], [0.072, 0.226, 0.382], { noOutline: true, uv: UV_SHADE });
+      m.add('sph', [ 0.00, 0.205,  0.00], [0.26, 0.08, 0.22], { noOutline: true, uv: UV_DETAIL });
+      m.add('sph', [-0.06, 0.215,  0.03], [0.18, 0.08, 0.15], { noOutline: true, uv: UV_DETAIL });
+      m.add('sph', [ 0.06, 0.215, -0.02], [0.18, 0.08, 0.15], { noOutline: true, uv: UV_DETAIL });
+      break;
+    }
+
+    case 'Wastepack': {
+      const bags = [
+        [-0.11, 0.00,  0.05],
+        [ 0.12, 0.00,  0.04],
+        [ 0.00, 0.06, -0.07],
+      ];
+      for (let i = 0; i < bags.length; i++) {
+        const b = bags[i];
+        m.add('sph', b, [0.32, 0.26, 0.28], { uv: i === 2 ? UV_TOP : UV_SIDE });
+        m.add('cyl', [b[0], b[1] + 0.22, b[2]], [0.10, 0.04, 0.10], { noOutline: true, uv: UV_SHADE });
+        m.add('cone', [b[0] - 0.02, b[1] + 0.24, b[2]], [0.09, 0.09, 0.08], { roll: 18, taper: 0.25, uv: UV_TOP });
+        m.add('cone', [b[0] + 0.02, b[1] + 0.24, b[2]], [0.08, 0.08, 0.08], { roll: -18, taper: 0.25, noOutline: true, uv: UV_DETAIL });
+      }
+      break;
+    }
+  }
+  return m;
+}
+
+// ---------------------------------------------------------------- ModelBuilder 顶点与反绕描边壳生成（同 Model3D.cs）
+function compileMesh(itemKey, m, outlineW) {
+  const pos = [], norms = [], uvs = [], idx = [];
+  const hPos = [], hIdx = [];
+  const partBoxes = [];
+
+  const rTop   = getUvRect(itemKey, 'top');
+  const rSide  = getUvRect(itemKey, 'side');
+  const rShade = getUvRect(itemKey, 'shade');
+  const rDet   = getUvRect(itemKey, 'detail');
+
+  for (const p of m.parts) {
+    // 对齐 ItemModels3D.BuildUvSpecs 的顶面与四向侧面取样策略
+    let topRect = rTop, sideN = rSide, sideS = rShade, sideE = rSide, sideW = rShade;
+    if (p.uv === UV_SIDE) {
+      topRect = rSide; sideN = rSide; sideS = rShade; sideE = rSide; sideW = rShade;
+    } else if (p.uv === UV_SHADE) {
+      topRect = rShade; sideN = sideS = sideE = sideW = rShade;
+    } else if (p.uv === UV_DETAIL) {
+      topRect = rDet; sideN = sideS = sideE = sideW = rDet;
+    }
+
+    const mapRect = (rect, u, v) => [
+      rect[0] + (rect[2] - rect[0]) * Math.min(1, Math.max(0, u)),
+      rect[1] + (rect[3] - rect[1]) * Math.min(1, Math.max(0, v)),
+    ];
+    const xform = lp => add3(p.pos, rotVec(lp, p.pitch, p.yaw, p.roll));
+
+    const pVerts = [], pUvs = [], pTris = [];
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+    const vtx = (lp, uv, rect = topRect) => {
+      const wp = xform(lp);
+      if (wp[0] < x0) x0 = wp[0]; if (wp[0] > x1) x1 = wp[0];
+      if (wp[1] < y0) y0 = wp[1]; if (wp[1] > y1) y1 = wp[1];
+      if (wp[2] < z0) z0 = wp[2]; if (wp[2] > z1) z1 = wp[2];
+      pVerts.push(wp);
+      pUvs.push(mapRect(rect, uv[0], uv[1]));
+      return pVerts.length - 1;
+    };
+    const tri = (a, b, c) => { pTris.push(a, b, c); };
+    const quad = (a, b, c, d, ua, ub, uc, ud, rect = topRect) => {
+      const i0 = vtx(a, ua, rect), i1 = vtx(b, ub, rect), i2 = vtx(c, uc, rect), i3 = vtx(d, ud, rect);
+      pTris.push(i0, i1, i2, i0, i2, i3);
+    };
+
+    const [sx, sy, sz] = p.size;
+    if (p.kind === 'box') {
+      const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
+      quad([-hx, 0, -hz], [-hx, hy, -hz], [ hx, hy, -hz], [ hx, 0, -hz], [0,0],[0,1],[1,1],[1,0], sideN);
+      quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+      quad([-hx, 0,  hz], [-hx, hy,  hz], [-hx, hy, -hz], [-hx, 0, -hz], [0,0],[0,1],[1,1],[1,0], sideW);
+      quad([ hx, 0, -hz], [ hx, hy, -hz], [ hx, hy,  hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideE);
+      quad([-hx, hy, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, hy, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
+      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+    } else if (p.kind === 'wedge') {
+      const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
+      quad([-hx, 0, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, 0, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
+      quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+      tri(vtx([-hx, 0, -hz], [0,0], sideW), vtx([-hx, 0, hz], [1,0], sideW), vtx([-hx, hy, hz], [0.5,1], sideW));
+      tri(vtx([ hx, 0,  hz], [0,0], sideE), vtx([ hx, 0, -hz], [1,0], sideE), vtx([ hx, hy, hz], [0.5,1], sideE));
+    } else if (p.kind === 'cyl' || p.kind === 'cone') {
+      const seg = 12, cone = p.kind === 'cone';
+      const r = sx * 0.5, rz = (sz > 0.001 ? sz : sx) * 0.5, h = sy;
+      const ratio = p.taper > 0.001 ? p.taper : (cone ? 0.02 : 1.0);
+      const topR = r * ratio, topRz = rz * ratio;
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+        quad([c0 * r, 0, s0 * rz], [c0 * topR, h, s0 * topRz], [c1 * topR, h, s1 * topRz], [c1 * r, 0, s1 * rz],
+          [i / seg, 0], [i / seg, 1], [(i + 1) / seg, 1], [(i + 1) / seg, 0], sideN);
+      }
+      if (!cone && ratio > 0.08) {
+        const tc = vtx([0, h, 0], [0.5, 0.5], topRect);
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+          const v0 = vtx([Math.cos(a0) * topR, h, Math.sin(a0) * topRz], [0.5 + Math.cos(a0) * 0.45, 0.5 + Math.sin(a0) * 0.45], topRect);
+          const v1 = vtx([Math.cos(a1) * topR, h, Math.sin(a1) * topRz], [0.5 + Math.cos(a1) * 0.45, 0.5 + Math.sin(a1) * 0.45], topRect);
+          tri(tc, v1, v0);
+        }
+      }
+      const bc = vtx([0, 0, 0], [0.5, 0.5], sideS);
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        const v0 = vtx([Math.cos(a0) * r, 0, Math.sin(a0) * rz], [0.5, 0.5], sideS);
+        const v1 = vtx([Math.cos(a1) * r, 0, Math.sin(a1) * rz], [0.5, 0.5], sideS);
+        tri(bc, v0, v1);
+      }
+    } else {
+      const lon = 14, lat = 10;
+      const rx = sx * 0.5, ry = sy * 0.5, rz = sz * 0.5;
+      for (let iy = 0; iy < lat; iy++) {
+        const v0 = (iy / lat) * Math.PI, v1 = ((iy + 1) / lat) * Math.PI;
+        const y0s = ry - Math.cos(v0) * ry, y1s = ry - Math.cos(v1) * ry;
+        const r0 = Math.sin(v0), r1 = Math.sin(v1);
+        for (let ix = 0; ix < lon; ix++) {
+          const u0 = (ix / lon) * Math.PI * 2, u1 = ((ix + 1) / lon) * Math.PI * 2;
+          const p00 = [Math.cos(u0) * r0 * rx, y0s, Math.sin(u0) * r0 * rz];
+          const p10 = [Math.cos(u1) * r0 * rx, y0s, Math.sin(u1) * r0 * rz];
+          const p11 = [Math.cos(u1) * r1 * rx, y1s, Math.sin(u1) * r1 * rz];
+          const p01 = [Math.cos(u0) * r1 * rx, y1s, Math.sin(u0) * r1 * rz];
+          const suv = pt => [
+            0.5 + 0.45 * (rx > 0.001 ? pt[0] / rx : 0),
+            0.5 + 0.45 * (ry > 0.001 ? (pt[1] - ry) / ry : 0),
+          ];
+          quad(p00, p01, p11, p10, suv(p00), suv(p01), suv(p11), suv(p10), topRect);
+        }
+      }
+    }
+
+    partBoxes.push({ k: p.kind, uv: p.uv, x0, x1, y0, y1, z0, z1 });
+
+    const avg = pVerts.map(() => [0, 0, 0]);
+    const keyOf = v => `${Math.round(v[0]*1000)},${Math.round(v[1]*1000)},${Math.round(v[2]*1000)}`;
+    const groups = new Map();
+    for (let i = 0; i < pVerts.length; i++) {
+      const k = keyOf(pVerts[i]);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    for (let i = 0; i < pTris.length; i += 3) {
+      const ia = pTris[i], ib = pTris[i + 1], ic = pTris[i + 2];
+      const pa = pVerts[ia], pb = pVerts[ib], pc = pVerts[ic];
+      const ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2];
+      const vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      avg[ia][0] += nx; avg[ia][1] += ny; avg[ia][2] += nz;
+      avg[ib][0] += nx; avg[ib][1] += ny; avg[ib][2] += nz;
+      avg[ic][0] += nx; avg[ic][1] += ny; avg[ic][2] += nz;
+    }
+
+    const baseV = pos.length / 3;
+    for (let i = 0; i < pVerts.length; i++) {
+      pos.push(pVerts[i][0], pVerts[i][1], pVerts[i][2]);
+      uvs.push(pUvs[i][0], pUvs[i][1]);
+      if (p.kind === 'box' || p.kind === 'wedge') {
+        const len = Math.hypot(avg[i][0], avg[i][1], avg[i][2]) || 1;
+        norms.push(avg[i][0] / len, avg[i][1] / len, avg[i][2] / len);
+      } else {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        norms.push(sxn / len, syn / len, szn / len);
+      }
+    }
+    for (let i = 0; i < pTris.length; i++) idx.push(baseV + pTris[i]);
+
+    if (!p.noOutline && outlineW > 0) {
+      const hBase = hPos.length / 3;
+      for (let i = 0; i < pVerts.length; i++) {
+        const g = groups.get(keyOf(pVerts[i]));
+        let sxn = 0, syn = 0, szn = 0;
+        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
+        const len = Math.hypot(sxn, syn, szn) || 1;
+        hPos.push(
+          pVerts[i][0] + (sxn / len) * outlineW,
+          pVerts[i][1] + (syn / len) * outlineW,
+          pVerts[i][2] + (szn / len) * outlineW
+        );
+      }
+      for (let i = 0; i < pTris.length; i += 3) {
+        hIdx.push(hBase + pTris[i], hBase + pTris[i + 2], hBase + pTris[i + 1]);
+      }
+    }
+  }
+
+  const bodyGeo = new THREE.BufferGeometry();
+  bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  bodyGeo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+  bodyGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  bodyGeo.setIndex(idx);
+
+  const hullGeo = new THREE.BufferGeometry();
+  hullGeo.setAttribute('position', new THREE.Float32BufferAttribute(hPos, 3));
+  hullGeo.setIndex(hIdx);
+
+  return { bodyGeo, hullGeo, partBoxes };
+}
+
+const ITEMS_LIST = Object.keys(KEY_TO_ARCH);
+
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
+renderer.setClearColor(0x20242c, 1);
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x20242c);
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.02, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.65));
+const L1 = new THREE.DirectionalLight(0xffffff, 1.55); L1.position.set(3.5, 6.5, 4.5); scene.add(L1);
+const L2 = new THREE.DirectionalLight(0xffffff, 0.55); L2.position.set(-4, 3.5, -3.5); scene.add(L2);
+
+const grid = new THREE.GridHelper(16, 16, 0x4a5568, 0x2e3446);
+grid.position.y = -0.002;
+scene.add(grid);
+
+const q = new URLSearchParams(location.search);
+const STILL   = q.get('still') === '1';
+const GALLERY = q.get('gallery') === '1';
+const PARTS   = q.get('parts') === '1';
+const SHEET   = q.get('sheet');
+const SINGLE  = q.get('single');
+
+const AUDIT_GROUPS = [
+  [
+    'chunksandstone', 'chunkgranite', 'chunklimestone', 'chunkslate', 'chunkmarble', 'chunkvacstone',
+    'chunkslagsteel', 'blockssandstone', 'blocksgranite', 'blockslimestone', 'blocksslate', 'blocksmarble', 'blocksvacstone',
+    'steel', 'plasteel', 'uranium', 'silver', 'gold', 'jade',
+  ],
+  [
+    'obsidian', 'bioferrite', 'woodlog', 'gravlitepanel', 'cloth', 'synthread', 'devilstrandcloth',
+    'hyperweave', 'componentindustrial', 'componentspacer', 'chemfuel', 'neutroamine',
+    'medicineindustrial', 'medicineultratech', 'medicineherbal', 'wastepack',
+  ],
+];
+
+function hideChrome() {
+  if (!STILL && !GALLERY && !PARTS && SHEET === null && !SINGLE) return;
+  for (const id of ['hud', 'sp', 'vw']) {
+    const e = document.getElementById(id);
+    if (e) e.style.display = 'none';
+  }
+}
+
+let root = null, curKey = q.get('item') || 'steel', curV = q.get('view') || '45°';
+
+const VIEWS = {
+  '45°':     { off: [ 0.78, 0.72,  0.78] },
+  '侧视·东': { off: [-1.05, 0.36,  0.00] },
+  '主视·南': { off: [ 0.00, 0.42,  1.05] },
+  '俯视':    { off: [ 0.02, 1.25,  0.18] },
+};
+
+function defaultVariantOf(key) {
+  if (key === 'chunksandstone' || key === 'chunkslate') return 0;
+  if (key === 'chunkgranite' || key === 'chunkmarble') return 1;
+  if (key === 'chunklimestone' || key === 'chunkvacstone') return 2;
+  if (key === 'chunkslagsteel') return 0;
+  return 2;
+}
+
+function buildOneGroup(key, variant = null) {
+  const a = archOf(key);
+  const v = variant !== null ? variant : defaultVariantOf(key);
+  const m = buildItemModel(key, a, v);
+  const ow = (a === 'ChunkRock' || a === 'ChunkSlag') ? 0.020 : 0.015;
+  const { bodyGeo, hullGeo, partBoxes } = compileMesh(key, m, ow);
+  const grp = new THREE.Group();
+  const bodyMesh = new THREE.Mesh(bodyGeo, matAtlas);
+  const hullMesh = new THREE.Mesh(hullGeo, matHull);
+  bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
+  grp.add(hullMesh);
+  grp.add(bodyMesh);
+  return { grp, a, partBoxes, bodyGeo };
+}
+
+function focus() {
+  if (!root) return;
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.y * 1.25, size.z, 0.35);
+  const r = span * 1.65;
+  const o = (VIEWS[curV] || VIEWS['45°']).off;
+  camera.position.set(center.x + o[0] * r, center.y + o[1] * r, center.z + o[2] * r);
+  controls.target.copy(center);
+  controls.update();
+}
+
+function show(key) {
+  hideChrome();
+  if (root) {
+    scene.remove(root);
+    root.traverse(o => { o.geometry?.dispose?.(); });
+  }
+  MISSING.clear();
+  const { grp, a, partBoxes } = buildOneGroup(key);
+  root = grp;
+  scene.add(root);
+  focus();
+  const hud = document.getElementById('hud');
+  if (hud) {
+    hud.innerHTML =
+      `<b>${key}</b> · 原型 <b>${a}</b> · 视图 <b>${curV}</b> · 部件数 <b>${partBoxes.length}</b>` +
+      (MISSING.size ? `<br><b style="color:#ff8f8f">缺取样区 ${[...MISSING].join(' ')}</b>` : '');
+  }
+}
+
+const vbar = document.getElementById('vw'), sbar = document.getElementById('sp');
+Object.keys(VIEWS).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = k; b.dataset.v = k;
+  b.onclick = () => {
+    curV = k;
+    [...vbar.children].forEach(x => x.classList.toggle('on', x.dataset.v === k));
+    focus();
+  };
+  vbar.appendChild(b);
+});
+ITEMS_LIST.forEach(n => {
+  const b = document.createElement('button');
+  b.textContent = n; b.dataset.s = n;
+  b.onclick = () => {
+    curKey = n;
+    [...sbar.children].forEach(x => x.classList.toggle('on', x.dataset.s === n));
+    show(n);
+  };
+  sbar.appendChild(b);
+});
+
+if (PARTS) {
+  hideChrome();
+  const out = {};
+  for (const key of ITEMS_LIST) {
+    for (let v = 0; v < 3; v++) {
+      MISSING.clear();
+      const { a, partBoxes } = buildOneGroup(key, v);
+      out[`${key}#${v}`] = { arch: a, parts: partBoxes, missing: [...MISSING] };
+    }
+  }
+  const pre = document.createElement('pre');
+  pre.id = 'partjson';
+  pre.textContent = JSON.stringify(out);
+  document.body.appendChild(pre);
+} else if (GALLERY) {
+  hideChrome();
+  grid.visible = false;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  scene.background = new THREE.Color(0x28303e);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 60),
+    new THREE.MeshLambertMaterial({ color: 0x4b5668 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.003;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const keyLight = new THREE.DirectionalLight(0xfff3e0, 0.90);
+  keyLight.position.set(5, 9, 6);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  const sc = keyLight.shadow.camera;
+  sc.left = -12; sc.right = 12; sc.top = 12; sc.bottom = -12; sc.far = 35;
+  scene.add(keyLight);
+
+  const SETS = [
+    ['chunksandstone', 'chunkgranite', 'chunklimestone', 'chunkslate', 'chunkmarble', 'chunkvacstone', 'chunkslagsteel', 'blockssandstone', 'blocksgranite', 'blockslimestone', 'blocksslate', 'blocksmarble'],
+    ['blocksvacstone', 'steel', 'plasteel', 'uranium', 'silver', 'gold', 'jade', 'obsidian', 'bioferrite', 'woodlog', 'gravlitepanel', 'cloth'],
+    ['synthread', 'devilstrandcloth', 'hyperweave', 'componentindustrial', 'componentspacer', 'chemfuel', 'neutroamine', 'medicineindustrial', 'medicineultratech', 'medicineherbal', 'wastepack'],
+  ];
+  const GW = 1420, GH = 440;
+  renderer.setSize(GW, GH);
+  camera.aspect = GW / GH;
+  camera.updateProjectionMatrix();
+  const rowIdx = +(q.get('row') || 0);
+  const row = SETS[rowIdx] || SETS[0];
+  let x = 0;
+  for (const key of row) {
+    const { grp, bodyGeo } = buildOneGroup(key);
+    bodyGeo.computeBoundingBox();
+    const bb = bodyGeo.boundingBox;
+    const w = Math.max(0.42, bb.max.x - bb.min.x);
+    grp.position.set(x + w * 0.5, 0, 0);
+    scene.add(grp);
+    x += w + 0.30;
+  }
+  const midX = (x - 0.30) * 0.5;
+  const dist = Math.max(4.0, x * 0.64);
+  camera.position.set(midX, 1.52, dist);
+  controls.target.set(midX, 0.16, 0);
+  controls.update();
+  renderer.render(scene, camera);
+} else if (SHEET !== null) {
+  hideChrome();
+  grid.visible = false;
+  const list = AUDIT_GROUPS[+SHEET] || AUDIT_GROUPS[0];
+  const viewKeys = ['侧视·东', '主视·南', '45°'];
+  const CW = 220, CH = 160;
+  const totalW = CW * viewKeys.length, totalH = CH * list.length;
+  renderer.setSize(totalW, totalH);
+  renderer.setScissorTest(true);
+  camera.aspect = CW / CH;
+  camera.updateProjectionMatrix();
+
+  for (let r = 0; r < list.length; r++) {
+    const key = list[r];
+    const { grp } = buildOneGroup(key);
+    scene.add(grp);
+    const box = new THREE.Box3().setFromObject(grp);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y * 1.25, size.z, 0.38);
+    const dist = span * 1.48;
+    const wy = (list.length - 1 - r) * CH;
+    for (let c = 0; c < viewKeys.length; c++) {
+      const o = VIEWS[viewKeys[c]].off;
+      camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+      L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+      L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+      camera.lookAt(center);
+      const wx = c * CW;
+      renderer.setViewport(wx, wy, CW, CH);
+      renderer.setScissor(wx, wy, CW, CH);
+      renderer.render(scene, camera);
+    }
+    scene.remove(grp);
+    grp.traverse(o => { o.geometry?.dispose?.(); });
+  }
+} else {
+  show(curKey);
+  const loop = () => {
+    requestAnimationFrame(loop);
+    controls.update();
+    renderer.render(scene, camera);
+  };
+  loop();
+}
+</script>
+</body>
+</html>

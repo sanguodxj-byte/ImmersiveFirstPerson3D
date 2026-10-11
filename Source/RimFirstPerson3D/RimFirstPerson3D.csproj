@@ -56,4 +56,12 @@
     </Reference>
   </ItemGroup>
 
+  <Target Name="DeployToRimWorldMods" AfterTargets="Build" Condition="Exists('$(RimWorldPath)\Mods\FirstPerson3D')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(RimWorldPath)\Mods\FirstPerson3D\1.6\Assemblies\" SkipUnchangedFiles="false" Retries="1" RetryDelayMilliseconds="100" ContinueOnError="WarnAndContinue" />
+    <ItemGroup>
+      <AtlasTextures Include="..\..\1.6\Textures\FPS3D\*.png" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AtlasTextures)" DestinationFolder="$(RimWorldPath)\Mods\FirstPerson3D\1.6\Textures\FPS3D\" SkipUnchangedFiles="false" Retries="1" RetryDelayMilliseconds="100" ContinueOnError="WarnAndContinue" />
+  </Target>
+
 </Project>

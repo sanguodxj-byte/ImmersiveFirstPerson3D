@@ -7,19 +7,28 @@ using Verse;
 namespace RimFirstPerson3D
 {
     // ============================================================
-    // 天空盒与远景
+    // 天空盒与天气系统（全 GPU Shader 硬件渲染驱动）
     // ============================================================
     //
-    // 组成（全部程序化生成，不引入外部资源）：
-    //   1. 穹顶：相机为中心的球。天顶是蓝，乘上原版 CurSky 的天气色；
-    //      朝太阳的一侧烘出暖光。晴天 CurSky 几乎是白色，不能直接拿来当天空色。
-    //   2. 太阳 + 光晕，夜间对侧一颗弱月。方向来自 GenCelestial。
-    //   3. 两层云冠：包住上半球，贴图只沿风向滚动。云量跟着雨/雪/雾/雷暴过渡。
-    //   4. 星空：夜间淡入。
-    //   5. 雨丝或雪花围在相机周围；浓雾、扬沙会收紧线性雾。
-    // 原版天气绘制仍由 VanillaSuppressor 关掉，这里只做第一人称里看得见的那一层。
+    // 架构原则：
+    //   1. 100% 走现代 GPU 着色器硬件管线，彻底废除 CPU 软件逐像素烘焙贴图；
+    //   2. 100% 锚定在 RimWorld 地图 3D 世界坐标系（World-Space mapOrigin），
+    //      绝不贴在相机镜头前，任意行走、环视、大仰角抬头具备完全物理真实的 3D 空间视差；
+    //   3. 着色器矩阵：
+    //      - 天空穹顶：Unity 物理大气散射片元着色器 (Skybox/Procedural)；
+    //      - 3D 大气云层：RimWorld 原生 GPU 大气云层着色器 (ShaderDatabase.Clouds / WorldMaterials.Clouds)，
+    //        由 GPU 在片元着色器内硬件采样双层 Perlin 噪声与 SunsetGradient 色阶，由世界太阳方向驱动光照散射；
+    //      - 3D 闪电电弧：纯 GPU 加法发光着色器 (ShaderDatabase.WorldOverlayAdditive)，
+    //        纯顶点颜色渐变羽化 + 加法光子叠加，零贴图、零边缘硬切；
+    //      - 3D 空间雨雪：纯 GPU 顶点色半透明着色器 (ShaderDatabase.VertexColor)，
+    //        由顶点颜色与透明度控制水滴尖锐度与雪花光晕，零贴图开销；
+    //      - 太阳与月亮：纯三维世界天球发光着色器与大气辉光。
+    [StaticConstructorOnStartup]
     public static class SkyScenery
     {
+        public static string DebugPreset = "";
+        public static Color CurrentHorizonColor { get; private set; } = new Color(0.68f, 0.84f, 0.97f);
+
         // ---- 原版天空盒接管/还原 ----
         private static Skybox cameraSkybox;
         private static Material originalMaterial;
@@ -28,39 +37,75 @@ namespace RimFirstPerson3D
         private static bool captured;
         private static Material skyMaterial;
 
-        // ---- 穹顶 ----
-        private static Material domeMaterial;
-        private static Texture2D domeTexture;
-        private static Mesh domeMesh;
+        // ---- GPU Shader 材质库 ----
+        private static Material gpuCloudMat;
+        private static Material gpuSunMat;
+        private static Material gpuMoonMat;
+        private static Material gpuMoonGlowMat;
+        private static Material gpuStarMat;
+        private static Material gpuLightningMat;
+        private static Material gpuRainMat;
+        private static Material gpuSnowMat;
+        private static Material gpuSplashMat;
+        private static Material gpuSandMat;
 
-        // ---- 太阳 / 云 / 星 ----
-        private static Material sunMat, haloMat, cloudMat, cloudMatFar, starMat, moonMat;
-        private static Material rainMat, snowMat;
-        private static Mesh quadMesh, cloudMesh, starMesh, precipMesh;
-        private static Texture2D cloudTex, sunTex;
-        private static Vector2 cloudScroll, precipScroll;
+        // ---- 3D 世界空间网格库（1:1 真实世界米制尺寸）----
+        private static Mesh quadMesh;
+        private static Mesh starMesh;
+        private static Mesh gpuCloudMesh;
+        private static Mesh rainVolMesh;
+        private static Mesh snowVolMesh;
+        private static Mesh splashMesh;
+        private static Mesh sandNearMesh;
+        private static Mesh sandFarMesh;
+        private static Mesh activeBoltMeshA;
+        private static Mesh activeBoltMeshB;
+
+        // ---- 纹理与动画缓存 ----
+        private static Texture2D noiseTexture;
+        private static Texture2D sunsetRampTexture;
+        private static Texture2D cloudTexture;
+        private static Texture2D starAtlasTex;
+        private static Texture2D sandCurtainTex;
+        private static Vector2 cloudScroll;
+        private static Vector2 precipScroll;
         private static float lastCloudTime = -1f;
+
+        // ---- 瞬态 3D 闪电世界状态 ----
+        private static Vector2 strikeWorldXZ_A;
+        private static Vector2 strikeWorldXZ_B;
+        private static float strikeStartTime = -99f;
+        private static float nextStrikeTime = 0f;
+        private static int strikeSeedCounter = 404;
 
         public static bool HasNativeSkybox => skyMaterial != null;
 
-        /// <summary>当帧环境采样：天空色、地面色、日照强度、太阳方向、云量、配色。</summary>
-        private struct Env
+        /// <summary>当帧环境采样参数。</summary>
+        public struct Env
         {
-            public Color sky;      // 天顶
-            public Color horizon;  // 地平线
-            public Color ground;   // 地面远色
-            public float glow;     // 0 夜 .. 1 正午（CurSky，已含天气压光）
-            public float flash;    // 闪电把天空突然抬亮的部分
-            public Vector3 sunDir; // 指向太阳的单位向量（世界）
+            public Color sky;
+            public Color midSky;
+            public Color horizon;
+            public Color ground;
+            public Color sunGlowHorizon;
+            public Color sunGlowUpper;
+            public Color antiSunHorizon;
+            public float glow;
+            public float celGlow;
+            public float twilight;
+            public float flash;
+            public float aurora;
+            public Vector3 sunDir;
+            public Vector3 moonDir;
             public float cloudiness;
             public float rain, snow, sand, fog, storm, wind, windAngle;
             public float shine;
             public Color overlay;
-            public int palette;    // 0 温带 1 沙漠 2 苔原/雪 3 丛林
+            public int palette;
         }
 
         // ------------------------------------------------------------
-        // 生命周期
+        // 生命周期与 GPU 着色器材质初始化
         // ------------------------------------------------------------
 
         public static void Apply()
@@ -94,25 +139,42 @@ namespace RimFirstPerson3D
                 var shader = Shader.Find("Skybox/Procedural");
                 if (shader != null)
                 {
-                    skyMaterial = new Material(shader) { name = "FirstPerson3D_ProceduralSky" };
-                    // 程序化天空盒自带的太阳跟场景方向光走，环世界里经常偏到一边。太阳由我们自己画。
-                    if (skyMaterial.HasProperty("_SunSize")) skyMaterial.SetFloat("_SunSize", 0f);
+                    skyMaterial = new Material(shader) { name = "FirstPerson3D_GpuProceduralSky" };
+                    if (skyMaterial.HasProperty("_SunSize")) skyMaterial.SetFloat("_SunSize", 0.045f);
+                    if (skyMaterial.HasProperty("_SunSizeConvergence")) skyMaterial.SetFloat("_SunSizeConvergence", 5.0f);
                     if (skyMaterial.HasProperty("_AtmosphereThickness")) skyMaterial.SetFloat("_AtmosphereThickness", 1.15f);
-                    if (skyMaterial.HasProperty("_Exposure")) skyMaterial.SetFloat("_Exposure", 1f);
+                    if (skyMaterial.HasProperty("_Exposure")) skyMaterial.SetFloat("_Exposure", 1.05f);
                 }
             }
-            EnsureDome();
-            EnsureCelestial();
+            EnsureGpuMaterialsAndMeshes();
 
-            var env = Sample(Find.CurrentMap);
-            if (skyMaterial != null)
+            var env = SampleCached(Find.CurrentMap);
+            CurrentHorizonColor = env.horizon;
+            UpdateSkyMaterial(env);
+        }
+
+        private static void UpdateSkyMaterial(Env env)
+        {
+            if (skyMaterial == null) return;
+            float g = Mathf.Clamp01(env.glow);
+            // GPU 物理大气散射参数随昼夜动态演进：夜里将 _SkyTint、_GroundColor 与 _Exposure 一同收暗，
+            // 否则 Skybox/Procedural 的瑞利散射基底会把深夜天空刷成白昼亮蓝。
+            Color dayTint = Color.Lerp(new Color(0.76f, 0.86f, 0.98f), env.sky, 0.65f);
+            Color nightTint = new Color(0.03f, 0.06f, 0.14f);
+            if (skyMaterial.HasProperty("_SkyTint"))
+                skyMaterial.SetColor("_SkyTint", Color.Lerp(nightTint, dayTint, Mathf.Pow(g, 0.75f)));
+            if (skyMaterial.HasProperty("_GroundColor"))
+                skyMaterial.SetColor("_GroundColor", Color.Lerp(env.ground, env.horizon, 0.55f));
+            if (skyMaterial.HasProperty("_AtmosphereThickness"))
+                skyMaterial.SetFloat("_AtmosphereThickness",
+                    Mathf.Lerp(0.42f, Mathf.Lerp(0.95f, 1.55f, env.twilight * 0.8f + env.fog * 0.4f), Mathf.Clamp01(g * 1.25f)));
+            if (skyMaterial.HasProperty("_Exposure"))
+                skyMaterial.SetFloat("_Exposure", Mathf.Lerp(0.18f, 1.05f, Mathf.Pow(g, 0.68f)) + env.flash * 0.65f);
+            if (cameraSkybox != null)
             {
-                if (skyMaterial.HasProperty("_SkyTint")) skyMaterial.SetColor("_SkyTint", Color.Lerp(Color.white, env.sky, 0.6f));
-                if (skyMaterial.HasProperty("_GroundColor")) skyMaterial.SetColor("_GroundColor", Color.Lerp(new Color(0.25f, 0.27f, 0.24f), env.ground, 0.35f));
                 cameraSkybox.material = skyMaterial;
                 cameraSkybox.enabled = true;
             }
-            if (DomeNeedsUpdate(env)) UpdateDomeTexture(env);
         }
 
         public static void Restore()
@@ -131,125 +193,328 @@ namespace RimFirstPerson3D
                     cameraSkybox.enabled = originalEnabled;
                 }
             }
+            RenderSettings.fog = false;
             captured = false;
             cameraSkybox = null;
             originalMaterial = null;
             skyboxAddedByMod = false;
         }
 
+        private static void EnsureGpuMaterialsAndMeshes()
+        {
+            if (quadMesh != null) return;
+            quadMesh = BuildDoubleQuad();
+
+            // 1. GPU 大气云层着色器 (ShaderDatabase.Clouds / WorldMaterials.Clouds)
+            Shader cloudShader = ShaderDatabase.Clouds;
+            if (cloudShader == null) cloudShader = ShaderDatabase.Transparent;
+            if (cloudShader != null)
+            {
+                gpuCloudMat = new Material(cloudShader) { name = "FirstPerson3D_GpuClouds", renderQueue = 1015 };
+                noiseTexture = ContentFinder<Texture2D>.Get("Other/Perlin", false) ?? Util3D.WhiteTex;
+                sunsetRampTexture = ContentFinder<Texture2D>.Get("World/SunsetGradient", false) ?? Util3D.WhiteTex;
+                cloudTexture = ContentFinder<Texture2D>.Get("World/CloudMap", false) ?? Util3D.WhiteTex;
+                gpuCloudMat.SetTexture(ShaderPropertyIDs.NoiseTex, noiseTexture);
+                gpuCloudMat.SetTexture(ShaderPropertyIDs.SunsetColorRamp, sunsetRampTexture);
+                gpuCloudMat.SetTexture(ShaderPropertyIDs.CloudMap, cloudTexture);
+                gpuCloudMat.SetVector(ShaderPropertyIDs.Seed, new Vector2(0.42f, 0.77f));
+                gpuCloudMat.SetFloat(ShaderPropertyIDs.PlanetRadius, 540f);
+                gpuCloudMat.SetVector(ShaderPropertyIDs.PlanetOrigin, Vector3.zero);
+            }
+            gpuCloudMesh = BuildGpuCloudHemisphere(72, 32, 540f);
+
+            // 2. GPU 日月星辰着色器
+            Shader addShader = ShaderDatabase.WorldOverlayAdditive;
+            if (addShader == null) addShader = Shader.Find("Custom/Unlit additive");
+            if (addShader == null) addShader = ShaderDatabase.Transparent;
+
+            gpuSunMat = new Material(addShader) { name = "FirstPerson3D_GpuSun", renderQueue = 1009 };
+            gpuSunMat.mainTexture = MakeSunDiscTex(64, 0.25f);
+
+            gpuMoonGlowMat = new Material(addShader) { name = "FirstPerson3D_GpuMoonGlow", renderQueue = 1007 };
+            gpuMoonGlowMat.mainTexture = MakeRadialTex(64, 0.0f, 1.5f);
+
+            gpuMoonMat = new Material(ShaderDatabase.Transparent) { name = "FirstPerson3D_GpuMoon", renderQueue = 1008 };
+            gpuMoonMat.mainTexture = MakeMoonTex(128);
+
+            starAtlasTex = MakeStarAtlasTex(128);
+            gpuStarMat = new Material(ShaderDatabase.Transparent) { name = "FirstPerson3D_GpuStars", mainTexture = starAtlasTex, renderQueue = 1005 };
+            starMesh = BuildStarDome(880, 640f);
+
+            // 3. 纯 GPU 加法发光闪电 (ShaderDatabase.WorldOverlayAdditive) —— 零贴图硬边，纯顶点色高斯叠加
+            gpuLightningMat = new Material(addShader) { name = "FirstPerson3D_GpuLightning", renderQueue = 1025 };
+            gpuLightningMat.mainTexture = Util3D.WhiteTex;
+
+            // 4. 纯 GPU 顶点色半透明雨雪网格 (ShaderDatabase.VertexColor)
+            Shader vColorShader = ShaderDatabase.VertexColor ?? ShaderDatabase.Transparent;
+
+            gpuRainMat = new Material(vColorShader) { name = "FirstPerson3D_GpuRainVColor", renderQueue = 2810 };
+            gpuSnowMat = new Material(vColorShader) { name = "FirstPerson3D_GpuSnowVColor", renderQueue = 2810 };
+            gpuSplashMat = new Material(vColorShader) { name = "FirstPerson3D_GpuSplashVColor", renderQueue = 2795 };
+
+            rainVolMesh = BuildGpuVColorRainMesh(2200, 64f, 24f, new Vector2(0.5f, 0.2f), 20261018);
+            snowVolMesh = BuildGpuVColorSnowMesh(1600, 64f, 20f, 20261019);
+            splashMesh = BuildGpuVColorSplashMesh(260, 64f, 901);
+
+            sandCurtainTex = MakeSandCurtainTex(256);
+            gpuSandMat = new Material(ShaderDatabase.Transparent) { name = "FirstPerson3D_GpuSand", mainTexture = sandCurtainTex, renderQueue = 2802 };
+            sandNearMesh = BuildPrecipRing(24, 36.0f, 4.5f, 9.0f, 6.5f, 1.0f, 1.0f, 1, 0f);
+            sandFarMesh = BuildPrecipRing(28, 68.0f, 6.5f, 13.0f, 9.5f, 1.0f, 1.0f, 2, 0f);
+        }
+
         // ------------------------------------------------------------
         // 环境采样
         // ------------------------------------------------------------
 
-        private static Env Sample(Map map)
+        private static Map cachedEnvMap;
+        private static int cachedEnvFrame = -1;
+        private static Env cachedEnv;
+
+        /// <summary>当帧该图的环境（带帧缓存）。光照与天空都从这里取，保证同一个数。</summary>
+        public static Env SampleCached(Map map)
+        {
+            int f = RealTime.frameCount;
+            if (cachedEnvFrame == f && ReferenceEquals(cachedEnvMap, map)) return cachedEnv;
+            cachedEnv = Sample(map);
+            cachedEnvMap = map;
+            cachedEnvFrame = f;
+            return cachedEnv;
+        }
+
+        public static Env Sample(Map map)
         {
             var e = new Env
             {
-                sky = new Color(0.32f, 0.52f, 0.88f),
-                horizon = new Color(0.64f, 0.78f, 0.92f),
+                sky = new Color(0.09f, 0.30f, 0.76f),
+                midSky = new Color(0.24f, 0.52f, 0.90f),
+                horizon = new Color(0.68f, 0.84f, 0.97f),
                 ground = new Color(0.16f, 0.18f, 0.16f),
-                overlay = new Color(1f, 1f, 1f),
+                sunGlowHorizon = new Color(1.00f, 0.44f, 0.14f),
+                sunGlowUpper = new Color(0.95f, 0.38f, 0.50f),
+                antiSunHorizon = new Color(0.54f, 0.42f, 0.66f),
+                overlay = Color.white,
                 glow = 1f,
+                celGlow = 1f,
                 shine = 1f,
-                sunDir = new Vector3(0.3f, 0.8f, 0.5f).normalized,
+                sunDir = new Vector3(0f, 0.55f, -0.80f).normalized,
+                moonDir = new Vector3(0.14f, 0.46f, -0.85f).normalized,
                 cloudiness = 0.18f,
-                wind = 0.4f,
+                wind = 0.45f,
+                windAngle = 0.6f,
                 palette = 0
             };
-            if (map == null) return e;
 
             Color skyMul = Color.white;
-            try
-            {
-                if (map.skyManager != null)
-                {
-                    var cur = map.skyManager.CurSky;
-                    skyMul = cur.colors.sky;
-                    e.overlay = cur.colors.overlay;
-                    e.ground = cur.colors.shadow;
-                    e.glow = Mathf.Clamp01(cur.glow);
-                    e.shine = Mathf.Clamp(cur.lightsourceShineIntensity, 0f, 2f);
-                    float cel = 0f;
-                    try { cel = GenCelestial.CurCelestialSunGlow(map); } catch { }
-                    e.flash = Mathf.Clamp01(e.glow - cel);
-                }
-            }
-            catch { }
+            float dayPct = 0.50f;
+            float lat = 25f;
 
-            try
+            if (map != null)
             {
-                Vector3 sun = GenCelestial.CurSunPositionInWorldSpace();
-                if (sun.sqrMagnitude > 0.0001f) e.sunDir = sun.normalized;
-            }
-            catch { }
-
-            try
-            {
-                var wm = map.weatherManager;
-                if (wm != null)
+                try
                 {
-                    float t = wm.TransitionLerpFactor;
-                    e.rain = wm.RainRate;
-                    e.snow = wm.SnowRate;
-                    try { e.sand = wm.SandRate; } catch { }
-                    e.fog = Mathf.Lerp(WeatherFlag(wm.lastWeather, "fog"), WeatherFlag(wm.curWeather, "fog"), t);
-                    e.storm = Mathf.Lerp(WeatherFlag(wm.lastWeather, "thunder"), WeatherFlag(wm.curWeather, "thunder"), t);
-                    e.wind = wm.CurWindSpeedFactor;
-                    try
+                    dayPct = GenLocalDate.DayPercent(map);
+                    if (map.Tile.Valid && Find.WorldGrid != null)
                     {
-                        if (map.windManager != null) e.wind = map.windManager.WindSpeed;
+                        var loc = Find.WorldGrid.LongLatOf(map.Tile);
+                        lat = loc.y;
                     }
-                    catch { }
-                    e.windAngle = (map.uniqueID % 360) * Mathf.Deg2Rad;
                 }
-            }
-            catch { }
+                catch { }
 
-            // 雪天的 rainRate 也是 1，云量只取更湿的那一项，避免叠两次。
+                try
+                {
+                    var sl = map.skyManager != null ? map.skyManager.CurSkyGlow : 1f;
+                    e.glow = sl;
+                    e.celGlow = Mathf.Clamp01(Mathf.Pow(sl, 0.82f));
+                }
+                catch { }
+
+                try
+                {
+                    var wm = map.weatherManager;
+                    var w = wm != null ? wm.curWeather : null;
+                    if (w != null)
+                    {
+                        e.rain = WeatherFlag(w, "rain");
+                        e.snow = WeatherFlag(w, "snow");
+                        e.fog  = WeatherFlag(w, "fog");
+                        e.storm = WeatherFlag(w, "storm") + WeatherFlag(w, "thunder");
+                        e.sand = WeatherFlag(w, "sand") + WeatherFlag(w, "dust");
+                        e.wind = wm.CurWindSpeedFactor;
+                        e.windAngle = 0.6f;
+
+                        if (wm.eventHandler != null)
+                        {
+                            var events = wm.eventHandler.LiveEventsListForReading;
+                            for (int i = 0; i < events.Count; i++)
+                            {
+                                if (events[i] is WeatherEvent_LightningFlash lf)
+                                    e.flash = Mathf.Max(e.flash, lf.SkyTargetLerpFactor);
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    var gc = map.gameConditionManager;
+                    if (gc != null)
+                    {
+                        var conds = gc.ActiveConditions;
+                        for (int i = 0; i < conds.Count; i++)
+                        {
+                            var def = conds[i].def;
+                            string cn = def != null ? def.defName : "";
+                            if (!string.IsNullOrEmpty(cn) && cn.ToLowerInvariant().Contains("aurora"))
+                                e.aurora = Mathf.Max(e.aurora, conds[i].SkyTargetLerpFactor(map));
+                        }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    string b = map.Biome != null ? map.Biome.defName.ToLowerInvariant() : "";
+                    if (b.Contains("desert") || b.Contains("arid")) e.palette = 1;
+                    else if (b.Contains("tundra") || b.Contains("ice") || b.Contains("boreal")) e.palette = 2;
+                    else if (b.Contains("jungle") || b.Contains("tropical")) e.palette = 3;
+                }
+                catch { }
+            }
+
+            // 调试预设覆盖（供 DevMode 或 GABS 验收各时段与各天气）
+            if (!string.IsNullOrEmpty(DebugPreset))
+                ApplyDebugPreset(DebugPreset, ref e, ref dayPct, ref skyMul);
+
+            // 本地三维天球太阳与月亮轨迹：东(+X)升 -> 正午偏南/北高空 -> 西(-X)落
+            float ha = (dayPct - 0.5f) * Mathf.PI * 2f;
+            float rawElev = Mathf.Cos(ha);
+            float maxAlt = Mathf.Lerp(0.56f, 0.38f, Mathf.Clamp01(Mathf.Abs(lat) / 75f));
+            float sy = rawElev >= 0f
+                ? Mathf.Lerp(rawElev * maxAlt, Mathf.Lerp(-0.02f, maxAlt, e.celGlow), 0.32f)
+                : rawElev * 0.55f;
+            float sx = -Mathf.Sin(ha);
+            float zSign = lat < -1f ? 1f : -1f;
+            float sz = zSign * 0.80f * (0.35f + 0.65f * Mathf.Max(0f, rawElev));
+            e.sunDir = new Vector3(sx, sy, sz).normalized;
+
+            float mElev = Mathf.Max(0.28f, -rawElev * 0.46f);
+            e.moonDir = new Vector3(Mathf.Sin(ha) * 0.45f + 0.14f, mElev, zSign * 0.85f).normalized;
+
             float wet = e.snow > 0.2f ? Mathf.Max(e.snow, e.rain * 0.35f) : e.rain;
-            e.cloudiness = Mathf.Clamp01(0.16f + wet * 0.62f + e.fog * 0.7f + e.sand * 0.4f + e.storm * 0.28f);
+            float baseCloud = (e.glow < 0.2f && wet < 0.1f) ? 0.06f : (e.sand > 0.5f ? 0.05f : 0.18f);
+            e.cloudiness = Mathf.Clamp01(baseCloud + wet * 0.65f + (e.sand > 0.5f ? 0f : e.fog * 0.55f) + e.storm * 0.28f);
 
             float g = Mathf.Clamp01(e.glow);
-            var dayZenith = new Color(0.30f, 0.50f, 0.86f);
-            var nightZenith = new Color(0.015f, 0.02f, 0.06f);
-            var dayHorizon = new Color(0.62f, 0.78f, 0.94f);
-            var nightHorizon = new Color(0.05f, 0.07f, 0.12f);
-            e.sky = Color.Lerp(nightZenith, dayZenith, g) * skyMul;
-            e.horizon = Color.Lerp(nightHorizon, dayHorizon, Mathf.Clamp01(g * 1.25f));
-            float sunLow = 1f - Mathf.Clamp01(e.sunDir.y * 2.4f);
-            e.horizon = Color.Lerp(e.horizon, new Color(0.98f, 0.55f, 0.28f) * skyMul, sunLow * 0.72f * g);
-            var overcast = new Color(0.50f, 0.54f, 0.60f) * Mathf.Lerp(0.28f, 1f, g);
-            e.sky = Color.Lerp(e.sky, overcast, e.cloudiness * 0.72f);
-            e.horizon = Color.Lerp(e.horizon, overcast, e.cloudiness * 0.55f + e.fog * 0.35f);
-            if (e.fog > 0.05f)
+            var dayZenith = new Color(0.09f, 0.30f, 0.76f);
+            var nightZenith = new Color(0.012f, 0.024f, 0.072f);
+            var dayMid = new Color(0.24f, 0.52f, 0.90f);
+            var nightMid = new Color(0.028f, 0.052f, 0.128f);
+            var dayHorizon = new Color(0.68f, 0.84f, 0.97f);
+            var nightHorizon = new Color(0.062f, 0.100f, 0.185f);
+
+            e.sky = Color.Lerp(nightZenith, dayZenith, Mathf.Pow(g, 0.85f)) * skyMul;
+            e.midSky = Color.Lerp(nightMid, dayMid, Mathf.Pow(g, 0.80f)) * skyMul;
+            e.horizon = Color.Lerp(nightHorizon, dayHorizon, Mathf.Clamp01(Mathf.Pow(g, 0.70f) * 1.15f));
+
+            float twilight = Mathf.Clamp01(1f - Mathf.Abs(e.sunDir.y - 0.12f) / 0.28f)
+                * Mathf.Clamp01((g - 0.06f) / 0.35f)
+                * (1f - e.cloudiness * 0.55f);
+            e.twilight = twilight;
+            if (twilight > 0.01f)
             {
-                var haze = new Color(0.74f, 0.77f, 0.80f) * Mathf.Lerp(0.35f, 1f, g);
-                e.sky = Color.Lerp(e.sky, haze, e.fog * 0.65f);
-                e.horizon = Color.Lerp(e.horizon, haze, e.fog * 0.8f);
+                e.horizon = Color.Lerp(e.horizon, new Color(0.96f, 0.58f, 0.34f) * skyMul, twilight * 0.58f);
+                e.midSky = Color.Lerp(e.midSky, new Color(0.44f, 0.38f, 0.72f) * skyMul, twilight * 0.42f);
+            }
+
+            var overcastZen = new Color(0.30f, 0.36f, 0.45f) * Mathf.Lerp(0.22f, 0.86f, g);
+            var overcastHor = new Color(0.50f, 0.56f, 0.64f) * Mathf.Lerp(0.26f, 0.90f, g);
+            float cov = Mathf.Clamp01((e.cloudiness - 0.22f) / 0.78f);
+            e.sky = Color.Lerp(e.sky, overcastZen, cov * 0.78f);
+            e.midSky = Color.Lerp(e.midSky, Color.Lerp(overcastZen, overcastHor, 0.5f), cov * 0.72f);
+            e.horizon = Color.Lerp(e.horizon, overcastHor, cov * 0.68f);
+
+            if (e.storm > 0.1f)
+            {
+                var stormDark = new Color(0.08f, 0.11f, 0.19f);
+                var stormHor = new Color(0.16f, 0.21f, 0.32f);
+                e.sky = Color.Lerp(e.sky, stormDark, e.storm * 0.88f);
+                e.midSky = Color.Lerp(e.midSky, stormDark, e.storm * 0.82f);
+                e.horizon = Color.Lerp(e.horizon, stormHor, e.storm * 0.75f);
+            }
+            if (e.snow > 0.1f)
+            {
+                var snowSky = new Color(0.62f, 0.70f, 0.80f) * Mathf.Lerp(0.38f, 0.92f, g);
+                var snowHor = new Color(0.78f, 0.84f, 0.91f) * Mathf.Lerp(0.42f, 0.95f, g);
+                e.sky = Color.Lerp(e.sky, snowSky, e.snow * 0.58f);
+                e.midSky = Color.Lerp(e.midSky, snowHor, e.snow * 0.55f);
+                e.horizon = Color.Lerp(e.horizon, snowHor, e.snow * 0.72f);
+            }
+            if (e.fog > 0.05f && e.sand < 0.2f && e.storm < 0.3f)
+            {
+                var haze = new Color(0.74f, 0.79f, 0.84f) * Mathf.Lerp(0.35f, 1f, g);
+                e.sky = Color.Lerp(e.sky, haze, e.fog * 0.55f);
+                e.midSky = Color.Lerp(e.midSky, haze, e.fog * 0.68f);
+                e.horizon = Color.Lerp(e.horizon, haze, e.fog * 0.82f);
             }
             if (e.sand > 0.05f)
             {
-                var dust = new Color(0.72f, 0.55f, 0.32f) * Mathf.Lerp(0.4f, 1f, g);
-                e.sky = Color.Lerp(e.sky, dust, e.sand * 0.45f);
-                e.horizon = Color.Lerp(e.horizon, dust, e.sand * 0.65f);
+                var dustTop = new Color(0.62f, 0.44f, 0.24f) * Mathf.Lerp(0.42f, 0.95f, g);
+                var dustMid = new Color(0.78f, 0.58f, 0.32f) * Mathf.Lerp(0.45f, 0.98f, g);
+                var dustHor = new Color(0.88f, 0.69f, 0.42f) * Mathf.Lerp(0.45f, 1f, g);
+                e.sky = Color.Lerp(e.sky, dustTop, e.sand * 0.78f);
+                e.midSky = Color.Lerp(e.midSky, dustMid, e.sand * 0.85f);
+                e.horizon = Color.Lerp(e.horizon, dustHor, e.sand * 0.92f);
             }
-            e.ground = Color.Lerp(new Color(0.04f, 0.05f, 0.05f), e.ground, 0.35f) * Mathf.Lerp(0.4f, 1f, g);
-            if (e.flash > 0.02f)
-            {
-                var bolt = new Color(0.85f, 0.90f, 1f);
-                e.sky = Color.Lerp(e.sky, bolt, e.flash);
-                e.horizon = Color.Lerp(e.horizon, bolt, e.flash * 0.65f);
-            }
-
-            try
-            {
-                string b = map.Biome != null ? map.Biome.defName.ToLowerInvariant() : "";
-                if (b.Contains("desert") || b.Contains("arid")) e.palette = 1;
-                else if (b.Contains("tundra") || b.Contains("ice") || b.Contains("boreal")) e.palette = 2;
-                else if (b.Contains("jungle") || b.Contains("tropical")) e.palette = 3;
-            }
-            catch { }
+            e.ground = Color.Lerp(new Color(0.08f, 0.10f, 0.09f), e.ground, 0.45f) * Mathf.Lerp(0.35f, 1f, g);
+            e.sky.a = 1f;
+            e.midSky.a = 1f;
+            e.horizon.a = 1f;
+            e.ground.a = 1f;
             return e;
+        }
+
+        private static void ApplyDebugPreset(string key, ref Env e, ref float dayPct, ref Color skyMul)
+        {
+            string k = key.Trim().ToLowerInvariant();
+            e.rain = 0f; e.snow = 0f; e.sand = 0f; e.fog = 0f; e.storm = 0f; e.flash = 0f; e.aurora = 0f;
+            switch (k)
+            {
+                case "dawn":
+                    dayPct = 0.272f; e.celGlow = 0.56f; e.glow = 0.56f; e.shine = 0.94f;
+                    skyMul = new Color(0.98f, 0.90f, 0.86f); e.wind = 0.45f; break;
+                case "noon":
+                    dayPct = 0.50f; e.celGlow = 1.0f; e.glow = 1.0f; e.shine = 1.0f;
+                    skyMul = Color.white; e.wind = 0.50f; break;
+                case "dusk":
+                    dayPct = 0.728f; e.celGlow = 0.50f; e.glow = 0.50f; e.shine = 0.95f;
+                    skyMul = new Color(1.0f, 0.86f, 0.78f); e.wind = 0.40f; break;
+                case "night":
+                    dayPct = 0.02f; e.celGlow = 0f; e.glow = 0.05f; e.shine = 0.65f;
+                    skyMul = new Color(0.72f, 0.80f, 0.98f); e.wind = 0.25f; break;
+                case "aurora":
+                    dayPct = 0.04f; e.celGlow = 0f; e.glow = 0.16f; e.shine = 0.70f; e.aurora = 0.92f;
+                    skyMul = new Color(0.72f, 0.95f, 0.88f); e.wind = 0.30f; break;
+                case "rain":
+                    dayPct = 0.58f; e.celGlow = 0.88f; e.glow = 0.54f; e.shine = 0.25f;
+                    e.rain = 0.92f; e.fog = 0.16f; e.storm = 0.12f; e.wind = 1.15f;
+                    skyMul = new Color(0.74f, 0.78f, 0.85f); break;
+                case "storm":
+                    dayPct = 0.81f; e.celGlow = 0.16f; e.glow = 0.34f; e.shine = 0.30f;
+                    e.rain = 1.0f; e.fog = 0.18f; e.storm = 1.0f; e.flash = 0.72f; e.wind = 1.65f;
+                    skyMul = new Color(0.62f, 0.70f, 0.86f); break;
+                case "snow":
+                    dayPct = 0.44f; e.celGlow = 0.82f; e.glow = 0.68f; e.shine = 0.35f;
+                    e.rain = 0.20f; e.snow = 0.95f; e.fog = 0.24f; e.wind = 0.85f;
+                    skyMul = new Color(0.86f, 0.90f, 0.96f); break;
+                case "fog":
+                case "sand":
+                case "fog_sand":
+                    dayPct = 0.64f; e.celGlow = 0.78f; e.glow = 0.58f; e.shine = 0.35f;
+                    e.sand = 0.88f; e.fog = 0.42f; e.wind = 1.55f;
+                    skyMul = new Color(0.94f, 0.78f, 0.56f); break;
+            }
         }
 
         private static float WeatherFlag(WeatherDef w, string token)
@@ -259,161 +524,36 @@ namespace RimFirstPerson3D
         }
 
         // ------------------------------------------------------------
-        // 穹顶
+        // 数学与过程采样辅助函数
         // ------------------------------------------------------------
 
-        private static void EnsureDome()
+        private static float SmoothStep01(float a, float b, float x)
         {
-            if (domeMaterial != null) return;
-            var domeShader = Shader.Find("Unlit/Texture");
-            if (domeShader == null) return;
-            domeTexture = new Texture2D(96, 64, TextureFormat.RGB24, false)
-            { name = "FirstPerson3D_SkyGradient", wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-            domeMaterial = new Material(domeShader)
-            { name = "FirstPerson3D_SkyDome", mainTexture = domeTexture, renderQueue = 1000 };
-            domeMesh = BuildDome();
+            if (Mathf.Approximately(a, b)) return x >= b ? 1f : 0f;
+            float t = Mathf.Clamp01((x - a) / (b - a));
+            return t * t * (3f - 2f * t);
         }
 
-        private static Color domeSky = new Color(-1f, -1f, -1f, -1f);
-        private static Color domeHorizon = new Color(-1f, -1f, -1f, -1f);
-        private static float domeGlow = -1f;
-        private static float domeCloud = -1f;
-        private static float domeFog = -1f;
-        private static float domeFlash = -1f;
-        private static Vector3 domeSun;
-
-        /// <summary>
-        /// 穹顶贴图只在配色、太阳位置或天气有肉眼可见变化时重算。
-        /// 网格 v=0 是天顶（phi=0），v=1 是天底。
-        /// </summary>
-        private static bool DomeNeedsUpdate(Env env)
+        private static float PeriodicFbm(float u, float v, int octaves, int period, int seed)
         {
-            bool changed = Mathf.Abs(env.glow - domeGlow) > 0.02f
-                || Mathf.Abs(env.cloudiness - domeCloud) > 0.03f
-                || Mathf.Abs(env.fog - domeFog) > 0.03f
-                || Mathf.Abs(env.flash - domeFlash) > 0.04f
-                || (env.sunDir - domeSun).sqrMagnitude > 0.0008f
-                || ((Vector4)(env.sky - domeSky)).sqrMagnitude > 0.0015f
-                || ((Vector4)(env.horizon - domeHorizon)).sqrMagnitude > 0.0015f;
-            if (changed)
+            float sum = 0f, amp = 0.5f, maxAmp = 0f;
+            for (int i = 0; i < octaves; i++)
             {
-                domeSky = env.sky;
-                domeHorizon = env.horizon;
-                domeGlow = env.glow;
-                domeCloud = env.cloudiness;
-                domeFog = env.fog;
-                domeFlash = env.flash;
-                domeSun = env.sunDir;
+                float freq = 1 << i;
+                float nx = Mathf.Sin((u * freq + seed * 0.17f) * Mathf.PI * 2f);
+                float ny = Mathf.Cos((v * freq + seed * 0.23f) * Mathf.PI * 2f);
+                sum += (nx * ny * 0.5f + 0.5f) * amp;
+                maxAmp += amp;
+                amp *= 0.5f;
             }
-            return changed;
+            return maxAmp > 0f ? sum / maxAmp : 0.5f;
         }
 
-        private static void UpdateDomeTexture(Env env)
+        private static float PeriodicPuffs(float u, float v, int octaves, int seed)
         {
-            if (domeTexture == null) return;
-            int w = domeTexture.width;
-            int h = domeTexture.height;
-            var px = new Color[w * h];
-            Vector3 sun = env.sunDir.sqrMagnitude > 0.01f ? env.sunDir.normalized : Vector3.up;
-            var warm = Color.Lerp(new Color(1f, 0.96f, 0.88f), new Color(1f, 0.48f, 0.18f), 1f - Mathf.Clamp01(sun.y * 2.2f));
-            float shine = Mathf.Max(env.shine, env.glow * 0.85f);
-            for (int y = 0; y < h; y++)
-            {
-                float v = y / (float)(h - 1); // 0 天顶 .. 1 天底
-                float phi = v * Mathf.PI;
-                float above = 0.5f - v;
-                Color band;
-                if (above >= 0f)
-                {
-                    float k = Mathf.Clamp01(above / 0.5f);
-                    band = Color.Lerp(env.horizon, env.sky, Mathf.Pow(k, 0.62f));
-                    float haze = Mathf.Exp(-Mathf.Pow((k - 0.08f) / 0.10f, 2f));
-                    band = Color.Lerp(band, env.horizon * 1.08f, haze * (0.28f + env.fog * 0.45f));
-                }
-                else band = Color.Lerp(env.horizon, env.ground, Mathf.Clamp01(-above / 0.18f));
-                float sp = Mathf.Sin(phi);
-                float cp = Mathf.Cos(phi);
-                for (int x = 0; x < w; x++)
-                {
-                    float theta = x / (float)(w - 1) * Mathf.PI * 2f;
-                    var dir = new Vector3(sp * Mathf.Cos(theta), cp, sp * Mathf.Sin(theta));
-                    float nd = Mathf.Clamp01(Vector3.Dot(dir, sun));
-                    float broad = Mathf.Pow(nd, 5f) * shine * Mathf.Clamp01(env.glow + 0.15f);
-                    float disc = Mathf.Pow(nd, 64f) * shine;
-                    var color = Color.Lerp(band, warm, Mathf.Clamp01(broad * 0.62f + disc));
-                    px[y * w + x] = color;
-                }
-            }
-            domeTexture.SetPixels(px);
-            domeTexture.Apply(false, false);
+            return PeriodicFbm(u, v, octaves, 4, seed);
         }
 
-        private static Mesh BuildDome()
-        {
-            const int lon = 32, lat = 32;
-            var vertices = new List<Vector3>((lon + 1) * (lat + 1));
-            var uvs = new List<Vector2>(vertices.Capacity);
-            var triangles = new List<int>(lon * lat * 12);
-            for (int y = 0; y <= lat; y++)
-            {
-                float phi = y / (float)lat * Mathf.PI;
-                for (int x = 0; x <= lon; x++)
-                {
-                    float u = x / (float)lon;
-                    float theta = u * Mathf.PI * 2f;
-                    vertices.Add(new Vector3(Mathf.Sin(phi) * Mathf.Cos(theta), Mathf.Cos(phi), Mathf.Sin(phi) * Mathf.Sin(theta)));
-                    uvs.Add(new Vector2(u, y / (float)lat));
-                }
-            }
-            for (int y = 0; y < lat; y++)
-                for (int x = 0; x < lon; x++)
-                {
-                    int a = y * (lon + 1) + x, b = a + lon + 1;
-                    triangles.Add(a); triangles.Add(b); triangles.Add(a + 1);
-                    triangles.Add(a + 1); triangles.Add(b); triangles.Add(b + 1);
-                    triangles.Add(a + 1); triangles.Add(b); triangles.Add(a);
-                    triangles.Add(b + 1); triangles.Add(b); triangles.Add(a + 1);
-                }
-            var mesh = new Mesh { name = "FirstPerson3D_SkyDomeMesh" };
-            mesh.SetVertices(vertices);
-            mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(triangles, 0);
-            mesh.RecalculateBounds();
-            return mesh;
-        }
-
-        // ------------------------------------------------------------
-        // 太阳 / 云 / 星
-        // ------------------------------------------------------------
-
-        private static void EnsureCelestial()
-        {
-            if (quadMesh != null) return;
-            var tShader = ShaderDatabase.Transparent;
-            if (tShader == null) return;
-
-            quadMesh = BuildDoubleQuad();
-
-            sunTex = MakeRadialTex(64, 0.18f, 1.0f);
-            sunMat = new Material(tShader) { name = "FirstPerson3D_Sun", mainTexture = sunTex, renderQueue = 1010 };
-            haloMat = new Material(tShader) { name = "FirstPerson3D_SunHalo", mainTexture = MakeRadialTex(64, 0.0f, 0.55f), renderQueue = 1009 };
-
-            cloudTex = MakeCloudTex(256);
-            cloudMat = new Material(tShader) { name = "FirstPerson3D_CloudsNear", mainTexture = cloudTex, renderQueue = 1022 };
-            cloudMatFar = new Material(tShader) { name = "FirstPerson3D_CloudsFar", mainTexture = cloudTex, renderQueue = 1020 };
-            cloudMesh = BuildCloudCap(40, 12);
-
-            moonMat = new Material(tShader) { name = "FirstPerson3D_Moon", mainTexture = MakeRadialTex(32, 0.35f, 1.1f), renderQueue = 1008 };
-
-            rainMat = new Material(tShader) { name = "FirstPerson3D_Rain", mainTexture = MakeRainTex(32, 128), renderQueue = 2800 };
-            snowMat = new Material(tShader) { name = "FirstPerson3D_Snow", mainTexture = MakeSnowTex(64), renderQueue = 2800 };
-            precipMesh = BuildPrecip(28);
-
-            starMat = new Material(tShader) { name = "FirstPerson3D_Stars", mainTexture = MakeRadialTex(16, 0.1f, 1.0f), renderQueue = 1005 };
-            starMesh = BuildStarDome(420, 118f, 0.55f);
-        }
-
-        /// <summary>双面单位四边形（中心原点，面向 ±Z）。</summary>
         private static Mesh BuildDoubleQuad()
         {
             var m = new Mesh { name = "FirstPerson3D_DQuad" };
@@ -428,7 +568,6 @@ namespace RimFirstPerson3D
             return m;
         }
 
-        /// <summary>径向渐变贴图：inner 以内全亮，到 1 衰减到 0，alpha 同步。</summary>
         private static Texture2D MakeRadialTex(int n, float inner, float gamma)
         {
             var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
@@ -441,7 +580,7 @@ namespace RimFirstPerson3D
                     float r = Mathf.Sqrt(dx * dx + dy * dy) * 2f;
                     float a = r <= inner ? 1f : Mathf.Clamp01(1f - (r - inner) / Mathf.Max(0.001f, 1f - inner));
                     a = Mathf.Pow(a, gamma);
-                    byte b = (byte)(a * 255f);
+                    byte b = (byte)Mathf.RoundToInt(a * 255f);
                     px[y * n + x] = new Color32(255, 255, 255, b);
                 }
             t.SetPixels32(px);
@@ -449,32 +588,144 @@ namespace RimFirstPerson3D
             return t;
         }
 
-        /// <summary>
-        /// 可平铺云纹。v=0（贴图底）是云冠边缘，透明度收到 0，避免一圈硬边。
-        /// 只滚动 U，边缘的淡出不会被卷上来。
-        /// </summary>
-        private static Texture2D MakeCloudTex(int n)
+        private static Texture2D MakeSunDiscTex(int n, float lowFactor)
         {
-            int h = n / 2;
-            var t = new Texture2D(n, h, TextureFormat.RGBA32, false)
-            { wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_CloudTex" };
-            var px = new Color32[n * h];
-            const float S = 5f;
-            for (int y = 0; y < h; y++)
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_SunDisc" };
+            var px = new Color32[n * n];
+            Color edgeCol = Color.Lerp(new Color(1f, 0.92f, 0.72f), new Color(1f, 0.58f, 0.18f), lowFactor);
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float dx = (x + 0.5f) / n - 0.5f, dy = (y + 0.5f) / n - 0.5f;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy) * 2f;
+                    if (r >= 1f) continue;
+                    float a = r <= 0.54f ? 1f : Mathf.Pow(Mathf.Clamp01(1f - (r - 0.54f) / 0.46f), 1.45f);
+                    float coreMix = Mathf.Clamp01(1f - r / 0.72f);
+                    float cr = Mathf.Lerp(edgeCol.r, 1f, coreMix);
+                    float cg = Mathf.Lerp(edgeCol.g, 1f, Mathf.Pow(coreMix, 0.72f));
+                    float cb = Mathf.Lerp(edgeCol.b, 0.96f, Mathf.Pow(coreMix, 0.52f));
+                    px[y * n + x] = new Color32(
+                        (byte)Mathf.RoundToInt(cr * 255f),
+                        (byte)Mathf.RoundToInt(cg * 255f),
+                        (byte)Mathf.RoundToInt(cb * 255f),
+                        (byte)Mathf.RoundToInt(a * 255f));
+                }
+            t.SetPixels32(px);
+            t.Apply(false, false);
+            return t;
+        }
+
+        private static Texture2D MakeMoonTex(int n)
+        {
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_MoonDisc" };
+            var px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float dx = ((x + 0.5f) / n - 0.5f) * 2.2f;
+                    float dy = ((y + 0.5f) / n - 0.5f) * 2.2f;
+                    float r2 = dx * dx + dy * dy;
+                    float r = Mathf.Sqrt(r2);
+                    if (r <= 1.0f)
+                    {
+                        float nz = Mathf.Sqrt(Mathf.Max(0f, 1f - r2));
+                        float maria = PeriodicFbm(dx * 0.45f + 0.32f, dy * 0.45f + 0.58f, 3, 4, 701);
+                        float craters = PeriodicPuffs(dx * 0.55f + 0.5f, dy * 0.55f + 0.5f, 4, 911);
+                        float seaMask = SmoothStep01(0.42f, 0.62f, maria);
+                        float shade = Mathf.Lerp(0.98f, 0.42f, seaMask) * (0.86f + 0.16f * craters);
+                        float limb = 0.76f + 0.24f * Mathf.Pow(nz, 0.45f);
+                        float lum = Mathf.Clamp01(shade * limb);
+                        float edgeA = SmoothStep01(1.0f, 0.93f, r);
+                        px[y * n + x] = new Color32(
+                            (byte)Mathf.RoundToInt(lum * 236f),
+                            (byte)Mathf.RoundToInt(lum * 244f),
+                            (byte)Mathf.RoundToInt(Mathf.Min(1f, lum * 1.06f) * 255f),
+                            (byte)Mathf.RoundToInt(edgeA * 255f));
+                    }
+                    else if (r < 1.15f)
+                    {
+                        float halo = Mathf.Pow(1f - (r - 1.0f) / 0.15f, 2.0f) * 0.42f;
+                        px[y * n + x] = new Color32(210, 228, 255, (byte)Mathf.RoundToInt(halo * 255f));
+                    }
+                }
+            t.SetPixels32(px);
+            t.Apply(false, false);
+            return t;
+        }
+
+        private static Texture2D MakeStarAtlasTex(int n)
+        {
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_StarAtlas" };
+            var px = new Color32[n * n];
+            int cell = n / 4;
+            Color[] tints =
             {
-                float v = y / (float)h;
-                float along = y / (float)(h - 1);
-                float rim = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.38f, along));
+                new Color(0.72f, 0.86f, 1.00f),
+                new Color(0.98f, 0.99f, 1.00f),
+                new Color(1.00f, 0.91f, 0.72f),
+                new Color(1.00f, 0.76f, 0.54f)
+            };
+            float[] mags = { 1.0f, 0.82f, 0.58f, 0.38f };
+            for (int row = 0; row < 4; row++)
+                for (int col = 0; col < 4; col++)
+                {
+                    Color tint = tints[col];
+                    float mag = mags[row];
+                    for (int py = 0; py < cell; py++)
+                        for (int pxx = 0; pxx < cell; pxx++)
+                        {
+                            float dx = (pxx + 0.5f) / cell - 0.5f;
+                            float dy = (py + 0.5f) / cell - 0.5f;
+                            float r = Mathf.Sqrt(dx * dx + dy * dy) * 2f;
+                            float a = Mathf.Pow(Mathf.Clamp01(1f - r), row == 0 ? 1.6f : 2.1f);
+                            if (row <= 1)
+                            {
+                                float cross = (Mathf.Exp(-Mathf.Abs(dx) * 16f) * Mathf.Exp(-Mathf.Abs(dy) * 3.0f)
+                                    + Mathf.Exp(-Mathf.Abs(dy) * 16f) * Mathf.Exp(-Mathf.Abs(dx) * 3.0f)) * (row == 0 ? 0.48f : 0.25f);
+                                a = Mathf.Clamp01(a + cross * Mathf.Clamp01(1f - r));
+                            }
+                            a *= mag;
+                            float core = Mathf.Pow(Mathf.Clamp01(1f - r * 1.6f), 1.8f);
+                            float cr = Mathf.Clamp01(Mathf.Lerp(tint.r, 1f, core * 0.70f));
+                            float cg = Mathf.Clamp01(Mathf.Lerp(tint.g, 1f, core * 0.70f));
+                            float cb = Mathf.Clamp01(Mathf.Lerp(tint.b, 1f, core * 0.70f));
+                            int x = col * cell + pxx, y = row * cell + py;
+                            px[y * n + x] = new Color32(
+                                (byte)Mathf.RoundToInt(cr * 255f),
+                                (byte)Mathf.RoundToInt(cg * 255f),
+                                (byte)Mathf.RoundToInt(cb * 255f),
+                                (byte)Mathf.RoundToInt(a * 255f));
+                        }
+                }
+            t.SetPixels32(px);
+            t.Apply(false, false);
+            return t;
+        }
+
+        private static Texture2D MakeSandCurtainTex(int n)
+        {
+            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+            { wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_SandCurtainTex" };
+            var px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+            {
+                float v = y / (float)(n - 1);
+                float vertFade = SmoothStep01(0.0f, 0.16f, v) * Mathf.Pow(Mathf.Clamp01(1f - v), 1.35f);
                 for (int x = 0; x < n; x++)
                 {
                     float u = x / (float)n;
-                    float a = Fbm(u * S, v * S), b = Fbm((u - 1f) * S, v * S);
-                    float c = Fbm(u * S, (v - 1f) * S), d = Fbm((u - 1f) * S, (v - 1f) * S);
-                    float val = (a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v);
-                    float alpha = Mathf.Clamp01((val - 0.46f) / 0.24f);
-                    alpha = alpha * alpha * (3f - 2f * alpha) * rim;
-                    byte g = (byte)(255f * Mathf.Lerp(0.78f, 1f, alpha));
-                    px[y * n + x] = new Color32(g, g, 255, (byte)(alpha * 220f));
+                    float billow = PeriodicFbm(u, v * 0.6f, 3, 4, 881);
+                    float stream = PeriodicFbm(u * 2.0f, v * 4.0f, 4, 3, 991);
+                    float d = Mathf.Clamp01((billow * 0.65f + stream * 0.35f - 0.32f) * 1.8f) * vertFade;
+                    float shade = Mathf.Lerp(0.76f, 1.0f, billow);
+                    px[y * n + x] = new Color32(
+                        (byte)Mathf.RoundToInt(238f * shade),
+                        (byte)Mathf.RoundToInt(192f * shade),
+                        (byte)Mathf.RoundToInt(125f * shade),
+                        (byte)Mathf.RoundToInt(d * 185f));
                 }
             }
             t.SetPixels32(px);
@@ -482,35 +733,27 @@ namespace RimFirstPerson3D
             return t;
         }
 
-        private static float Fbm(float x, float y)
-        {
-            float v = 0f, amp = 0.5f, f = 1f;
-            for (int i = 0; i < 4; i++)
-            {
-                v += Mathf.PerlinNoise(x * f + 13.7f, y * f + 7.1f) * amp;
-                f *= 2.03f;
-                amp *= 0.5f;
-            }
-            return v;
-        }
+        // ------------------------------------------------------------
+        // 3D 几何网格构造器（100% 世界坐标系，零相机附着）
+        // ------------------------------------------------------------
 
-        /// <summary>上半球云冠。单位球，v=1 天顶、v=0 靠近地平线的收边。双面，相机在球心。</summary>
-        private static Mesh BuildCloudCap(int lon, int lat)
+        private static Mesh BuildGpuCloudHemisphere(int lon, int lat, float radius)
         {
-            const float maxPhi = 1.22f;
-            var verts = new List<Vector3>();
-            var uvs = new List<Vector2>();
-            var tris = new List<int>();
+            const float maxPhi = Mathf.PI * 0.48f;
+            var verts = new List<Vector3>((lon + 1) * (lat + 1));
+            var uvs = new List<Vector2>((lon + 1) * (lat + 1));
+            var tris = new List<int>(lon * lat * 12);
             for (int y = 0; y <= lat; y++)
             {
                 float t = y / (float)lat;
                 float phi = t * maxPhi;
+                float sp = Mathf.Sin(phi), cp = Mathf.Cos(phi);
                 for (int x = 0; x <= lon; x++)
                 {
                     float u = x / (float)lon;
                     float theta = u * Mathf.PI * 2f;
-                    verts.Add(new Vector3(Mathf.Sin(phi) * Mathf.Cos(theta), Mathf.Cos(phi), Mathf.Sin(phi) * Mathf.Sin(theta)));
-                    uvs.Add(new Vector2(u * 3f, 1f - t));
+                    verts.Add(new Vector3(sp * Mathf.Cos(theta) * radius, cp * radius, sp * Mathf.Sin(theta) * radius));
+                    uvs.Add(new Vector2(u * 2.0f, (1f - t) * 2.0f));
                 }
             }
             int stride = lon + 1;
@@ -523,7 +766,7 @@ namespace RimFirstPerson3D
                     tris.Add(a); tris.Add(b); tris.Add(a + 1);
                     tris.Add(a + 1); tris.Add(b); tris.Add(b + 1);
                 }
-            var m = new Mesh { name = "FirstPerson3D_CloudCap" };
+            var m = new Mesh { name = "FirstPerson3D_GpuCloudHemisphere" };
             m.SetVertices(verts);
             m.SetUVs(0, uvs);
             m.SetTriangles(tris, 0);
@@ -531,287 +774,581 @@ namespace RimFirstPerson3D
             return m;
         }
 
-        private static Texture2D MakeRainTex(int w, int h)
+        private static Mesh BuildStarDome(int count, float radius)
         {
-            var t = new Texture2D(w, h, TextureFormat.RGBA32, false)
-            { wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_RainTex" };
-            var px = new Color32[w * h];
-            var rnd = new System.Random(19);
-            for (int s = 0; s < 14; s++)
-            {
-                int x = rnd.Next(w);
-                int y0 = rnd.Next(h);
-                int len = 18 + rnd.Next(36);
-                byte a = (byte)(140 + rnd.Next(90));
-                for (int k = 0; k < len; k++)
-                {
-                    int y = (y0 + k) % h;
-                    px[y * w + x] = new Color32(210, 220, 235, a);
-                    if (x + 1 < w) px[y * w + x + 1] = new Color32(210, 220, 235, (byte)(a / 3));
-                }
-            }
-            t.SetPixels32(px);
-            t.Apply(false, false);
-            return t;
-        }
-
-        private static Texture2D MakeSnowTex(int n)
-        {
-            var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
-            { wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Bilinear, name = "FirstPerson3D_SnowTex" };
-            var px = new Color32[n * n];
-            var rnd = new System.Random(23);
-            for (int s = 0; s < 28; s++)
-            {
-                int cx = rnd.Next(n), cy = rnd.Next(n);
-                int rad = 1 + rnd.Next(2);
-                byte a = (byte)(160 + rnd.Next(80));
-                for (int y = -rad; y <= rad; y++)
-                    for (int x = -rad; x <= rad; x++)
-                    {
-                        if (x * x + y * y > rad * rad) continue;
-                        int xx = (cx + x + n) % n, yy = (cy + y + n) % n;
-                        px[yy * n + xx] = new Color32(245, 248, 255, a);
-                    }
-            }
-            t.SetPixels32(px);
-            t.Apply(false, false);
-            return t;
-        }
-
-        /// <summary>围在相机周围的竖条，用来滚雨丝或雪花。半径约 6 米。</summary>
-        private static Mesh BuildPrecip(int count)
-        {
-            var verts = new List<Vector3>();
-            var uvs = new List<Vector2>();
-            var tris = new List<int>();
-            const float halfH = 5f;
-            for (int i = 0; i < count; i++)
-            {
-                float a = i / (float)count * Mathf.PI * 2f;
-                float r = 4.2f + (i % 5) * 0.7f;
-                var p = new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
-                var right = new Vector3(-Mathf.Sin(a), 0f, Mathf.Cos(a));
-                float width = 1.4f;
-                int b = verts.Count;
-                verts.Add(p - right * width + Vector3.down * halfH);
-                verts.Add(p + right * width + Vector3.down * halfH);
-                verts.Add(p + right * width + Vector3.up * halfH);
-                verts.Add(p - right * width + Vector3.up * halfH);
-                float u0 = (i % 4) * 0.25f;
-                uvs.Add(new Vector2(u0, 0f));
-                uvs.Add(new Vector2(u0 + 0.25f, 0f));
-                uvs.Add(new Vector2(u0 + 0.25f, 1f));
-                uvs.Add(new Vector2(u0, 1f));
-                tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
-                tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
-                tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
-                tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
-            }
-            var m = new Mesh { name = "FirstPerson3D_Precip" };
-            m.SetVertices(verts);
-            m.SetUVs(0, uvs);
-            m.SetTriangles(tris, 0);
-            m.RecalculateBounds();
-            return m;
-        }
-
-        /// <summary>星点球面：随机分布的小面片，朝向球心。</summary>
-        private static Mesh BuildStarDome(int count, float radius, float size)
-        {
-            var rnd = new System.Random(20261010);
+            var rnd = new System.Random(20261015);
             var verts = new List<Vector3>(count * 4);
             var uvs = new List<Vector2>(count * 4);
-            var cols = new List<Color>(count * 4);
             var tris = new List<int>(count * 12);
             for (int i = 0; i < count; i++)
             {
-                // 只在地平线以上
-                float y = (float)rnd.NextDouble() * 0.95f + 0.05f;
-                float a = (float)rnd.NextDouble() * Mathf.PI * 2f;
-                float rxz = Mathf.Sqrt(1f - y * y);
-                var n = new Vector3(Mathf.Cos(a) * rxz, y, Mathf.Sin(a) * rxz);
-                var p = n * radius;
-                var right = Vector3.Cross(Vector3.up, n).normalized;
-                if (right.sqrMagnitude < 0.01f) right = Vector3.right;
-                var up = Vector3.Cross(n, right).normalized;
-                float s = size * (0.5f + (float)rnd.NextDouble());
-                float bright = 0.55f + (float)rnd.NextDouble() * 0.45f;
-                var c = new Color(bright, bright, bright * (0.9f + 0.1f * (float)rnd.NextDouble()), 1f);
+                float u = (float)rnd.NextDouble();
+                float v = (float)rnd.NextDouble();
+                float theta = u * Mathf.PI * 2f;
+                float phi = Mathf.Acos(1f - v * 0.94f);
+                float sp = Mathf.Sin(phi), cp = Mathf.Cos(phi);
+                var p = new Vector3(sp * Mathf.Cos(theta), cp, sp * Mathf.Sin(theta)) * radius;
+
+                Vector3 up = Vector3.Cross(p, Vector3.up);
+                if (up.sqrMagnitude < 0.001f) up = Vector3.Cross(p, Vector3.right);
+                up.Normalize();
+                Vector3 right = Vector3.Cross(p, up).normalized;
+
+                float s = 1.35f + (float)rnd.NextDouble() * 2.85f;
+                int col = rnd.Next(4), row = rnd.Next(4);
+                const float pad = 0.01f;
+                float u0 = col * 0.25f + pad, u1 = (col + 1) * 0.25f - pad;
+                float v0 = row * 0.25f + pad, v1 = (row + 1) * 0.25f - pad;
+
                 int b = verts.Count;
                 verts.Add(p - right * s - up * s); verts.Add(p + right * s - up * s);
                 verts.Add(p + right * s + up * s); verts.Add(p - right * s + up * s);
-                uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0)); uvs.Add(new Vector2(1, 1)); uvs.Add(new Vector2(0, 1));
-                cols.Add(c); cols.Add(c); cols.Add(c); cols.Add(c);
+                uvs.Add(new Vector2(u0, v0)); uvs.Add(new Vector2(u1, v0));
+                uvs.Add(new Vector2(u1, v1)); uvs.Add(new Vector2(u0, v1));
                 tris.Add(b); tris.Add(b + 1); tris.Add(b + 2); tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
                 tris.Add(b); tris.Add(b + 2); tris.Add(b + 1); tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
             }
             var m = new Mesh { name = "FirstPerson3D_Stars" };
             m.SetVertices(verts);
             m.SetUVs(0, uvs);
-            m.SetColors(cols);
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static Mesh BuildPrecipRing(int count, float rMin, float rStep, float halfH, float width, float uTile, float vTile, int seedOffset, float uShear)
+        {
+            var verts = new List<Vector3>(count * 4);
+            var uvs = new List<Vector2>(count * 4);
+            var tris = new List<int>(count * 12);
+            for (int i = 0; i < count; i++)
+            {
+                float a = ((i + seedOffset * 0.37f) / count) * Mathf.PI * 2f;
+                float r = rMin + ((i * 3 + seedOffset) % 5) * rStep;
+                var p = new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+                var right = new Vector3(-Mathf.Sin(a), 0f, Mathf.Cos(a));
+                int b = verts.Count;
+                verts.Add(p - right * width + Vector3.down * halfH);
+                verts.Add(p + right * width + Vector3.down * halfH);
+                verts.Add(p + right * width + Vector3.up * halfH);
+                verts.Add(p - right * width + Vector3.up * halfH);
+                float u0 = (i * 0.19f) % 1.0f;
+                float v0 = (i * 0.31f) % 1.0f;
+                uvs.Add(new Vector2(u0, v0));
+                uvs.Add(new Vector2(u0 + uTile, v0));
+                uvs.Add(new Vector2(u0 + uTile + uShear, v0 + vTile));
+                uvs.Add(new Vector2(u0 + uShear, v0 + vTile));
+                tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+            }
+            var m = new Mesh { name = "FirstPerson3D_PrecipRing" };
+            m.SetVertices(verts);
+            m.SetUVs(0, uvs);
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static List<Vector3> SubdivideBoltPath(Vector3 a, Vector3 b, int gens, float swayScale, System.Random rnd)
+        {
+            var pts = new List<Vector3> { a, b };
+            float disp = swayScale;
+            for (int g = 0; g < gens; g++)
+            {
+                var next = new List<Vector3>(pts.Count * 2) { pts[0] };
+                for (int i = 0; i < pts.Count - 1; i++)
+                {
+                    Vector3 mid = (pts[i] + pts[i + 1]) * 0.5f;
+                    mid.x += ((float)rnd.NextDouble() - 0.5f) * disp;
+                    mid.y += ((float)rnd.NextDouble() - 0.5f) * disp * 0.22f;
+                    mid.z += ((float)rnd.NextDouble() - 0.5f) * disp;
+                    next.Add(mid);
+                    next.Add(pts[i + 1]);
+                }
+                pts = next;
+                disp *= 0.52f;
+            }
+            return pts;
+        }
+
+        // 构造纯世界空间 3D 交叉等离子体分形闪电（ShaderDatabase.WorldOverlayAdditive 纯加法顶点色，零贴图硬边）
+        private static Mesh BuildGpuAdditiveLightningBolt(Vector3 topWorld, Vector3 botWorld, int seed, float trunkRadius)
+        {
+            var rnd = new System.Random(seed);
+            var verts = new List<Vector3>();
+            var colors = new List<Color32>();
+            var tris = new List<int>();
+
+            void AddWorldCrossedSeg(Vector3 p0, Vector3 p1, float r0, float r1)
+            {
+                Vector3 tangent = p1 - p0;
+                if (tangent.sqrMagnitude < 0.0001f) return;
+                tangent.Normalize();
+                Vector3 n1 = Vector3.Cross(tangent, Vector3.forward);
+                if (n1.sqrMagnitude < 0.01f) n1 = Vector3.Cross(tangent, Vector3.right);
+                n1.Normalize();
+                Vector3 n2 = Vector3.Cross(tangent, n1).normalized;
+
+                Color32 cCenter = new Color32(250, 253, 255, 245);
+                Color32 cOuter = new Color32(110, 185, 255, 0);
+
+                for (int si = 0; si < 2; si++)
+                {
+                    Vector3 side = si == 0 ? n1 : n2;
+                    int b = verts.Count;
+                    verts.Add(p0 - side * (r0 * 0.45f)); colors.Add(cCenter);
+                    verts.Add(p0 + side * (r0 * 0.45f)); colors.Add(cCenter);
+                    verts.Add(p1 + side * (r1 * 0.45f)); colors.Add(cCenter);
+                    verts.Add(p1 - side * (r1 * 0.45f)); colors.Add(cCenter);
+                    tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
+                    tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+                    tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                    tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+
+                    int bOuter = verts.Count;
+                    verts.Add(p0 - side * (r0 * 1.6f)); colors.Add(cOuter);
+                    verts.Add(p0 + side * (r0 * 1.6f)); colors.Add(cOuter);
+                    verts.Add(p1 + side * (r1 * 1.6f)); colors.Add(cOuter);
+                    verts.Add(p1 - side * (r1 * 1.6f)); colors.Add(cOuter);
+                    tris.Add(bOuter); tris.Add(bOuter + 1); tris.Add(bOuter + 2);
+                    tris.Add(bOuter); tris.Add(bOuter + 2); tris.Add(bOuter + 3);
+                    tris.Add(bOuter); tris.Add(bOuter + 2); tris.Add(bOuter + 1);
+                    tris.Add(bOuter); tris.Add(bOuter + 3); tris.Add(bOuter + 2);
+                }
+            }
+
+            var mainPts = SubdivideBoltPath(topWorld, botWorld, 5, 11.0f, rnd);
+            for (int i = 0; i < mainPts.Count - 1; i++)
+            {
+                float t0 = i / (float)(mainPts.Count - 1);
+                float t1 = (i + 1) / (float)(mainPts.Count - 1);
+                float r0 = Mathf.Lerp(trunkRadius, trunkRadius * 0.52f, t0);
+                float r1 = Mathf.Lerp(trunkRadius, trunkRadius * 0.52f, t1);
+                AddWorldCrossedSeg(mainPts[i], mainPts[i + 1], r0, r1);
+
+                if (i >= 3 && i <= mainPts.Count - 6 && i % 4 == 0 && rnd.NextDouble() < 0.82)
+                {
+                    Vector3 bStart = mainPts[i];
+                    float bSign = (i % 8 == 0) ? 1f : -1f;
+                    Vector3 bEnd = bStart + new Vector3(
+                        bSign * (6.5f + (float)rnd.NextDouble() * 9.5f),
+                        -(8.0f + (float)rnd.NextDouble() * 11.0f),
+                        ((float)rnd.NextDouble() - 0.5f) * 12.0f);
+                    if (bEnd.y < botWorld.y + 1.0f) bEnd.y = botWorld.y + 1.0f;
+                    var bPts = SubdivideBoltPath(bStart, bEnd, 3, 3.8f, rnd);
+                    for (int k = 0; k < bPts.Count - 1; k++)
+                    {
+                        float bt0 = k / (float)(bPts.Count - 1);
+                        float bt1 = (k + 1) / (float)(bPts.Count - 1);
+                        AddWorldCrossedSeg(bPts[k], bPts[k + 1],
+                            Mathf.Lerp(r0 * 0.65f, trunkRadius * 0.26f, bt0),
+                            Mathf.Lerp(r0 * 0.65f, trunkRadius * 0.22f, bt1));
+                    }
+                }
+            }
+            var m = new Mesh { name = "FirstPerson3D_WorldLightning3D" };
+            m.SetVertices(verts);
+            m.SetColors(colors);
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static Mesh BuildGpuVColorRainMesh(int count, float boxSpan, float boxHeight, Vector2 windVec, int seed)
+        {
+            var rnd = new System.Random(seed);
+            var verts = new List<Vector3>(count * 8);
+            var colors = new List<Color32>(count * 8);
+            var tris = new List<int>(count * 24);
+            Vector3 axis = new Vector3(windVec.x * 0.16f, -1.0f, windVec.y * 0.16f).normalized;
+            Vector3 side1 = new Vector3(0.866f, 0f, 0.5f);
+            Vector3 side2 = new Vector3(-0.5f, 0f, 0.866f);
+
+            Color32 cHead = new Color32(230, 245, 255, 220);
+            Color32 cTail = new Color32(180, 215, 255, 0);
+
+            for (int i = 0; i < count; i++)
+            {
+                float x = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float z = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float y = (float)rnd.NextDouble() * boxHeight;
+                float len = 1.15f + (float)rnd.NextDouble() * 0.85f;
+                float hw = 0.045f + (float)rnd.NextDouble() * 0.02f;
+                Vector3 pBot = new Vector3(x, y, z);
+                Vector3 pTop = pBot - axis * len;
+
+                for (int si = 0; si < 2; si++)
+                {
+                    Vector3 s = si == 0 ? side1 : side2;
+                    int b = verts.Count;
+                    verts.Add(pBot - s * hw); colors.Add(cHead);
+                    verts.Add(pBot + s * hw); colors.Add(cHead);
+                    verts.Add(pTop + s * hw); colors.Add(cTail);
+                    verts.Add(pTop - s * hw); colors.Add(cTail);
+
+                    tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
+                    tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+                    tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                    tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+                }
+            }
+            var m = new Mesh { name = "FirstPerson3D_GpuVColorRain" };
+            m.SetVertices(verts);
+            m.SetColors(colors);
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static Mesh BuildGpuVColorSnowMesh(int count, float boxSpan, float boxHeight, int seed)
+        {
+            var rnd = new System.Random(seed);
+            var verts = new List<Vector3>(count * 8);
+            var colors = new List<Color32>(count * 8);
+            var tris = new List<int>(count * 24);
+
+            Color32 cCenter = new Color32(250, 252, 255, 235);
+            Color32 cEdge = new Color32(200, 225, 255, 0);
+
+            for (int i = 0; i < count; i++)
+            {
+                float x = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float z = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float y = (float)rnd.NextDouble() * boxHeight;
+                float r = 0.065f + (float)rnd.NextDouble() * 0.065f;
+                float ang = (float)rnd.NextDouble() * Mathf.PI;
+                float c = Mathf.Cos(ang) * r, s = Mathf.Sin(ang) * r;
+
+                int b1 = verts.Count;
+                verts.Add(new Vector3(x - c, y - r, z - s)); colors.Add(cEdge);
+                verts.Add(new Vector3(x + c, y - r, z + s)); colors.Add(cEdge);
+                verts.Add(new Vector3(x + c, y + r, z + s)); colors.Add(cCenter);
+                verts.Add(new Vector3(x - c, y + r, z - s)); colors.Add(cCenter);
+                tris.Add(b1); tris.Add(b1 + 1); tris.Add(b1 + 2);
+                tris.Add(b1); tris.Add(b1 + 2); tris.Add(b1 + 3);
+                tris.Add(b1); tris.Add(b1 + 2); tris.Add(b1 + 1);
+                tris.Add(b1); tris.Add(b1 + 3); tris.Add(b1 + 2);
+
+                int b2 = verts.Count;
+                verts.Add(new Vector3(x - s, y - r, z + c)); colors.Add(cEdge);
+                verts.Add(new Vector3(x + s, y - r, z - c)); colors.Add(cEdge);
+                verts.Add(new Vector3(x + s, y + r, z - c)); colors.Add(cCenter);
+                verts.Add(new Vector3(x - s, y + r, z + c)); colors.Add(cCenter);
+                tris.Add(b2); tris.Add(b2 + 1); tris.Add(b2 + 2);
+                tris.Add(b2); tris.Add(b2 + 2); tris.Add(b2 + 3);
+                tris.Add(b2); tris.Add(b2 + 2); tris.Add(b2 + 1);
+                tris.Add(b2); tris.Add(b2 + 3); tris.Add(b2 + 2);
+            }
+            var m = new Mesh { name = "FirstPerson3D_GpuVColorSnow" };
+            m.SetVertices(verts);
+            m.SetColors(colors);
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static Mesh BuildGpuVColorSplashMesh(int count, float boxSpan, int seed)
+        {
+            var rnd = new System.Random(seed);
+            var verts = new List<Vector3>(count * 4);
+            var colors = new List<Color32>(count * 4);
+            var tris = new List<int>(count * 12);
+
+            Color32 cSplashCenter = new Color32(230, 245, 255, 160);
+            Color32 cSplashEdge = new Color32(190, 220, 255, 0);
+
+            for (int i = 0; i < count; i++)
+            {
+                float x = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float z = ((float)rnd.NextDouble() - 0.5f) * boxSpan;
+                float y = 0.04f + ((i % 5) * 0.015f);
+                float r = 0.22f + (float)rnd.NextDouble() * 0.28f;
+                int b = verts.Count;
+                verts.Add(new Vector3(x - r, y, z - r)); colors.Add(cSplashEdge);
+                verts.Add(new Vector3(x + r, y, z - r)); colors.Add(cSplashEdge);
+                verts.Add(new Vector3(x + r, y, z + r)); colors.Add(cSplashCenter);
+                verts.Add(new Vector3(x - r, y, z + r)); colors.Add(cSplashCenter);
+
+                tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+            }
+            var m = new Mesh { name = "FirstPerson3D_GpuVColorSplash" };
+            m.SetVertices(verts);
+            m.SetColors(colors);
             m.SetTriangles(tris, 0);
             m.RecalculateBounds();
             return m;
         }
 
         // ------------------------------------------------------------
-        // 每帧绘制
+        // 每帧绘制（100% 锚定在地图 3D 世界坐标 mapOrigin，零相机坐标跟随）
         // ------------------------------------------------------------
 
-        public static void DrawDistantRing(Vector3 camPos)
+        private static Vector3 GetMapWorldOrigin(Map map)
+        {
+            if (map == null) return Vector3.zero;
+            Vector3 off = Streaming3D.OffsetOf(map);
+            float baseY = LevelStack3D.LevelBaseY(map);
+            return new Vector3(off.x + map.Size.x * 0.5f, baseY, off.z + map.Size.z * 0.5f);
+        }
+
+        public static void DrawDistantRing()
         {
             if (!Fps3DState.Active || CameraRig3D.Cam == null) return;
             var map = Find.CurrentMap;
-            var env = Sample(map);
+            var env = SampleCached(map);
+            CurrentHorizonColor = env.horizon;
             var cam = CameraRig3D.Cam;
             if (cam != null) cam.backgroundColor = env.horizon;
+            UpdateSkyMaterial(env);
             ApplyWeatherFog(env);
 
-            // 1. 穹顶
-            if (domeMesh != null && domeMaterial != null)
-                Graphics.DrawMesh(domeMesh, Matrix4x4.TRS(camPos, Quaternion.identity, Vector3.one * 130f), domeMaterial, 0);
-
-            DrawCelestial(camPos, env);
-
-            // 远景：只保留跟随相机的穹顶（地平线由穹顶地面色承担）。
-            // 原「世界坐标锚定的远山环 + 地裙」已删除——它们是固定假景，
-            // 站在地图边缘会贴着/糊进几何体，观感不合理。
+            Vector3 mapOrigin = GetMapWorldOrigin(map);
+            DrawCelestial(map, mapOrigin, env);
         }
 
-        private static void DrawCelestial(Vector3 camPos, Env env)
+        private static void DrawCelestial(Map map, Vector3 mapOrigin, Env env)
         {
             if (quadMesh == null) return;
             float now = Time.realtimeSinceStartup;
             if (lastCloudTime < 0f) lastCloudTime = now;
             float dt = Mathf.Clamp(now - lastCloudTime, 0f, 0.1f);
             lastCloudTime = now;
-            var wind = new Vector2(Mathf.Cos(env.windAngle), Mathf.Sin(env.windAngle)) * Mathf.Max(0.12f, env.wind);
+            var wind = new Vector2(Mathf.Cos(env.windAngle), Mathf.Sin(env.windAngle)) * Mathf.Max(0.15f, env.wind);
 
-            DrawSun(camPos, env);
-            DrawClouds(camPos, env, wind, dt);
-            DrawPrecip(camPos, env, wind, dt);
-
-            if (starMesh != null && starMat != null && env.glow < 0.55f)
+            if (starMesh != null && gpuStarMat != null && env.glow < 0.55f)
             {
                 float a = Mathf.Clamp01((0.55f - env.glow) / 0.45f) * (1f - env.cloudiness * 0.65f) * (1f - env.fog);
-                starMat.color = new Color(1f, 1f, 1f, a * 0.9f);
+                gpuStarMat.color = new Color(1f, 1f, 1f, a * 0.96f);
                 if (a > 0.02f)
-                    Graphics.DrawMesh(starMesh, Matrix4x4.TRS(camPos, Quaternion.identity, Vector3.one), starMat, 0);
+                    Graphics.DrawMesh(starMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuStarMat, 0);
             }
+
+            DrawSunAndMoon(mapOrigin, env);
+            DrawClouds(mapOrigin, env, wind, dt);
+            DrawLightning(mapOrigin, env);
+            DrawPrecip(map, mapOrigin, env, wind, dt);
         }
 
-        private static void DrawSun(Vector3 camPos, Env env)
+        private static void DrawSunAndMoon(Vector3 mapOrigin, Env env)
         {
+            const float skyDist = 600f;
+            const float scaleRatio = skyDist / 112f;
+
             float above = Mathf.Clamp01((env.sunDir.y + 0.05f) / 0.18f);
-            float vis = above * (1f - env.cloudiness * 0.82f) * (1f - env.fog * 0.75f) * Mathf.Clamp01(env.glow * 1.35f);
+            float vis = above * (1f - env.cloudiness * 0.80f) * (1f - env.fog * 0.72f) * Mathf.Clamp01(env.glow * 1.35f);
             Vector3 up = Mathf.Abs(env.sunDir.y) > 0.92f ? Vector3.forward : Vector3.up;
-            if (vis > 0.02f && sunMat != null)
+            if (vis > 0.02f && gpuSunMat != null)
             {
-                float low = 1f - Mathf.Clamp01(env.sunDir.y * 2.5f);
-                var sunCol = Color.Lerp(new Color(1f, 0.98f, 0.90f), new Color(1f, 0.55f, 0.22f), low);
-                sunMat.color = new Color(sunCol.r, sunCol.g, sunCol.b, 0.95f * vis);
-                haloMat.color = new Color(sunCol.r, sunCol.g, sunCol.b, 0.28f * vis * Mathf.Max(0.45f, env.shine));
-                var p = camPos + env.sunDir * 112f;
+                float low = 1f - Mathf.Clamp01(env.sunDir.y * 2.2f);
+                gpuSunMat.color = new Color(1f, 1f, 1f, 0.98f * vis);
+                var p = mapOrigin + env.sunDir * skyDist;
                 var look = Quaternion.LookRotation(env.sunDir, up);
-                float disc = 6.5f + 4f * low;
-                Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(p, look, Vector3.one * disc), sunMat, 0);
-                Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(p, look, Vector3.one * (28f + 18f * low)), haloMat, 0);
+                float disc = (14.5f + 6.5f * low) * scaleRatio;
+                Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(p, look, Vector3.one * disc), gpuSunMat, 0);
             }
 
-            // 太阳落到地平线下之后，对侧留一颗小月亮。
-            if (moonMat == null || env.glow > 0.42f || env.fog > 0.55f) return;
-            var moonDir = -env.sunDir;
-            if (moonDir.y < 0.08f) moonDir.y = 0.08f;
-            moonDir.Normalize();
-            float ma = Mathf.Clamp01((0.42f - env.glow) / 0.42f) * (1f - env.cloudiness * 0.7f);
-            moonMat.color = new Color(0.82f, 0.86f, 0.95f, 0.85f * ma);
+            if (gpuMoonMat == null || env.glow > 0.42f || env.fog > 0.55f) return;
+            float ma = Mathf.Clamp01((0.42f - env.glow) / 0.42f) * (1f - env.cloudiness * 0.70f);
             if (ma < 0.02f) return;
-            var mp = camPos + moonDir * 112f;
-            var mlook = Quaternion.LookRotation(moonDir, up);
-            Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(mp, mlook, Vector3.one * 3.2f), moonMat, 0);
-        }
-
-        private static void DrawClouds(Vector3 camPos, Env env, Vector2 wind, float dt)
-        {
-            if (cloudMesh == null || cloudMat == null) return;
-            cloudScroll += new Vector2(wind.x, wind.y) * dt * 0.010f;
-            cloudMat.mainTextureOffset = cloudScroll;
-            if (cloudMatFar != null) cloudMatFar.mainTextureOffset = cloudScroll * 0.55f + new Vector2(0.37f, 0.1f);
-
-            var lit = Color.Lerp(new Color(0.55f, 0.60f, 0.68f), Color.white, env.glow);
-            lit = Color.Lerp(lit, env.horizon, 0.25f);
-            if (env.storm > 0.2f) lit = Color.Lerp(lit, new Color(0.32f, 0.34f, 0.40f), env.storm * 0.65f);
-            if (env.snow > 0.2f) lit = Color.Lerp(lit, new Color(0.90f, 0.93f, 0.97f), 0.45f);
-            if (env.flash > 0.02f) lit = Color.Lerp(lit, Color.white, env.flash);
-            float aNear = Mathf.Lerp(0.28f, 0.92f, env.cloudiness);
-            float aFar = Mathf.Lerp(0.18f, 0.62f, env.cloudiness);
-            cloudMat.color = new Color(lit.r, lit.g, lit.b, aNear);
-            Graphics.DrawMesh(cloudMesh, Matrix4x4.TRS(camPos, Quaternion.identity, Vector3.one * 108f), cloudMat, 0);
-            if (cloudMatFar != null)
+            var mp = mapOrigin + env.moonDir * 610f;
+            Vector3 mUp = Mathf.Abs(env.moonDir.y) > 0.92f ? Vector3.forward : Vector3.up;
+            var mlook = Quaternion.LookRotation(env.moonDir, mUp);
+            if (gpuMoonGlowMat != null)
             {
-                cloudMatFar.color = new Color(Mathf.Min(1f, lit.r + 0.08f), Mathf.Min(1f, lit.g + 0.08f), Mathf.Min(1f, lit.b + 0.1f), aFar);
-                Graphics.DrawMesh(cloudMesh, Matrix4x4.TRS(camPos, Quaternion.identity, Vector3.one * 124f), cloudMatFar, 0);
+                gpuMoonGlowMat.color = new Color(0.65f, 0.78f, 1.0f, 0.44f * ma);
+                Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(mp, mlook, Vector3.one * (30f * scaleRatio)), gpuMoonGlowMat, 0);
             }
+            gpuMoonMat.color = new Color(0.94f, 0.97f, 1.0f, 0.98f * ma);
+            Graphics.DrawMesh(quadMesh, Matrix4x4.TRS(mp, mlook, Vector3.one * (11.5f * scaleRatio)), gpuMoonMat, 0);
         }
 
-        private static void DrawPrecip(Vector3 camPos, Env env, Vector2 wind, float dt)
+        private static void DrawClouds(Vector3 mapOrigin, Env env, Vector2 wind, float dt)
         {
-            if (precipMesh == null) return;
+            if (gpuCloudMat == null || gpuCloudMesh == null) return;
+            if (env.sand > 0.65f) return;
+
+            // 驱动 GPU 大气云层 Shader (ShaderDatabase.Clouds)
+            cloudScroll.x = (cloudScroll.x + wind.x * dt * 0.003f) % 1f;
+            cloudScroll.y = (cloudScroll.y + wind.y * dt * 0.003f) % 1f;
+            gpuCloudMat.SetVector(ShaderPropertyIDs.Seed, new Vector2(cloudScroll.x, cloudScroll.y));
+
+            // 太阳光方向（驱动日出日落颜色渐变 SunsetGradient 与前向散射）
+            Vector3 sunDir = env.sunDir.sqrMagnitude > 0.01f ? env.sunDir.normalized : Vector3.up;
+            Shader.SetGlobalVector(ShaderPropertyIDs.PlanetSunLightDirection, sunDir);
+
+            float cloudOp = Mathf.Clamp01(env.cloudiness * 1.15f) * Mathf.Lerp(0.28f, 1.0f, Mathf.Clamp01(env.glow * 1.3f));
+            if (env.storm > 0.2f) cloudOp = Mathf.Max(cloudOp, 0.88f);
+            if (env.rain > 0.2f) cloudOp = Mathf.Max(cloudOp, 0.75f);
+            gpuCloudMat.SetFloat(ShaderPropertyIDs.CloudShaderOpacity, cloudOp);
+            gpuCloudMat.SetFloat(ShaderPropertyIDs.GameTime, Time.realtimeSinceStartup * 0.05f);
+            Color cloudTint = Color.Lerp(new Color(0.20f, 0.26f, 0.40f), Color.white, Mathf.Clamp01(env.glow * 1.25f));
+            if (env.twilight > 0.05f) cloudTint = Color.Lerp(cloudTint, new Color(1.0f, 0.76f, 0.56f), env.twilight * 0.55f);
+            gpuCloudMat.color = cloudTint;
+
+            // 绘制在天穹云层球面上（半径 540m，世界中心 mapOrigin）
+            Graphics.DrawMesh(gpuCloudMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuCloudMat, 0);
+        }
+
+        private static void DrawLightning(Vector3 mapOrigin, Env env)
+        {
+            if (gpuLightningMat == null) return;
+            float now = Time.realtimeSinceStartup;
+            bool inStorm = env.storm > 0.45f || env.flash > 0.06f;
+            if (!inStorm) return;
+
+            // 在地图世界坐标中生成瞬态 3D 雷击（100% 真实世界坐标，Vector3.one 1:1 米制尺寸）
+            if (now >= nextStrikeTime || (env.flash > 0.25f && now - strikeStartTime > 0.45f))
+            {
+                strikeStartTime = now;
+                nextStrikeTime = now + (DebugPreset == "storm" ? 1.15f : (2.8f + (strikeSeedCounter % 5) * 0.85f));
+                strikeSeedCounter += 137;
+
+                float angA = (strikeSeedCounter * 1.618f) % (Mathf.PI * 2f);
+                float distA = 32f + (strikeSeedCounter % 5) * 14f;
+                strikeWorldXZ_A = new Vector2(mapOrigin.x + Mathf.Cos(angA) * distA, mapOrigin.z + Mathf.Sin(angA) * distA);
+
+                float angB = angA + 0.42f;
+                float distB = 45f + (strikeSeedCounter % 4) * 12f;
+                strikeWorldXZ_B = new Vector2(mapOrigin.x + Mathf.Cos(angB) * distB, mapOrigin.z + Mathf.Sin(angB) * distB);
+
+                Util3D.SafeDestroy(activeBoltMeshA);
+                Util3D.SafeDestroy(activeBoltMeshB);
+                Vector3 topA = new Vector3(strikeWorldXZ_A.x, mapOrigin.y + 35f, strikeWorldXZ_A.y);
+                Vector3 botA = new Vector3(strikeWorldXZ_A.x + 2.5f, mapOrigin.y, strikeWorldXZ_A.y - 1.8f);
+                Vector3 topB = new Vector3(strikeWorldXZ_B.x, mapOrigin.y + 36f, strikeWorldXZ_B.y);
+                Vector3 botB = new Vector3(strikeWorldXZ_B.x - 2.2f, mapOrigin.y, strikeWorldXZ_B.y + 2.0f);
+                activeBoltMeshA = BuildGpuAdditiveLightningBolt(topA, botA, strikeSeedCounter, 1.55f);
+                activeBoltMeshB = BuildGpuAdditiveLightningBolt(topB, botB, strikeSeedCounter + 305, 1.35f);
+            }
+
+            float age = now - strikeStartTime;
+            const float duration = 0.42f;
+            if (age < 0f || age > duration || activeBoltMeshA == null) return;
+
+            float normT = age / duration;
+            float pulse1 = Mathf.Exp(-normT * 7.5f);
+            float pulse2 = 0.85f * Mathf.Exp(-Mathf.Pow((normT - 0.36f) * 11f, 2f));
+            float boltVis = Mathf.Clamp01(Mathf.Max(pulse1, pulse2));
+            if (boltVis < 0.04f) return;
+
+            gpuLightningMat.color = new Color(1f, 1f, 1f, boltVis);
+            Graphics.DrawMesh(activeBoltMeshA, Matrix4x4.identity, gpuLightningMat, 0);
+            if (activeBoltMeshB != null && normT < 0.65f)
+                Graphics.DrawMesh(activeBoltMeshB, Matrix4x4.identity, gpuLightningMat, 0);
+        }
+
+        private static void DrawPrecip(Map map, Vector3 mapOrigin, Env env, Vector2 wind, float dt)
+        {
             bool snowing = env.snow > 0.15f && env.snow >= env.rain * 0.5f;
-            float rate = snowing ? env.snow : env.rain;
-            if (!snowing && env.sand > env.rain && env.sand > 0.2f) rate = env.sand;
+            bool sanding = !snowing && env.sand > env.rain && env.sand > 0.2f;
+            float rate = snowing ? env.snow : (sanding ? env.sand : env.rain);
             if (rate < 0.08f) return;
-            var mat = snowing ? snowMat : rainMat;
-            if (env.sand > 0.2f && !snowing && env.rain < 0.2f) mat = rainMat;
-            if (mat == null) return;
-            float speed = snowing ? 0.35f : (env.sand > env.rain && env.rain < 0.2f ? 0.8f : 2.4f);
-            precipScroll += new Vector2(wind.x * dt * 0.15f, speed * dt);
-            mat.mainTextureOffset = precipScroll;
-            float a = Mathf.Lerp(0.25f, snowing ? 0.7f : 0.55f, Mathf.Clamp01(rate));
-            Color tint = snowing ? new Color(0.95f, 0.97f, 1f, a)
-                : env.sand > env.rain && env.rain < 0.2f ? new Color(0.85f, 0.7f, 0.42f, a * 0.8f)
-                : new Color(0.75f, 0.82f, 0.9f, a);
-            mat.color = tint;
-            Graphics.DrawMesh(precipMesh, Matrix4x4.TRS(camPos, Quaternion.identity, Vector3.one), mat, 0);
+
+            float groundY = mapOrigin.y;
+            int mapSpanX = map != null ? map.Size.x : 200;
+            int mapSpanZ = map != null ? map.Size.z : 200;
+            Vector3 mapBase = map != null ? Streaming3D.OffsetOf(map) : Vector3.zero;
+
+            if (sanding)
+            {
+                if (gpuSandMat == null || sandNearMesh == null) return;
+                precipScroll.x = (precipScroll.x + dt * 0.45f) % 1f;
+                gpuSandMat.mainTextureOffset = new Vector2(precipScroll.x, 0f);
+                gpuSandMat.color = new Color(1f, 1f, 1f, 0.58f * Mathf.Clamp01(rate));
+                // 在地图世界坐标上布置流沙风幔阵
+                for (int gz = 40; gz < mapSpanZ; gz += 80)
+                    for (int gx = 40; gx < mapSpanX; gx += 80)
+                    {
+                        Vector3 cellCenter = new Vector3(mapBase.x + gx, groundY, mapBase.z + gz);
+                        Graphics.DrawMesh(sandNearMesh, Matrix4x4.TRS(cellCenter + Vector3.up * 6.5f, Quaternion.identity, Vector3.one), gpuSandMat, 0);
+                        if (sandFarMesh != null)
+                            Graphics.DrawMesh(sandFarMesh, Matrix4x4.TRS(cellCenter + Vector3.up * 9.5f, Quaternion.identity, Vector3.one), gpuSandMat, 0);
+                    }
+                return;
+            }
+
+            // 全地图世界坐标 3D 雨雪体积网格阵列（60m x 60m 世界区块平铺整个地图，100% 固定在世界坐标，零相机坐标依赖）
+            float now = Time.realtimeSinceStartup;
+            const float tileSpan = 60f;
+            if (snowing)
+            {
+                if (snowVolMesh == null || gpuSnowMat == null) return;
+                float fallY = Mathf.Repeat(now * 1.85f, 20f);
+                float swayX = Mathf.Sin(now * 1.1f) * 0.75f;
+                float swayZ = Mathf.Cos(now * 0.9f) * 0.75f;
+                gpuSnowMat.color = new Color(1f, 1f, 1f, 0.88f * Mathf.Clamp01(rate));
+
+                for (float wz = 30f; wz < mapSpanZ; wz += tileSpan)
+                    for (float wx = 30f; wx < mapSpanX; wx += tileSpan)
+                    {
+                        Vector3 tileOrigin = new Vector3(mapBase.x + wx, groundY, mapBase.z + wz);
+                        Graphics.DrawMesh(snowVolMesh, Matrix4x4.TRS(tileOrigin + new Vector3(swayX, -fallY, swayZ), Quaternion.identity, Vector3.one), gpuSnowMat, 0);
+                        Graphics.DrawMesh(snowVolMesh, Matrix4x4.TRS(tileOrigin + new Vector3(-swayX, 20f - fallY, -swayZ), Quaternion.Euler(0f, 90f, 0f), Vector3.one), gpuSnowMat, 0);
+                    }
+            }
+            else
+            {
+                if (rainVolMesh == null || gpuRainMat == null) return;
+                float fallY = Mathf.Repeat(now * 16.0f, 22f);
+                float windYaw = env.windAngle * Mathf.Rad2Deg;
+                Quaternion rainRotA = Quaternion.Euler(0f, windYaw, 0f);
+                Quaternion rainRotB = Quaternion.Euler(0f, windYaw + 90f, 0f);
+                gpuRainMat.color = new Color(1f, 1f, 1f, 0.78f * Mathf.Clamp01(rate));
+                if (gpuSplashMat != null)
+                    gpuSplashMat.color = new Color(1f, 1f, 1f, 0.65f * Mathf.Clamp01(env.rain));
+
+                for (float wz = 30f; wz < mapSpanZ; wz += tileSpan)
+                    for (float wx = 30f; wx < mapSpanX; wx += tileSpan)
+                    {
+                        Vector3 tileOrigin = new Vector3(mapBase.x + wx, groundY, mapBase.z + wz);
+                        Graphics.DrawMesh(rainVolMesh, Matrix4x4.TRS(tileOrigin + new Vector3(0f, -fallY, 0f), rainRotA, Vector3.one), gpuRainMat, 0);
+                        Graphics.DrawMesh(rainVolMesh, Matrix4x4.TRS(tileOrigin + new Vector3(0f, 22f - fallY, 0f), rainRotB, Vector3.one), gpuRainMat, 0);
+                        if (env.rain > 0.15f && splashMesh != null && gpuSplashMat != null)
+                            Graphics.DrawMesh(splashMesh, Matrix4x4.TRS(tileOrigin, Quaternion.identity, Vector3.one), gpuSplashMat, 0);
+                    }
+            }
         }
 
         private static void ApplyWeatherFog(Env env)
         {
             float thick = Mathf.Clamp01(env.fog * 0.95f + env.rain * 0.28f + env.snow * 0.22f + env.sand * 0.6f + env.storm * 0.12f);
-            if (thick < 0.08f) return;
+            var st = FirstPerson3DMod.settings;
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            var haze = Color.Lerp(env.horizon, new Color(0.78f, 0.80f, 0.82f), 0.45f);
-            if (env.sand > 0.15f) haze = Color.Lerp(haze, new Color(0.72f, 0.56f, 0.34f), env.sand);
-            if (env.snow > 0.15f) haze = Color.Lerp(haze, new Color(0.86f, 0.89f, 0.93f), 0.55f);
-            RenderSettings.fogColor = haze;
-            float end = Mathf.Lerp(120f, 16f, thick);
-            float start = Mathf.Lerp(48f, 3.5f, thick);
-            var st = FirstPerson3DMod.settings;
+
+            float g = Mathf.Clamp01(env.glow);
+            var hazeBase = Color.Lerp(new Color(0.08f, 0.11f, 0.19f), new Color(0.78f, 0.82f, 0.88f), g);
+            var haze = Color.Lerp(env.horizon, hazeBase, 0.45f);
+            if (env.sand > 0.15f) haze = Color.Lerp(haze, new Color(0.78f, 0.60f, 0.36f) * Mathf.Lerp(0.38f, 1f, g), env.sand);
+            if (env.snow > 0.15f) haze = Color.Lerp(haze, new Color(0.84f, 0.88f, 0.93f) * Mathf.Lerp(0.40f, 1f, g), 0.55f);
+            if (env.storm > 0.3f) haze = new Color(0.12f, 0.16f, 0.25f) * Mathf.Lerp(0.45f, 1f, g);
+
+            RenderSettings.fogColor = Color.Lerp(env.horizon, haze, Mathf.Clamp01(thick * 1.1f));
+            float start = thick >= 0.06f ? Mathf.Lerp(54f, 8.0f, thick) : 78f;
+            float end = thick >= 0.06f ? Mathf.Lerp(125f, 32f, thick) : 138f;
             if (st != null && st.fogOn) end = Mathf.Min(end, Mathf.Max(20f, st.fogEnd));
             RenderSettings.fogStartDistance = start;
-            RenderSettings.fogEndDistance = Mathf.Max(start + 6f, end);
+            RenderSettings.fogEndDistance = Mathf.Max(start + 10f, end);
         }
-
-        // ------------------------------------------------------------
-        // 远山（三层视差 + 大气透视 + 树影）
-        // ------------------------------------------------------------
 
         private static void PaletteOf(int palette, out Color low, out Color high, out Color tree)
         {
             switch (palette)
             {
-                case 1: // 沙漠
+                case 1:
                     low = new Color(0.58f, 0.46f, 0.30f); high = new Color(0.78f, 0.66f, 0.48f); tree = new Color(0.36f, 0.34f, 0.22f); break;
-                case 2: // 苔原 / 雪
+                case 2:
                     low = new Color(0.52f, 0.58f, 0.62f); high = new Color(0.90f, 0.93f, 0.96f); tree = new Color(0.14f, 0.22f, 0.20f); break;
-                case 3: // 丛林
+                case 3:
                     low = new Color(0.12f, 0.26f, 0.18f); high = new Color(0.30f, 0.46f, 0.30f); tree = new Color(0.08f, 0.18f, 0.10f); break;
-                default: // 温带
+                default:
                     low = new Color(0.19f, 0.27f, 0.25f); high = new Color(0.42f, 0.47f, 0.45f); tree = new Color(0.10f, 0.20f, 0.12f); break;
             }
         }
-
-        }
+    }
 }

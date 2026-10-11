@@ -32,26 +32,33 @@ namespace RimFirstPerson3D
             return true;
         }
 
+        private static readonly List<Map> fallbackList = new List<Map>();
+
         // 当前地图所在栈的全部地图（按楼层从低到高）。
         public static List<Map> StackMapsAt(Map map)
         {
             if (map != null && stackOfMap.TryGetValue(map.uniqueID, out var sid)
                 && stackMaps.TryGetValue(sid, out var list))
                 return list;
-            var l = new List<Map>();
-            if (map == null) return l;
+            fallbackList.Clear();
+            if (map == null) return fallbackList;
             // 仅对拥有有效世界格的地图做 Tile 回退分组；口袋图的 Tile 无效（-1），
             // 比较它会走进 PlanetLayer 的越界查询并每帧刷错误，故只把自己计入。
             bool validTile = map.Tile.Valid;
             if (!validTile)
             {
-                l.Add(map);
-                return l;
+                fallbackList.Add(map);
+                return fallbackList;
             }
-            foreach (var m in Find.Maps)
-                if (m.Tile.Valid && m.Tile == map.Tile) l.Add(m);
-            l.Sort((a, b) => a.uniqueID.CompareTo(b.uniqueID));
-            return l;
+            var maps = Find.Maps;
+            for (int i = 0; i < maps.Count; i++)
+            {
+                var m = maps[i];
+                if (m.Tile.Valid && m.Tile == map.Tile) fallbackList.Add(m);
+            }
+            if (fallbackList.Count > 1)
+                fallbackList.Sort((a, b) => a.uniqueID.CompareTo(b.uniqueID));
+            return fallbackList;
         }
 
         public static int LevelOf(Map map)

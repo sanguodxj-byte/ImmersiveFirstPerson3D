@@ -8,6 +8,7 @@ namespace RimFirstPerson3D
 {
     // 建筑层：满格建筑（墙/岩石/门）转盒体并附反绕描边壳；家具交给 Furniture3D
     // 按原版三视图重构的模型（本层只兜底剩余的非家具件：立板+地面贴片）。
+    [StaticConstructorOnStartup]
     public class BuildingLayer3D
     {
         public const int ChunkSize = 16;
@@ -27,6 +28,15 @@ namespace RimFirstPerson3D
 
         private readonly Dictionary<int, Chunk> chunks = new Dictionary<int, Chunk>();
         private bool allDirty = true;
+        private readonly HashSet<Thing> rebuildSeen = new HashSet<Thing>();
+        private readonly List<Thing> cachedFurniture = new List<Thing>();
+        private readonly List<Thing> cachedWreckage = new List<Thing>();
+        private bool furnitureListDirty = true;
+
+        // 光照场（F013），由 Scene3D 注入。为空或光照关闭时不写顶点色。
+        public LightField3D light;
+        public MountainField3D mountain;
+        private LightField3D LightOrNull => light != null && Lighting3D.Enabled ? light : null;
 
         public BuildingLayer3D(Map map, float baseY)
         {
@@ -34,24 +44,58 @@ namespace RimFirstPerson3D
             this.baseY = baseY;
         }
 
-        public void MarkAllDirty() => allDirty = true;
+        public void MarkAllDirty()
+        {
+            allDirty = true;
+            furnitureListDirty = true;
+        }
 
         public void NotifyThingChanged(Thing t)
         {
             if (t == null || !t.Spawned || t.def.category != ThingCategory.Building) return;
+            furnitureListDirty = true;
+            // 满格或四向连接矮墙/围栏变化时把四个正交邻居的 chunk 也标脏。
+            bool full = t.def.Fillage == FillCategory.Full || WallModels3D.IsLinkedBarrier(t.def);
             foreach (var c in GenAdj.OccupiedRect(t))
             {
-                int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
-                if (!chunks.TryGetValue(key, out var ch)) { ch = new Chunk(); chunks[key] = ch; }
-                ch.dirty = true;
+                MarkChunkDirty(c);
+                if (!full) continue;
+                for (int d = 0; d < 4; d++)
+                {
+                    var n = c + DirOff[d];
+                    if (!n.InBounds(map)) continue;
+                    MarkChunkDirty(n);
+                }
             }
+        }
+
+        private void MarkChunkDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (!chunks.TryGetValue(key, out var ch)) { ch = new Chunk(); chunks[key] = ch; }
+            ch.dirty = true;
+        }
+
+        /// <summary>光照场变化驱动的重建（F013）：只标已经存在的 chunk。
+        /// 从没建过的块本来就会带着正确光照烘出来，为它新建一个脏条目等于把空地也拖进重建预算。</summary>
+        public void MarkCellDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch)) ch.dirty = true;
+        }
+
+        /// <summary>把本层所有网格的颜色统计并进探针（只在按需导出时走）。</summary>
+        public void Summarize(Lighting3D.Probe p)
+        {
+            foreach (var kv in chunks)
+                foreach (var mkv in kv.Value.meshes)
+                    p.Add(mkv.Value);
         }
 
         public int Update()
         {
             if (allDirty)
             {
-                DisposeMeshes();
                 for (int cx = 0; cx < (map.Size.x + ChunkSize - 1) / ChunkSize; cx++)
                     for (int cz = 0; cz < (map.Size.z + ChunkSize - 1) / ChunkSize; cz++)
                     {
@@ -87,25 +131,52 @@ namespace RimFirstPerson3D
             var builders = new Dictionary<Material, MeshBuilderX>();
             MeshBuilderX hull = null;
 
-            foreach (var t in map.listerThings.AllThings)
+            rebuildSeen.Clear();
+            for (int z = rect.minZ; z <= rect.maxZ; z++)
             {
-                if (t == null || !t.Spawned) continue;
-                if (t.def.category != ThingCategory.Building) continue;
-                if (t is Blueprint || t is Frame) continue;
-                var occ = GenAdj.OccupiedRect(t);
-                if (!occ.Overlaps(rect)) continue;
-                try { BakeBuilding(t, occ, rect, builders, ref hull); }
-                catch (System.Exception e)
+                for (int x = rect.minX; x <= rect.maxX; x++)
                 {
-                    if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake " + t.def.defName + ": " + e.Message, t.thingIDNumber);
+                    var c = new IntVec3(x, 0, z);
+                    var ed = c.GetEdifice(map);
+                    if (ed != null && ed.Spawned && ed.def != null && ed.def.category == ThingCategory.Building && rebuildSeen.Add(ed))
+                    {
+                        if (!(ed is Frame))
+                        {
+                            var occ = GenAdj.OccupiedRect(ed);
+                            try { BakeBuilding(ed, occ, rect, builders, ref hull); }
+                            catch (System.Exception e)
+                            {
+                                if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake " + ed.def.defName + ": " + e.Message, ed.thingIDNumber);
+                            }
+                        }
+                    }
+                    var list = c.GetThingList(map);
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var t = list[i];
+                        if (t != ed && t != null && t.Spawned && t.def != null && t.def.category == ThingCategory.Building && rebuildSeen.Add(t))
+                        {
+                            if (!(t is Blueprint || t is Frame))
+                            {
+                                var occ = GenAdj.OccupiedRect(t);
+                                try { BakeBuilding(t, occ, rect, builders, ref hull); }
+                                catch (System.Exception e)
+                                {
+                                    if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake " + t.def.defName + ": " + e.Message, t.thingIDNumber);
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            rebuildSeen.Clear();
 
             bool hasBounds = false;
             var acc = new Bounds();
+            var lf = LightOrNull;
             foreach (var kv in builders)
             {
-                var mesh = kv.Value.ToMesh();
+                var mesh = kv.Value.ToMesh(lf);
                 if (mesh != null)
                 {
                     chunk.meshes[kv.Key] = mesh;
@@ -113,7 +184,7 @@ namespace RimFirstPerson3D
                     else acc.Encapsulate(mesh.bounds);
                 }
             }
-            chunk.hullMesh = hull?.ToMesh();
+            chunk.hullMesh = hull?.ToMesh(null);
             if (chunk.hullMesh != null)
             {
                 if (!hasBounds) { acc = chunk.hullMesh.bounds; hasBounds = true; }
@@ -127,6 +198,7 @@ namespace RimFirstPerson3D
         private void BakeBuilding(Thing t, CellRect occ, CellRect chunkRect,
             Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull)
         {
+            if (MountainField3D.IsRock(t)) return;
             var g = t.Graphic;
             if (g == null) return;
             Material srcMat = null;
@@ -142,40 +214,69 @@ namespace RimFirstPerson3D
 
             bool isDoor = t is Building_Door;
             bool fullCell = t.def.Fillage == FillCategory.Full;
+            var wArch = WallModels3D.ArchOf(t);
 
-            // 只有建造墙走墙图集（顶面=墙帽段，立面=墙身段）。天然岩、平滑岩、模组墙
-            // 继续用连接子格；图集加载不到时建造墙也退回连接子格。
-            if (fullCell && !isDoor && t.def == ThingDefOf.Wall && WallAtlasTex() != null)
+            // 全系列满格墙体与穿墙设备（建造砖/木/光滑墙、平滑岩墙、加固防爆墙、飞船船体墙、
+            // 虫穴墙、平滑冰墙、迷宫灰墙、虚空金属刺墙、扭曲血肉墙、穿墙通风口、穿墙制冷机）
+            // 统一走 WallAtlas 图集与 3D 表面浮雕构造。
+            if (fullCell && !isDoor && WallModels3D.IsFullWallOrInWall(wArch) && WallAtlasTex() != null)
             {
-                BakeWall(t, occ, chunkRect, srcMat, builders, ref hull, outline);
+                BakeWall(t, wArch, occ, chunkRect, srcMat, builders, ref hull, outline);
                 return;
             }
 
-            Material mat = Util3D.CloneForBox(srcMat);
+            // 四向连接矮墙掩体与围栏（沙袋、路障、木/石栅栏、金属栅栏、远古混凝土围栏）
+            if (!isDoor && WallModels3D.IsLowBarrierOrFence(wArch) && WallAtlasTex() != null)
+            {
+                BakeLowBarrier(t, wArch, occ, chunkRect, srcMat, builders, ref hull, outline);
+                return;
+            }
+
+            // 壁挂灯具（壁灯 WallLamp、壁炬 TorchWallLamp）
+            if (!isDoor && WallModels3D.IsWallAttachment(wArch) && WallAtlasTex() != null)
+            {
+                BakeWallAttachment(t, wArch, chunkRect, srcMat, builders, ref hull, outline);
+                return;
+            }
+
+            if (fullCell && !isDoor && t.def.building != null && t.def.building.isNaturalRock)
+            {
+                BakeRock(occ, chunkRect, srcMat, builders);
+                return;
+            }
 
             if (isDoor)
             {
                 var door = (Building_Door)t;
-                // 名单外的门（栅栏门、动物帘）和图集缺失时完全不碰原来的样子。
+                Rot4 doorRot = DoorRotation(door);
+                try { srcMat = g.MatAt(doorRot, t); } catch { }
+                if (srcMat == null || srcMat.mainTexture == null) { try { srcMat = g.MatSingle; } catch { } }
+                if (srcMat == null || srcMat.mainTexture == null) return;
+
                 bool header = WallAtlasTex() != null && HeaderDoors.Contains(t.def.defName);
-                // 门扇厚 0.18（略薄于墙 1.0，视觉上像门板嵌在墙洞里）
-                float dw = door.Rotation.IsHorizontal ? Metrics3D.DoorPanelThickness : 1f;
-                float dd = door.Rotation.IsHorizontal ? 1f : Metrics3D.DoorPanelThickness;
-                float dh = Metrics3D.DoorHeight;   // 2.05，取代原 WallHeight*0.82
-                if (!header || !door.Open)
+                bool horiz = doorRot.IsHorizontal;
+                float inset = header ? (1f - Metrics3D.DoorWidth) * 0.5f : 0f;
+                float span = (horiz ? occ.Height : occ.Width) - inset * 2f;
+                float dw = horiz ? Metrics3D.DoorPanelThickness : span;
+                float dd = horiz ? span : Metrics3D.DoorPanelThickness;
+                float dh = t.def.defName == "FenceGate" ? Metrics3D.FenceHeight : Metrics3D.DoorHeight;
+                if (!door.Open && chunkRect.Contains(door.Position))
                 {
+                    var doorMat = DoorMaterialAndUv(srcMat, out Vector4 doorUv);
                     var m = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
-                    var b = BuilderFor(builders, mat);
-                    b.AppendBox(w: dw, h: dh, d: dd, vScale: vS, matrix: m);
+                    var b = BuilderFor(builders, doorMat);
+                    b.AppendDoorPanel(dw, dh, dd, horiz, doorUv, m);
                     if (Fps3DState.DrawOutlines)
                     {
                         hull = hull ?? new MeshBuilderX();
                         hull.AppendBoxHull(dw, dh, dd, outline, m);
                     }
                 }
-                if (header) BakeDoorHeader(t, occ, chunkRect, srcMat, builders, ref hull, outline);
+                if (header) BakeDoorHeader(door, doorRot, occ, chunkRect, srcMat, builders, ref hull, outline);
                 return;
             }
+
+            Material mat = Util3D.CloneForBox(srcMat);
 
             if (fullCell)
             {
@@ -244,11 +345,187 @@ namespace RimFirstPerson3D
         // 一个外观加一种染色共用一个材质（chunk 仍按材质合并），见 0003-wall-atlas.md。
         private static readonly Dictionary<string, Material> wallMats = new Dictionary<string, Material>();
 
-        // 会切门洞的门。缺 DLC 时 defName 对不上名单就当普通邻居，栅栏门/动物帘故意不在名单里。
+        // (u0, v0, u1, v1)，v=0 在贴图底部。每米贴一次这一格。
+        private static readonly Vector4 RockInteriorUv = new Vector4(0.78125f, 0.78125f, 0.96875f, 0.96875f);
+        // 主贴图实例 + shader + color + _ColorTwo。清掉连接子格的 scale/offset 后，同外观可共用。
+        private static readonly Dictionary<string, Material> rockMats = new Dictionary<string, Material>();
+
+        // 会切门洞的门。缺 DLC 时 defName 对不上名单就当普通邻居，栅栏门故意不在名单里。
         private static readonly HashSet<string> HeaderDoors = new HashSet<string>
         {
-            "Door", "Autodoor", "OrnateDoor", "SecurityDoor", "VacBarrier"
+            "Door", "Autodoor", "OrnateDoor", "SecurityDoor", "VacBarrier",
+            "AnimalFlap", "GrayDoor", "AncientBlastDoor"
         };
+
+        private struct DoorTexEntry
+        {
+            public Texture2D tex;
+            public Vector4 uvRect;
+        }
+
+        private static readonly Dictionary<int, DoorTexEntry> doorTexCache = new Dictionary<int, DoorTexEntry>();
+        private static readonly Dictionary<string, Material> doorMats = new Dictionary<string, Material>();
+
+        private Rot4 DoorRotation(Building_Door door)
+        {
+            if (door.def.size == IntVec2.One)
+            {
+                bool preferFences = door.def.building != null && door.def.building.preferConnectingToFences;
+                return DoorUtility.DoorRotationAt(door.Position, map, preferFences);
+            }
+            return door.Rotation;
+        }
+
+        private static Material DoorMaterialAndUv(Material src, out Vector4 uvRect)
+        {
+            uvRect = new Vector4(0f, 0.203125f, 0.5f, 0.796875f);
+            if (src == null || src.mainTexture == null) return src;
+            Texture srcTex = src.mainTexture;
+            int texId = srcTex.GetInstanceID();
+            if (!doorTexCache.TryGetValue(texId, out var entry))
+            {
+                entry = ExtractDoorTexture(srcTex);
+                doorTexCache[texId] = entry;
+            }
+            uvRect = entry.uvRect;
+            int shaderId = src.shader != null ? src.shader.GetInstanceID() : 0;
+            var c32 = (Color32)src.color;
+            Color two = src.HasProperty("_ColorTwo") ? src.GetColor("_ColorTwo") : Color.black;
+            var t32 = (Color32)two;
+            string key = texId + "|" + shaderId + "|"
+                + c32.r + "," + c32.g + "," + c32.b + "," + c32.a + "|"
+                + t32.r + "," + t32.g + "," + t32.b + "," + t32.a;
+            if (doorMats.TryGetValue(key, out var m)) return m;
+            m = new Material(src)
+            {
+                mainTexture = entry.tex != null ? (Texture)entry.tex : srcTex,
+                mainTextureScale = Vector2.one,
+                mainTextureOffset = Vector2.zero
+            };
+            doorMats[key] = m;
+            return m;
+        }
+
+        private static DoorTexEntry ExtractDoorTexture(Texture source)
+        {
+            int w = Mathf.Max(1, source.width);
+            int h = Mathf.Max(1, source.height);
+            var rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+            var prev = RenderTexture.active;
+            try
+            {
+                Graphics.Blit(source, rt);
+                RenderTexture.active = rt;
+                var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+                {
+                    name = "FP3D_Door_" + source.name,
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                var px = tex.GetPixels32();
+
+                int x0 = w, x1 = -1, y0 = h, y1 = -1;
+                int sumR = 0, sumG = 0, sumB = 0, count = 0;
+                for (int y = 0; y < h; y++)
+                {
+                    int row = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        var c = px[row + x];
+                        if (c.a >= 128)
+                        {
+                            if (x < x0) x0 = x;
+                            if (x > x1) x1 = x;
+                            if (y < y0) y0 = y;
+                            if (y > y1) y1 = y;
+                            int luma = (c.r + c.g + c.b) / 3;
+                            if (luma >= 55)
+                            {
+                                sumR += c.r; sumG += c.g; sumB += c.b; count++;
+                            }
+                        }
+                    }
+                }
+
+                if (x1 < x0 || y1 < y0)
+                {
+                    x0 = 0; x1 = w / 2 - 1; y0 = 0; y1 = h - 1;
+                }
+                else
+                {
+                    float RowLuma(int ry)
+                    {
+                        int s = 0, n = x1 - x0 + 1;
+                        int r = ry * w;
+                        for (int x = x0; x <= x1; x++)
+                        {
+                            var c = px[r + x];
+                            s += (c.r + c.g + c.b) / 3;
+                        }
+                        return (float)s / Mathf.Max(1, n);
+                    }
+                    float ColLuma(int cx)
+                    {
+                        int s = 0, n = y1 - y0 + 1;
+                        for (int y = y0; y <= y1; y++)
+                        {
+                            var c = px[y * w + cx];
+                            s += (c.r + c.g + c.b) / 3;
+                        }
+                        return (float)s / Mathf.Max(1, n);
+                    }
+
+                    // 剥离顶底与左外沿的原版黑描边（3D 外轮廓由反绕壳负责），右侧中缝仅留 1 列暗线
+                    for (int k = 0; k < 3 && y1 - y0 > 12; k++)
+                    {
+                        if (RowLuma(y0) < 55f) y0++;
+                        if (RowLuma(y1) < 55f) y1--;
+                    }
+                    for (int k = 0; k < 2 && x1 - x0 > 12; k++)
+                    {
+                        if (ColLuma(x0) < 55f) x0++;
+                    }
+                    while (x1 - x0 > 12 && ColLuma(x1) < 55f && ColLuma(x1 - 1) < 55f)
+                    {
+                        x1--;
+                    }
+                }
+
+                byte fillR = count > 0 ? (byte)(sumR / count) : (byte)200;
+                byte fillG = count > 0 ? (byte)(sumG / count) : (byte)200;
+                byte fillB = count > 0 ? (byte)(sumB / count) : (byte)200;
+                for (int i = 0; i < px.Length; i++)
+                {
+                    if (px[i].a < 128)
+                        px[i] = new Color32(fillR, fillG, fillB, 255);
+                    else
+                        px[i].a = 255;
+                }
+                tex.SetPixels32(px);
+                tex.Apply(false, true);
+
+                var uv = new Vector4(
+                    (float)x0 / w,
+                    (float)y0 / h,
+                    (float)(x1 + 1) / w,
+                    (float)(y1 + 1) / h);
+                return new DoorTexEntry { tex = tex, uvRect = uv };
+            }
+            catch
+            {
+                return new DoorTexEntry
+                {
+                    tex = null,
+                    uvRect = new Vector4(0f, 0.203125f, 0.5f, 0.796875f)
+                };
+            }
+            finally
+            {
+                RenderTexture.active = prev;
+                RenderTexture.ReleaseTemporary(rt);
+            }
+        }
 
         // 面的四个方向：0=北(-Z) 1=南(+Z) 2=西(-X) 3=东(+X)，与 SolidAt 的邻格偏移同序。
         private static readonly IntVec3[] DirOff =
@@ -268,10 +545,13 @@ namespace RimFirstPerson3D
             return wallAtlas;
         }
 
-        // 外观键：Bricks / Planks 各有图，其余（含 Smooth、Metal、没有材料）退回 smooth。
+        // 外观键：按 WallModels3D 原型映射到 WallAtlas.png 中的前缀。
         private static string AppearanceKey(Thing t)
         {
-            var stuff = t.Stuff;
+            var arch = WallModels3D.ArchOf(t);
+            if (arch != WallModels3D.WallArch.None)
+                return WallModels3D.AtlasPrefix(arch);
+            var stuff = t != null ? t.Stuff : null;
             var ap = stuff != null && stuff.stuffProps != null ? stuff.stuffProps.appearance : null;
             if (ap == null) return "smooth";
             if (ap.defName == "Bricks") return "bricks";
@@ -295,11 +575,42 @@ namespace RimFirstPerson3D
             return m;
         }
 
-        // 这一面要不要发：邻居不是满格建筑，或者邻居是要切门洞的门
-        // （门格算满格，但它那一面是门洞侧壁，发整面隧道两侧才不透）。
-        private bool WallFaceExposed(IntVec3 c)
+        // 复制原版材质但采样整张图集。CloneForBox 会留下连接子格的 scale/offset，山体不能用。
+        private static Material RockMat(Material src)
         {
-            return !SolidAt(c) || HeaderDoorAt(c) != null;
+            int texId = src.mainTexture != null ? src.mainTexture.GetInstanceID() : 0;
+            var shader = src.shader;
+            int shaderId = shader != null ? shader.GetInstanceID() : 0;
+            Color two = Color.black;
+            if (src.HasProperty("_ColorTwo")) two = src.GetColor("_ColorTwo");
+            var c32 = (Color32)src.color;
+            var t32 = (Color32)two;
+            string key = texId + "|" + shaderId + "|"
+                + c32.r + "," + c32.g + "," + c32.b + "," + c32.a + "|"
+                + t32.r + "," + t32.g + "," + t32.b + "," + t32.a;
+            if (rockMats.TryGetValue(key, out var m)) return m;
+            m = new Material(src);
+            m.mainTextureScale = Vector2.one;
+            m.mainTextureOffset = Vector2.zero;
+            rockMats[key] = m;
+            return m;
+        }
+
+        // 这一面要不要发：邻居不是满格建筑，或者邻居是正对着该面的通行开口门。
+        // 若邻居是门且当前墙位于门的支撑侧（门框两侧），门自身的门楣与 3D 门框内壁已经完整封口，
+        // 墙体不再向门内重复发射内侧面与反绕黑壳（避免 3cm 黑壳穿出 2.5cm 门框把门洞内壁染黑）。
+        private bool WallFaceExposed(IntVec3 wallCell, int dir)
+        {
+            var n = wallCell + DirOff[dir];
+            if (!SolidAt(n)) return true;
+            var door = HeaderDoorAt(n);
+            if (door == null) return false;
+            Rot4 doorRot = DoorRotation(door);
+            bool horiz = doorRot.IsHorizontal;
+            // dir 0/1 为南北(-Z/+Z)，dir 2/3 为东西(-X/+X)。
+            // !horiz 时东西(2/3)为支撑侧，南北(0/1)为通行侧；horiz 时南北(0/1)为支撑侧，东西(2/3)为通行侧。
+            bool isSupportSide = horiz ? (dir < 2) : (dir >= 2);
+            return !isSupportSide;
         }
 
         private Building_Door HeaderDoorAt(IntVec3 c)
@@ -310,68 +621,253 @@ namespace RimFirstPerson3D
             return HeaderDoors.Contains(d.def.defName) ? d : null;
         }
 
-        // 体素式面剔除同原来的满格分支：逐格发射，只留玩家看得见的外层。
-        private void BakeWall(Thing t, CellRect occ, CellRect chunkRect, Material srcMat,
+        // 体素式面剔除 + 3D 立面浮雕：逐格发射可见外层，并在非门暴露面上叠加对应墙种的 3D 浮雕结构。
+        private void BakeWall(Thing t, WallModels3D.WallArch wArch, CellRect occ, CellRect chunkRect, Material srcMat,
             Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
         {
-            string ap = AppearanceKey(t);
+            string ap = WallModels3D.AtlasPrefix(wArch);
             var b = BuilderFor(builders, WallAtlasMat(t, srcMat, WallAtlasTex()));
-            var top = WallUVGen.R[ap + ".top"];
-            var side = WallUVGen.R[ap + ".side"];
-            float h = Fps3DState.WallHeight;
+            var top = WallModels3D.GetUv(ap, "top");
+            var side = WallModels3D.GetUv(ap, "side");
+            float h = wArch == WallModels3D.WallArch.SolidIce ? Metrics3D.RockHeight : Fps3DState.WallHeight;
             float y1 = baseY + h;
             bool shell = Fps3DState.DrawOutlines;
             if (shell) hull = hull ?? new MeshBuilderX();
+            var uvs = WallModels3D.BuildUvSpecs(wArch);
+
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
                 b.AppendWallTop(c.x, c.z, y1, top);
                 if (shell) hull.AppendWallTopHull(c.x, c.z, y1, outline);
+
+                bool[] openFace = new bool[4];
+                bool anyOpen = false;
                 for (int d = 0; d < 4; d++)
                 {
-                    if (!WallFaceExposed(c + DirOff[d])) continue;
+                    if (!WallFaceExposed(c, d)) continue;
                     b.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, y1, side, baseY, h);
                     if (shell) hull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, baseY, y1, baseY, outline);
+                    if (!SolidAt(c + DirOff[d]) && HeaderDoorAt(c + DirOff[d]) == null)
+                    {
+                        openFace[d] = true;
+                        anyOpen = true;
+                    }
+                }
+
+                if (anyOpen)
+                {
+                    var relief = new Model3D();
+                    int cellHash = c.x * 73856093 ^ c.z * 19349663;
+                    if (wArch == WallModels3D.WallArch.Vent || wArch == WallModels3D.WallArch.Cooler)
+                    {
+                        WallModels3D.AddInWallDeviceRelief(relief, wArch, t.Rotation, h,
+                            openFace[0], openFace[1], openFace[2], openFace[3]);
+                    }
+                    else
+                    {
+                        for (int d = 0; d < 4; d++)
+                            if (openFace[d]) WallModels3D.AddExposedFaceRelief(relief, wArch, d, h, cellHash);
+                    }
+                    if (relief.parts.Count > 0)
+                    {
+                        var mb = new ModelBuilder(uvs, false);
+                        mb.AddAll(relief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                        b.AppendFromModelBuilder(mb, null, 0f);
+                    }
                 }
             }
         }
 
-        // 门楣盒：占满门格，底在 DoorHeight、顶在 WallHeight。朝房间的那一面发整条棱的
-        // 横带加左右窄条，洞口宽度就正好是 DoorWidth；窄条用第 3 节的高度比例，
-        // 砖缝与旁边的墙对齐。
-        private void BakeDoorHeader(Thing t, CellRect occ, CellRect chunkRect, Material srcMat,
+        // 四向连接矮墙掩体与围栏（Sandbags / Barricade / Fence / AncientFence）
+        private void BakeLowBarrier(Thing t, WallModels3D.WallArch wArch, CellRect occ, CellRect chunkRect, Material srcMat,
             Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
         {
-            string ap = AppearanceKey(t);
             var b = BuilderFor(builders, WallAtlasMat(t, srcMat, WallAtlasTex()));
-            var top = WallUVGen.R[ap + ".top"];
-            var side = WallUVGen.R[ap + ".side"];
+            bool shell = Fps3DState.DrawOutlines;
+            if (shell) hull = hull ?? new MeshBuilderX();
+            var uvs = WallModels3D.BuildUvSpecs(wArch);
+            float hw = outline * 0.65f;
+
+            foreach (var c in occ)
+            {
+                if (!chunkRect.Contains(c)) continue;
+                bool ln = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[0]);
+                bool ls = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[1]);
+                bool lw = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[2]);
+                bool le = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[3]);
+                int cellHash = c.x * 73856093 ^ c.z * 19349663;
+                var model = WallModels3D.BuildCellModel(wArch, ln, ls, lw, le, t.Rotation, cellHash);
+                var mb = new ModelBuilder(uvs, false);
+                mb.AddAll(model, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                b.AppendFromModelBuilder(mb, shell ? hull : null, hw);
+            }
+        }
+
+        // 壁挂灯具（WallLamp / TorchWallLamp）：按朝向贴合在相邻墙体的可见外立面上
+        private void BakeWallAttachment(Thing t, WallModels3D.WallArch wArch, CellRect chunkRect, Material srcMat,
+            Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
+        {
+            var c = t.Position;
+            if (!chunkRect.Contains(c)) return;
+            var b = BuilderFor(builders, WallAtlasMat(t, srcMat, WallAtlasTex()));
+            bool shell = Fps3DState.DrawOutlines;
+            if (shell) hull = hull ?? new MeshBuilderX();
+            var uvs = WallModels3D.BuildUvSpecs(wArch);
+
+            var wallCell = t.Rotation.FacingCell;
+            var anchor = new Vector3(
+                c.x + 0.5f + wallCell.x * 0.44f,
+                baseY + Metrics3D.TorchHeadHeight - 0.15f,
+                c.z + 0.5f + wallCell.z * 0.44f);
+            var model = WallModels3D.BuildCellModel(wArch, false, false, false, false, t.Rotation);
+            var mb = new ModelBuilder(uvs, false);
+            mb.AddAll(model, Matrix4x4.Translate(anchor));
+            b.AppendFromModelBuilder(mb, shell ? hull : null, outline * 0.55f);
+        }
+
+        // 天然岩：顶在 RockHeight，不收斜坡、不发描边。挖开后露出的是竖直侧面。
+        // 同高的天然岩不发侧面；别的满格只露出墙顶以上一条；空气发整面，竖向三等分，
+        // 每条都贴完整内格，浅色岩层大约每 1 m 一次，而不是被拉成一整面。
+        private void BakeRock(CellRect occ, CellRect chunkRect, Material srcMat,
+            Dictionary<Material, MeshBuilderX> builders)
+        {
+            var b = BuilderFor(builders, RockMat(srcMat));
+            float y0 = baseY;
+            float y1 = baseY + Metrics3D.RockHeight;
+            float wallTop = baseY + Fps3DState.WallHeight;
+            float step = Metrics3D.RockHeight / 3f;
+            foreach (var c in occ)
+            {
+                if (!chunkRect.Contains(c)) continue;
+                b.AppendWallTop(c.x, c.z, y1, RockInteriorUv);
+                for (int d = 0; d < 4; d++)
+                {
+                    var n = c + DirOff[d];
+                    if (n.InBounds(map))
+                    {
+                        var ed = n.GetEdifice(map);
+                        if (ed != null && ed.def != null && ed.def.building != null
+                            && ed.def.building.isNaturalRock)
+                            continue;
+                        if (ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full)
+                        {
+                            // v 按整高映射，这条只取矩形靠上的一段（约 8%），不把整格拉到 0.22 m。
+                            b.AppendWallFace(d, c.x, c.z, 0f, 1f, wallTop, y1,
+                                RockInteriorUv, y0, Metrics3D.RockHeight);
+                            continue;
+                        }
+                    }
+                    for (int s = 0; s < 3; s++)
+                    {
+                        float ya = y0 + step * s;
+                        float yb = s == 2 ? y1 : ya + step;
+                        b.AppendWallFace(d, c.x, c.z, 0f, 1f, ya, yb, RockInteriorUv, ya, yb - ya);
+                    }
+                }
+            }
+        }
+
+        // 查找门两侧相邻的满格墙，使门楣与门框优先继承所在墙体的外观和颜色（如平滑花岗岩墙、加固防爆墙、飞船船体墙、砖墙等）。
+        private Thing FindAdjacentWall(CellRect occ, bool horiz, out Material wallSrcMat)
+        {
+            wallSrcMat = null;
+            int[] prefDirs = horiz ? new[] { 0, 1, 2, 3 } : new[] { 2, 3, 0, 1 };
+            for (int k = 0; k < 4; k++)
+            {
+                int d = prefDirs[k];
+                foreach (var c in occ)
+                {
+                    var n = c + DirOff[d];
+                    if (occ.Contains(n) || !n.InBounds(map)) continue;
+                    var ed = n.GetEdifice(map);
+                    if (ed != null && WallModels3D.IsFullWallOrInWall(WallModels3D.ArchOf(ed)) && ed.Graphic != null)
+                    {
+                        try { wallSrcMat = ed.Graphic.MatAt(ed.Rotation, ed); } catch { }
+                        if (wallSrcMat == null) { try { wallSrcMat = ed.Graphic.MatSingle; } catch { } }
+                        if (wallSrcMat != null) return ed;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // 门楣与 3D 门框：占满门格，门楣底在 DoorHeight、顶在 WallHeight；
+        // 通行方向发门楣横带 + 左右门框立条，支撑方向在 inset 深度发立体门框内壁（jamb），
+        // 外侧无邻墙时封死支撑侧外立面，彻底消除转角/端头门的悬空细丝与穿帮黑框。
+        private void BakeDoorHeader(Building_Door door, Rot4 doorRot, CellRect occ, CellRect chunkRect, Material srcMat,
+            Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
+        {
+            bool horiz = doorRot.IsHorizontal;
+            Thing styleRef = FindAdjacentWall(occ, horiz, out Material adjMat) ?? (Thing)door;
+            Material styleMat = adjMat ?? srcMat;
+            string ap = AppearanceKey(styleRef);
+            var b = BuilderFor(builders, WallAtlasMat(styleRef, styleMat, WallAtlasTex()));
+            var top = WallModels3D.GetUv(ap, "top");
+            var side = WallModels3D.GetUv(ap, "side");
             float h = Fps3DState.WallHeight;
             float y1 = baseY + h;
             float sill = baseY + Metrics3D.DoorHeight;
             float inset = (1f - Metrics3D.DoorWidth) * 0.5f;
             bool shell = Fps3DState.DrawOutlines;
             if (shell) hull = hull ?? new MeshBuilderX();
-            var sh = hull;   // 本地函数不能捕获 ref 参数，这里固定成局部引用
+            var sh = hull;
+
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
                 b.AppendWallTop(c.x, c.z, y1, top);
                 if (shell) sh.AppendWallTopHull(c.x, c.z, y1, outline);
-                // 门洞上沿：法线朝下，贴墙帽段
+                // 门洞上沿底面：法线朝下，贴墙帽段（不发 BottomHull，避免在 2.02m 处翻出穿墙黑框）
                 b.AppendWallBottom(c.x, c.z, sill, top);
-                if (shell) sh.AppendWallBottomHull(c.x, c.z, sill, outline);
+
                 for (int d = 0; d < 4; d++)
                 {
-                    if (SolidAt(c + DirOff[d])) continue;
-                    void Strip(float ua, float ub, float ya, float yb)
+                    var n = c + DirOff[d];
+                    if (occ.Contains(n)) continue; // 多格门内部相邻格跳过
+
+                    bool isPassage = horiz ? (d >= 2) : (d < 2);
+                    bool neighborSolid = SolidAt(n);
+
+                    // 1. 门楣层 [sill, y1]：任何未被满格建筑遮挡的面都发射门楣横带
+                    if (!neighborSolid)
                     {
-                        b.AppendWallFace(d, c.x, c.z, ua, ub, ya, yb, side, baseY, h);
-                        if (shell) sh.AppendWallFaceHull(d, c.x, c.z, ua, ub, ya, yb, baseY, outline);
+                        b.AppendWallFace(d, c.x, c.z, 0f, 1f, sill, y1, side, baseY, h);
+                        if (shell) sh.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, sill, y1, sill, outline);
                     }
-                    Strip(0f, 1f, sill, y1);              // 门楣横带
-                    Strip(0f, inset, baseY, sill);        // 左条
-                    Strip(1f - inset, 1f, baseY, sill);   // 右条
+
+                    // 2. 门洞层 [baseY, sill]
+                    if (isPassage)
+                    {
+                        if (!neighborSolid)
+                        {
+                            // 判断该通行面上 u=0 与 u=1 两端是否处于门占格的外端
+                            // d=0(北): u=0 为东(+X), u=1 为西(-X)
+                            // d=1(南): u=0 为西(-X), u=1 为东(+X)
+                            // d=2(西): u=0 为北(-Z), u=1 为南(+Z)
+                            // d=3(东): u=0 为南(+Z), u=1 为北(-Z)
+                            bool hasU0 = (d == 0 && c.x == occ.maxX) || (d == 1 && c.x == occ.minX)
+                                      || (d == 2 && c.z == occ.minZ) || (d == 3 && c.z == occ.maxZ);
+                            bool hasU1 = (d == 0 && c.x == occ.minX) || (d == 1 && c.x == occ.maxX)
+                                      || (d == 2 && c.z == occ.maxZ) || (d == 3 && c.z == occ.minZ);
+                            if (hasU0) b.AppendWallFace(d, c.x, c.z, 0f, inset, baseY, sill, side, baseY, h);
+                            if (hasU1) b.AppendWallFace(d, c.x, c.z, 1f - inset, 1f, baseY, sill, side, baseY, h);
+                        }
+                    }
+                    else
+                    {
+                        // d 是支撑侧（门框端）：
+                        // (a) 在距离该侧边界 inset (0.025m) 处向门洞中心 (d ^ 1) 发射立体门框内壁 (1.0m x 2.05m)
+                        int dInward = d ^ 1;
+                        b.AppendWallFaceOffset(dInward, c.x, c.z, 0f, 1f, baseY, sill, side, baseY, h, -(1f - inset));
+
+                        // (b) 若支撑侧外部没有满格建筑遮挡（如转角门或独立门），发射外侧封口立面
+                        if (!neighborSolid)
+                        {
+                            b.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, sill, side, baseY, h);
+                            if (shell) sh.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, baseY, sill, baseY, outline);
+                        }
+                    }
                 }
             }
         }
@@ -382,6 +878,19 @@ namespace RimFirstPerson3D
         {
             if (!c.InBounds(map)) return false;
             var ed = c.GetEdifice(map);
+            if (MountainField3D.IsRock(ed))
+            {
+                if (mountain != null && mountain.Ready)
+                {
+                    int i = c.z * map.Size.x + c.x;
+                    if (mountain.Cells[i] == 1)
+                    {
+                        float minH = Mathf.Min(mountain.Shape.CellMin(c.x, c.z), mountain.Ceilings[i]);
+                        if (minH >= Fps3DState.WallHeight) return true;
+                    }
+                }
+                return false;
+            }
             return ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full;
         }
 
@@ -418,24 +927,39 @@ namespace RimFirstPerson3D
             DrawWreckage();
         }
 
-        // 家具逐件绘制（模型按 原型+朝向+占格 缓存，不并入 chunk 网格）。
-        private void DrawFurniture()
+        private void EnsureSpecialLists()
         {
-            if (!Furniture3D.Enabled) return;
+            if (!furnitureListDirty) return;
+            furnitureListDirty = false;
+            cachedFurniture.Clear();
+            cachedWreckage.Clear();
             var all = map.listerThings.AllThings;
             for (int i = 0; i < all.Count; i++)
             {
                 var t = all[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
                 if (t.def.category != ThingCategory.Building) continue;
+                if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
+                else if (Wreckage3D.Handles(t)) cachedWreckage.Add(t);
+            }
+        }
+
+        // 家具逐件绘制（模型按 原型+朝向+占格 缓存，不并入 chunk 网格）。
+        private void DrawFurniture()
+        {
+            if (!Furniture3D.Enabled) return;
+            EnsureSpecialLists();
+            for (int i = 0; i < cachedFurniture.Count; i++)
+            {
+                var t = cachedFurniture[i];
+                if (t == null || !t.Spawned || t.def == null) continue;
                 try
                 {
-                    if (!Furniture3D.Handles(t)) continue;
                     if (t.Position.Fogged(map)) continue;
                     var dp = t.DrawPos;
                     var wp = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z);
                     if (!Frustum3D.VisiblePoint(wp, 4f)) continue;
-                    Furniture3D.TryDraw(t, wp);
+                    Furniture3D.TryDraw(t, wp, InstanceLit(t, dp));
                 }
                 catch { }
             }
@@ -445,24 +969,28 @@ namespace RimFirstPerson3D
         private void DrawWreckage()
         {
             if (!Wreckage3D.Enabled) return;
-            var all = map.listerThings.AllThings;
-            for (int i = 0; i < all.Count; i++)
+            EnsureSpecialLists();
+            for (int i = 0; i < cachedWreckage.Count; i++)
             {
-                var t = all[i];
+                var t = cachedWreckage[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
-                if (t.def.category != ThingCategory.Building) continue;
                 try
                 {
-                    if (!Wreckage3D.Handles(t)) continue;
                     if (t.Position.Fogged(map)) continue;
                     var dp = t.DrawPos;
                     var wp = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z);
                     // 残骸样板最大 6x4，取半径 4 保守放行，避免贴边误剔。
                     if (!Frustum3D.VisiblePoint(wp, 4f)) continue;
-                    Wreckage3D.TryDraw(t, wp);
+                    Wreckage3D.TryDraw(t, wp, InstanceLit(t, dp));
                 }
                 catch { }
             }
+        }
+
+        // 逐件对象的放置亮度（F013）：按图内局部位置取，灯具自身抬到自发光下限。
+        private Color InstanceLit(Thing t, Vector3 mapLocal)
+        {
+            return Lighting3D.InstanceLevel(t, light, new Vector3(mapLocal.x, baseY, mapLocal.z));
         }
 
         private void DisposeChunk(Chunk chunk)
@@ -482,14 +1010,23 @@ namespace RimFirstPerson3D
         {
             DisposeMeshes();
             chunks.Clear();
+            cachedFurniture.Clear();
+            cachedWreckage.Clear();
+            rebuildSeen.Clear();
         }
 
-        // 顶点/UV 直写式网格构建器。
+        // 顶点/UV/法线直写式网格构建器。
+        //
+        // 法线不交给 RecalculateNormals：每个面的外法线由本项目已验证的绕序直接算
+        // （Cross(b-a, c-a)），与下面的 Nx/Nz 表同口径。光照（F013）按法线吃向阳项，
+        // 符号必须由我们自己声明，不能依赖 Unity 内部约定。
         private class MeshBuilderX
         {
             private readonly List<Vector3> verts = new List<Vector3>();
             private readonly List<Vector2> uvs = new List<Vector2>();
+            private readonly List<Vector3> normals = new List<Vector3>();
             private readonly List<int> tris = new List<int>();
+            private readonly List<Color32> colors = new List<Color32>();
 
             public void AppendBox(float w, float h, float d, float vScale, Matrix4x4 matrix)
             {
@@ -637,12 +1174,76 @@ namespace RimFirstPerson3D
 
             // 立面的一块（可以是切过门洞剩下的窄条）：棱坐标 [ua,ub] 是它在整条 1 m 棱上的
             // 位置，切过之后不重新归一化；v = (y - vBase) / vSpan，地面 0、墙顶 1。
+            public void AppendDoorPanel(float w, float h, float d, bool horiz, Vector4 uvRect, Matrix4x4 matrix)
+            {
+                float hw = w * 0.5f, hd = d * 0.5f;
+                float u0 = uvRect.x, v0 = uvRect.y, u1 = uvRect.z, v1 = uvRect.w;
+                // 门板窄边与顶面取门板左下方纯色区，避免把门把手或观察窗拉到窄边上
+                float eu0 = Mathf.Lerp(u0, u1, 0.08f);
+                float eu1 = Mathf.Lerp(u0, u1, 0.28f);
+                float ev0 = Mathf.Lerp(v0, v1, 0.12f);
+                float ev1 = Mathf.Lerp(v0, v1, 0.25f);
+                var edgeBL = new Vector2(eu0, ev0);
+                var edgeBR = new Vector2(eu1, ev0);
+                var edgeTR = new Vector2(eu1, ev1);
+                var edgeTL = new Vector2(eu0, ev1);
+
+                // 顶面与底面
+                Quad(new Vector3(-hw, h, hd), new Vector3(hw, h, hd), new Vector3(hw, h, -hd), new Vector3(-hw, h, -hd),
+                    edgeBL, edgeBR, edgeTR, edgeTL, matrix);
+
+                if (!horiz)
+                {
+                    // 门扇沿 X 轴展开（w = 门宽, d = 门厚）：北(-Z)与南(+Z)为双叶对称门面，西(-X)与东(+X)为窄边
+                    // 北面 (-Z)：从东(+hw) -> 中(0) -> 西(-hw)
+                    Quad(new Vector3(hw, 0, -hd), new Vector3(0f, 0, -hd), new Vector3(0f, h, -hd), new Vector3(hw, h, -hd),
+                        new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1), matrix);
+                    Quad(new Vector3(0f, 0, -hd), new Vector3(-hw, 0, -hd), new Vector3(-hw, h, -hd), new Vector3(0f, h, -hd),
+                        new Vector2(u1, v0), new Vector2(u0, v0), new Vector2(u0, v1), new Vector2(u1, v1), matrix);
+                    // 南面 (+Z)：从西(-hw) -> 中(0) -> 东(+hw)
+                    Quad(new Vector3(-hw, 0, hd), new Vector3(0f, 0, hd), new Vector3(0f, h, hd), new Vector3(-hw, h, hd),
+                        new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1), matrix);
+                    Quad(new Vector3(0f, 0, hd), new Vector3(hw, 0, hd), new Vector3(hw, h, hd), new Vector3(0f, h, hd),
+                        new Vector2(u1, v0), new Vector2(u0, v0), new Vector2(u0, v1), new Vector2(u1, v1), matrix);
+                    // 西窄边 (-X) 与 东窄边 (+X)
+                    Quad(new Vector3(-hw, 0, -hd), new Vector3(-hw, 0, hd), new Vector3(-hw, h, hd), new Vector3(-hw, h, -hd),
+                        edgeBL, edgeBR, edgeTR, edgeTL, matrix);
+                    Quad(new Vector3(hw, 0, hd), new Vector3(hw, 0, -hd), new Vector3(hw, h, -hd), new Vector3(hw, h, hd),
+                        edgeBL, edgeBR, edgeTR, edgeTL, matrix);
+                }
+                else
+                {
+                    // 门扇沿 Z 轴展开（d = 门宽, w = 门厚）：西(-X)与东(+X)为双叶对称门面，北(-Z)与南(+Z)为窄边
+                    // 西面 (-X)：从北(-hd) -> 中(0) -> 南(+hd)
+                    Quad(new Vector3(-hw, 0, -hd), new Vector3(-hw, 0, 0f), new Vector3(-hw, h, 0f), new Vector3(-hw, h, -hd),
+                        new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1), matrix);
+                    Quad(new Vector3(-hw, 0, 0f), new Vector3(-hw, 0, hd), new Vector3(-hw, h, hd), new Vector3(-hw, h, 0f),
+                        new Vector2(u1, v0), new Vector2(u0, v0), new Vector2(u0, v1), new Vector2(u1, v1), matrix);
+                    // 东面 (+X)：从南(+hd) -> 中(0) -> 北(-hd)
+                    Quad(new Vector3(hw, 0, hd), new Vector3(hw, 0, 0f), new Vector3(hw, h, 0f), new Vector3(hw, h, hd),
+                        new Vector2(u0, v0), new Vector2(u1, v0), new Vector2(u1, v1), new Vector2(u0, v1), matrix);
+                    Quad(new Vector3(hw, 0, 0f), new Vector3(hw, 0, -hd), new Vector3(hw, h, -hd), new Vector3(hw, h, 0f),
+                        new Vector2(u1, v0), new Vector2(u0, v0), new Vector2(u0, v1), new Vector2(u1, v1), matrix);
+                    // 北窄边 (-Z) 与 南窄边 (+Z)
+                    Quad(new Vector3(hw, 0, -hd), new Vector3(-hw, 0, -hd), new Vector3(-hw, h, -hd), new Vector3(hw, h, -hd),
+                        edgeBL, edgeBR, edgeTR, edgeTL, matrix);
+                    Quad(new Vector3(-hw, 0, hd), new Vector3(hw, 0, hd), new Vector3(hw, h, hd), new Vector3(-hw, h, hd),
+                        edgeBL, edgeBR, edgeTR, edgeTL, matrix);
+                }
+            }
+
             public void AppendWallFace(int dir, float x, float z, float ua, float ub,
                 float ya, float yb, Vector4 r, float vBase, float vSpan)
             {
+                AppendWallFaceOffset(dir, x, z, ua, ub, ya, yb, r, vBase, vSpan, 0f);
+            }
+
+            public void AppendWallFaceOffset(int dir, float x, float z, float ua, float ub,
+                float ya, float yb, Vector4 r, float vBase, float vSpan, float outBias)
+            {
                 float va = (ya - vBase) / vSpan, vb = (yb - vBase) / vSpan;
-                Quad(FacePoint(dir, x, z, ua, ya, 0f), FacePoint(dir, x, z, ub, ya, 0f),
-                    FacePoint(dir, x, z, ub, yb, 0f), FacePoint(dir, x, z, ua, yb, 0f),
+                Quad(FacePoint(dir, x, z, ua, ya, outBias), FacePoint(dir, x, z, ub, ya, outBias),
+                    FacePoint(dir, x, z, ub, yb, outBias), FacePoint(dir, x, z, ua, yb, outBias),
                     RectUv(r, ua, va), RectUv(r, ub, va), RectUv(r, ub, vb), RectUv(r, ua, vb),
                     Matrix4x4.identity);
             }
@@ -705,27 +1306,53 @@ namespace RimFirstPerson3D
                 FlipLast(t0);
             }
 
+            public void AppendFromModelBuilder(ModelBuilder mb, MeshBuilderX hullBuilder, float hullWidth)
+            {
+                if (mb == null) return;
+                mb.AppendToLists(
+                    verts, normals, uvs, tris,
+                    hullBuilder?.verts, hullBuilder?.normals, hullBuilder?.uvs, hullBuilder?.tris,
+                    hullWidth);
+            }
+
             private void Quad(Vector3 bl, Vector3 br, Vector3 tr, Vector3 tl,
                 Vector2 uvBL, Vector2 uvBR, Vector2 uvTR, Vector2 uvTL, Matrix4x4 matrix)
             {
                 int b = verts.Count;
-                verts.Add(matrix.MultiplyPoint3x4(bl));
-                verts.Add(matrix.MultiplyPoint3x4(br));
-                verts.Add(matrix.MultiplyPoint3x4(tr));
-                verts.Add(matrix.MultiplyPoint3x4(tl));
+                var a0 = matrix.MultiplyPoint3x4(bl);
+                var a1 = matrix.MultiplyPoint3x4(br);
+                var a2 = matrix.MultiplyPoint3x4(tr);
+                var a3 = matrix.MultiplyPoint3x4(tl);
+                verts.Add(a0); verts.Add(a1); verts.Add(a2); verts.Add(a3);
+                // 本项目约定：三角形 (0,1,2) 为正面，外法线 = Cross(v1-v0, v2-v0)。
+                var n = Vector3.Cross(a1 - a0, a2 - a0);
+                if (n.sqrMagnitude < 1e-8f) n = Vector3.up;
+                n = n.normalized;
+                normals.Add(n); normals.Add(n); normals.Add(n); normals.Add(n);
                 uvs.Add(uvBL); uvs.Add(uvBR); uvs.Add(uvTR); uvs.Add(uvTL);
                 tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
                 tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
             }
 
-            public Mesh ToMesh()
+            /// <summary>
+            /// 出网格。field 非空时逐顶点烘光照进顶点色 RGB（F013）；
+            /// 为空（描边壳、光照关闭）时保持原来的不写颜色通道，画面与光照落地前一致。
+            /// </summary>
+            public Mesh ToMesh(LightField3D field)
             {
                 if (verts.Count == 0) return null;
                 var mesh = new Mesh();
                 mesh.SetVertices(verts);
+                mesh.SetNormals(normals);
                 mesh.SetUVs(0, uvs);
+                if (field != null)
+                {
+                    colors.Clear();
+                    for (int i = 0; i < verts.Count; i++)
+                        colors.Add(Lighting3D.To32(field.Shade(verts[i], normals[i], true)));
+                    mesh.SetColors(colors);
+                }
                 mesh.SetTriangles(tris, 0);
-                mesh.RecalculateNormals();
                 mesh.RecalculateBounds();
                 return mesh;
             }

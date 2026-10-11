@@ -8,6 +8,7 @@ using Verse.AI;
 namespace RimFirstPerson3D
 {
     // 透视相机控制：第一人称（附身 pawn）与第三人称追尾，含输入与指令下达。
+    [StaticConstructorOnStartup]
     public static class CameraRig3D
     {
         private static GameObject camGO;
@@ -44,6 +45,7 @@ namespace RimFirstPerson3D
         private static Map footMap;
         private static Vector2 footPos;      // 图内局部格坐标（含小数）；格心 = (c.x+0.5, c.z+0.5)
         private static float footHeight;     // 离地高度（米）
+        private static float waterSink;      // 身处水体的视觉下沉（米；平滑趋近水面落差+水深）
         private static float vy;             // 竖直速度（米/秒）
         private static bool spacePrev;       // 空格边沿检测（着地才起跳）
         private static Vector2 stepDir;      // cmdKey 单步方向（世界 XZ，已归一）
@@ -61,13 +63,14 @@ namespace RimFirstPerson3D
         private static bool inputEngaged;
 
         // 接管期判定（供 VanillaSuppressor 决定是否跳过原版 UIRootOnGUI）：
-        // 已接管且未临时让位（Alt 唤鼠 / 原版弹窗 / 暂停 / 失焦 / 原版视角屏 / 无附身对象）。
+        // 已接管且未临时让位（Alt 唤鼠 / 原版弹窗 / 暂停 / 失焦 / 后台 / 原版视角屏 / 无附身对象）。
         public static bool VanillaInputTakenOver =>
             Fps3DState.Active && Fps3DState.Mode == ViewMode.FirstPerson
             && inputEngaged && Possessed != null
             && !MapScreen3D.Open
             && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt)
             && Application.isFocused
+            && MouseLookDelta.IsGameWindowActive()
             && !VanillaUiBusy();
         // 本帧的这次左键已被"重新锁定光标"消费：不再当作准星点击选择/下令。
         private static bool clickConsumedByLook;
@@ -242,9 +245,18 @@ namespace RimFirstPerson3D
             // 脚点启用时锚点 XZ 取脚点（连续位置），Y = 楼层基准 + 离地高度；否则回退 DrawPos。
             var foot = FootPoint;
             if (foot.HasValue)
-                anchor = new Vector3(foot.Value.x, pawnBaseY + foot.Value.y, foot.Value.z);
+            {
+                // 身处水体则整具身体下沉（水面落差 + 当前水深），脚踩河床而不浮在水面上方。
+                var footCell = new IntVec3(Mathf.FloorToInt(footPos.x), 0, Mathf.FloorToInt(footPos.y));
+                float sinkTarget = WaterLayer3D.SinkAt(Possessed.MapHeld, footCell);
+                waterSink = Mathf.MoveTowards(waterSink, sinkTarget, Metrics3D.WaterSinkSpeed * dt);
+                anchor = new Vector3(foot.Value.x, pawnBaseY + foot.Value.y - waterSink, foot.Value.z);
+            }
             else
+            {
+                waterSink = 0f;
                 anchor = new Vector3(dp.x + pawnOffset.x, pawnBaseY, dp.z + pawnOffset.z);
+            }
 
             if (Fps3DState.Mode == ViewMode.FirstPerson)
             {
@@ -274,9 +286,16 @@ namespace RimFirstPerson3D
             }
         }
 
-        // 相机普查：枚举场景中所有 Camera 的关键状态。
+        private static float lastCensusTime;
+        private static string cachedCensus = "";
+
+        // 相机普查：枚举场景中所有 Camera 的关键状态（节流缓存，避免每秒遍历全场景 GameObject）。
         public static string CameraCensus()
         {
+            float now = Time.realtimeSinceStartup;
+            if (now - lastCensusTime < 5f && !string.IsNullOrEmpty(cachedCensus))
+                return cachedCensus;
+            lastCensusTime = now;
             var sb = new System.Text.StringBuilder();
             var cams = Object.FindObjectsOfType<Camera>();
             int i = 0;
@@ -293,7 +312,8 @@ namespace RimFirstPerson3D
                       + ((int)(cam.backgroundColor.g * 255)).ToString() + ","
                       + ((int)(cam.backgroundColor.b * 255)).ToString());
             }
-            return sb.ToString();
+            cachedCensus = sb.ToString();
+            return cachedCensus;
         }
 
         // 每帧应用视觉参数：FOV / 天空色 / 线性雾（全为设置面板实时项）。
@@ -317,11 +337,10 @@ namespace RimFirstPerson3D
             var s = FirstPerson3DMod.settings;
             if (s == null) return;
 
-            // 终端查看：光标留给屏幕射线。这里直接返回，右键拖拽和远程环视也不会带动终端。
-            if (MapScreen3D.Viewing)
+            // 终端抬起期间光标留给屏幕射线。右键拖拽和远程环视也不带动视角。
+            if (MapScreen3D.BlocksGameplay)
             {
-                UnlockCursor();
-                MouseLookDelta.Reset();
+                YieldCursor();
                 return;
             }
 
@@ -345,7 +364,7 @@ namespace RimFirstPerson3D
 
         private static bool IsLookInputBlocked()
         {
-            if (!Application.isFocused) return true;
+            if (!Application.isFocused || !MouseLookDelta.IsGameWindowActive()) return true;
             if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)) return true;
             if (Find.TickManager != null && Find.TickManager.Paused) return true;
             var stack = Find.WindowStack;
@@ -412,10 +431,10 @@ namespace RimFirstPerson3D
                 return false;
             }
 
-            // 与 HandleLook 的查看期早退重复一道：避免以后单独调用时把光标藏起来并回中。
-            if (MapScreen3D.Viewing)
+            // 与 HandleLook 的终端早退重复一道：避免以后单独调用时把光标藏起来并回中。
+            if (MapScreen3D.BlocksGameplay)
             {
-                UnlockCursor();
+                YieldCursor();
                 return false;
             }
 
@@ -424,7 +443,7 @@ namespace RimFirstPerson3D
             // 按住 Alt：临时唤出鼠标做 UI 操作，松开自动回到接管态。
             bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             // mouseLook 从关到开（含远控面板中途开启）：首个无阻挡帧立即接管并锁定。
-            if (mouseLookLatchPending && !altHeld && !uiBusy && !paused && Application.isFocused)
+            if (mouseLookLatchPending && !altHeld && !uiBusy && !paused && Application.isFocused && MouseLookDelta.IsGameWindowActive())
             {
                 mouseLookLatchPending = false;
                 inputEngaged = true;
@@ -439,8 +458,8 @@ namespace RimFirstPerson3D
                 mousePositionReady = false;
             }
 
-            // 临时让位：只解锁光标，接管保持
-            if (altHeld || uiBusy || paused || !Application.isFocused)
+            // 临时让位：切后台 / Alt 呼出 / 弹窗 / 暂停，立即释放光标
+            if (altHeld || uiBusy || paused || !Application.isFocused || !MouseLookDelta.IsGameWindowActive())
             {
                 UnlockCursor();
                 return false;
@@ -482,10 +501,13 @@ namespace RimFirstPerson3D
         {
             if (Find.TickManager != null && Find.TickManager.Paused) return true;
             var stack = Find.WindowStack;
-            return stack != null
-                && (stack.AnyWindowAbsorbingAllInput
-                    || stack.NonImmediateDialogWindowOpen
-                    || stack.WindowsForcePause);
+            if (stack == null) return false;
+            // 右键情境浮动菜单开着时让位：菜单是 Super 层、不吸输入，靠这一条才能让
+            // 原版 UIRoot 把它画出来并接收点击（否则接管期整套窗口栈被跳过，菜单画不出也点不动）。
+            if (stack.FloatMenu != null) return true;
+            return stack.AnyWindowAbsorbingAllInput
+                || stack.NonImmediateDialogWindowOpen
+                || stack.WindowsForcePause;
         }
 
         private static void SetCursorState(CursorLockMode lockMode, bool visible)
@@ -497,7 +519,15 @@ namespace RimFirstPerson3D
         private static void UnlockCursor()
         {
             SetCursorState(CursorLockMode.None, true);
+            MouseLookDelta.Reset();
             mousePositionReady = false;
+        }
+
+        // 终端占用视野时交出系统光标，并停掉每帧回中，否则点不到屏幕上的按钮。
+        public static void YieldCursor()
+        {
+            UnlockCursor();
+            MouseLookDelta.Reset();
         }
 
         // 光标是否悬停在原版 UI 上：命中则本次点击交给 UI，不重新锁定。
@@ -651,7 +681,9 @@ namespace RimFirstPerson3D
             {
                 windowBlocked = Find.WindowStack.AnyWindowAbsorbingAllInput
                     || Find.WindowStack.NonImmediateDialogWindowOpen
-                    || Find.WindowStack.WindowsForcePause;
+                    || Find.WindowStack.WindowsForcePause
+                    // 右键浮动菜单开着：光标已交给菜单，脚点冻结，避免选项还没点人就走了。
+                    || Find.WindowStack.FloatMenu != null;
             }
             if (paused || windowBlocked || focusBlocked)
             {
@@ -712,13 +744,23 @@ namespace RimFirstPerson3D
         }
 
         // 目标点所在格可站：格在图内、Walkable、且没有 Fillage.Full 的 edifice。
+        // 门仅在已开启（door.Open）或玩家已站在该门格内时允许穿行；关闭的门阻挡直穿，需按 E 打开。
         private static bool StandableAt(Map map, Vector2 local)
         {
             var c = new IntVec3(Mathf.FloorToInt(local.x), 0, Mathf.FloorToInt(local.y));
             if (!c.InBounds(map)) return false;
             if (!c.Walkable(map)) return false;
             var ed = c.GetEdifice(map);
-            if (ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full) return false;
+            if (ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full)
+            {
+                if (ed is Building_Door door)
+                {
+                    var curCell = new IntVec3(Mathf.FloorToInt(footPos.x), 0, Mathf.FloorToInt(footPos.y));
+                    if (door.Open || curCell == c || door.OccupiedRect().Contains(curCell))
+                        return true;
+                }
+                return false;
+            }
             return true;
         }
 
@@ -741,18 +783,37 @@ namespace RimFirstPerson3D
             }
         }
 
-        // 附身者当前 job 是挖矿 / 搬运，或正在施放动词时：让原版驱动，本帧不接管。
-        // 这三件事是 HandleClick 会下的原版指令。
+        // 这些作业是玩家在第一人称里主动下发的：作业期间让原版驱动，本帧不接管位移，
+        // 相机与立牌临时回退到 DrawPos，等作业结束（或被取消）再重新接管。
+        private static readonly HashSet<JobDef> OwningJobs = new HashSet<JobDef>();
+        private static void EnsureOwningJobs()
+        {
+            if (OwningJobs.Count > 0) return;
+            void Add(JobDef d) { if (d != null) OwningJobs.Add(d); }
+            Add(JobDefOf.Mine);
+            Add(JobDefOf.TakeInventory);
+            Add(JobDefOf.Equip);
+            Add(JobDefOf.Wear);
+            Add(JobDefOf.Ingest);
+            Add(JobDefOf.Harvest);
+            Add(JobDefOf.Deconstruct);
+            Add(JobDefOf.Rescue);
+            Add(JobDefOf.Capture);
+            Add(JobDefOf.TendPatient);
+            Add(JobDefOf.LayDown);
+        }
+
+        // 附身者当前 job 是玩家交互下发的作业，或正在施放动词时：让原版驱动。
         private static bool JobOwnsPawn(Pawn pawn)
         {
             try
             {
+                EnsureOwningJobs();
                 var job = pawn.CurJob;
-                if (job != null && job.def != null)
-                {
-                    if (job.def == JobDefOf.Mine) return true;
-                    if (job.def == JobDefOf.TakeInventory) return true;
-                }
+                // 原版菜单还会下发 Goto、Haul 等不在固定列表中的任务。
+                // 玩家强制任务执行期间必须交还寻路，不能每帧 StopDead。
+                if (job != null && job.playerForced) return true;
+                if (job != null && job.def != null && OwningJobs.Contains(job.def)) return true;
                 if (pawn.stances != null && pawn.stances.curStance is Stance_Warmup) return true;
             }
             catch { }
@@ -816,6 +877,7 @@ namespace RimFirstPerson3D
             footMap = pawn.MapHeld;
             footPos = new Vector2(dp.x, dp.z);
             footHeight = 0f;
+            waterSink = 0f;
             vy = 0f;
             spacePrev = false;
             stepDir = Vector2.zero;
@@ -828,6 +890,7 @@ namespace RimFirstPerson3D
             footActive = false;
             footMap = null;
             footHeight = 0f;
+            waterSink = 0f;
             vy = 0f;
             spacePrev = false;
             stepDir = Vector2.zero;
@@ -846,8 +909,9 @@ namespace RimFirstPerson3D
 
         private static void HandleClick()
         {
-            // 查看期的左键是屏幕平移/点选，不走准星射线。
-            if (MapScreen3D.Viewing)
+            if (attackCooldown > 0f) attackCooldown -= Time.deltaTime;
+            // 终端抬起期间的鼠标是屏幕平移/点选，不走准星射线。
+            if (MapScreen3D.BlocksGameplay)
             {
                 var pending = FirstPerson3DMod.settings;
                 if (pending != null) pending.cmdClick = "";
@@ -860,17 +924,162 @@ namespace RimFirstPerson3D
                 st.cmdClick = "";
                 synthetic = true;
             }
-            if (!synthetic && (!Input.GetMouseButtonDown(0) || GUIUtility.hotControl != 0)) return;
-            // 该次左键已被重新锁定自由视角消费，不再下单。
-            if (!synthetic && clickConsumedByLook)
+
+            if (!synthetic)
             {
-                clickConsumedByLook = false;
+                // 浮动菜单开着：鼠标交给菜单（点选项 / 点外部关闭），本帧不下准星动作。
+                if (Find.WindowStack != null && Find.WindowStack.FloatMenu != null) return;
+                // 背包面板打开时不攻击/交互（面板内的点击交给 GUI 按钮）。
+                if (FpsHud3D.inventoryOpen) return;
+
+                // 右键：按下记位置，抬起时若几乎没移动才算“点击”——与 mouseLook 关闭时的
+                // 右键拖拽环视区分开（拖拽不弹菜单）。
+                if (Input.GetMouseButtonDown(1)) rightDownPos = (Vector2)Input.mousePosition;
+                if (Input.GetMouseButtonUp(1)
+                    && ((Vector2)Input.mousePosition - rightDownPos).sqrMagnitude <= RightClickDragTol * RightClickDragTol
+                    && GUIUtility.hotControl == 0)
+                {
+                    OpenAimedFloatMenu();
+                    return;
+                }
+            }
+
+            // 左键攻击：按下立即一次；按住则以 AttackInterval 连击。
+            // 旧写法用 GetMouseButtonDown(0) 早退，把“按住连击”整条堵死，只出第一下。
+            if (synthetic) { Attack(); attackCooldown = AttackInterval; return; }
+            // 该次左键已被“重新锁定自由视角”消费，不再当作攻击。
+            if (clickConsumedByLook) { clickConsumedByLook = false; return; }
+            if (GUIUtility.hotControl != 0) return;
+            if (Input.GetMouseButtonDown(0)) { Attack(); attackCooldown = AttackInterval; }
+            else if (Input.GetMouseButton(0) && attackCooldown <= 0f) { Attack(); attackCooldown = AttackInterval; }
+        }
+
+        // 按住左键的连击节奏（秒），与挥击动画时长（0.26s）接近。
+        private const float AttackInterval = 0.30f;
+        private static float attackCooldown;
+        // 右键“点击”与“拖拽”的区分阈值（像素）：抬起时位移不超过它才弹菜单。
+        private const float RightClickDragTol = 6f;
+        private static Vector2 rightDownPos;
+
+        // F / 右键：对准命中格弹完整原版地图浮动菜单。优先走 FloatMenuMakerMap，
+        // 让工作台配方、翻找储物、装卸、使用、治疗、逮捕、收割、移动等所有原版
+        // FloatMenuOptionProvider 都参与生成；异常时才回退到目标 Thing 的旧入口。
+        public static void OpenAimedFloatMenu()
+        {
+            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return;
+            if (Find.WindowStack == null || Find.WindowStack.FloatMenu != null) return;
+            var pawn = Possessed;
+            if (pawn == null) return;
+            var hit = RaycastCenter();
+            if (hit == null) return;
+
+            var aimedCell = hit.Value.cell;
+            var map = Find.CurrentMap;
+            if (map == null || !aimedCell.IsValid || !aimedCell.InBounds(map)) return;
+            if (!pawn.Spawned || pawn.Map != map) return;
+            if (hit.Value.thing != null && hit.Value.thing.Map != map) return;
+
+            // FloatMenuMap 的重验证依赖 Find.Selector.SelectedPawns；让附身 pawn 成为
+            // 原版菜单的唯一操作者，而不是把准星目标 Thing 错当成选择对象。
+            Find.Selector.ClearSelection();
+            Find.Selector.Select(pawn);
+            Vector3 clickPos = aimedCell.ToVector3Shifted();
+            var opts = new List<FloatMenuOption>();
+            FloatMenuContext context = null;
+            bool vanillaMenuBuilt = false;
+            try
+            {
+                opts = FloatMenuMakerMap.GetOptions(new List<Pawn> { pawn }, clickPos, out context);
+                vanillaMenuBuilt = context != null && opts != null && opts.Count > 0;
+            }
+            catch { }
+
+            if (vanillaMenuBuilt)
+            {
+                string labelCap = context.IsMultiselect ? null : context.FirstSelectedPawn.LabelCap;
+                var menu = new RightBottomFloatMenuMap(opts, labelCap, clickPos)
+                {
+                    givesColonistOrders = true,
+                    vanishIfMouseDistant = false
+                };
+                // 菜单接管后立即释放第一人称光标，避免本帧/下一帧鼠标视角或攻击穿透。
+                ReleaseMouseLook();
+                Find.WindowStack.Add(menu);
                 return;
             }
-            // 背包面板打开时不攻击（面板内的点击交给 GUI 按钮）。
-            if (FpsHud3D.inventoryOpen) return;
-            Attack();
+
+            // 兼容原版/第三方 provider 生成失败的情况，保留原有 Thing 菜单行为。
+            var thing = hit.Value.thing;
+            if (thing == null || thing.Destroyed) return;
+            opts = new List<FloatMenuOption>();
+            try
+            {
+                foreach (var o in thing.GetFloatMenuOptions(pawn))
+                    if (o != null) opts.Add(o);
+            }
+            catch { }
+            if (opts.Count == 0) return;
+            ReleaseMouseLook();
+            Find.WindowStack.Add(new RightBottomFloatMenu(opts));
         }
+
+        // F/右键菜单固定贴在第一人称自绘准星的右下方，不跟随原版 UI 或当前鼠标位置漂移。
+        // 在初始化钩子里设置，避免 WindowStack 首帧重新初始化时覆盖 windowRect。
+        private sealed class RightBottomFloatMenu : FloatMenu
+        {
+            private const float Edge = 8f;
+
+            public RightBottomFloatMenu(List<FloatMenuOption> options) : base(options) { }
+
+            protected override void SetInitialSizeAndPosition()
+            {
+                base.SetInitialSizeAndPosition();
+                PlaceNextToCrosshair(ref windowRect);
+            }
+        }
+
+        private sealed class RightBottomFloatMenuMap : FloatMenuMap
+        {
+            private const float Edge = 8f;
+
+            public RightBottomFloatMenuMap(List<FloatMenuOption> options, string title, Vector3 clickPos)
+                : base(options, title, clickPos) { }
+
+            protected override void SetInitialSizeAndPosition()
+            {
+                base.SetInitialSizeAndPosition();
+                PlaceNextToCrosshair(ref windowRect);
+            }
+        }
+
+        private static void PlaceNextToCrosshair(ref Rect rect)
+        {
+            var settings = FirstPerson3DMod.settings;
+            float scale = settings != null ? Mathf.Max(0.2f, settings.crosshairScale) : 1f;
+            float arm = 7f * scale;
+            const float Gap = 10f;
+            float cx = UI.screenWidth * 0.5f;
+            float cy = UI.screenHeight * 0.5f;
+
+            // GUI 坐标原点在左上角，因此“右下”就是 x/y 同时增大。
+            // 先贴准星，再在屏幕边缘处做最小夹紧，保证整张菜单仍可点击。
+            rect.x = cx + arm + Gap;
+            rect.y = cy + arm + Gap;
+            rect.x = Mathf.Min(rect.x, UI.screenWidth - rect.width - 8f);
+            rect.y = Mathf.Min(rect.y, UI.screenHeight - rect.height - 8f);
+            rect.x = Mathf.Max(8f, rect.x);
+            rect.y = Mathf.Max(8f, rect.y);
+        }
+
+        // 交互触及距离：门/拾取/装备/使用允许约 2 格半触及（贴门低头或斜看门框不漏）；挖掘/拆解/收割/救援同距。
+        private const float ReachUse = 2.6f;
+        private const float ReachWork = 2.8f;
+
+        private static readonly System.Reflection.MethodInfo DoorTryCloseMethod =
+            HarmonyLib.AccessTools.Method(typeof(Building_Door), "DoorTryClose");
+        private static readonly System.Reflection.FieldInfo DoorHoldOpenField =
+            HarmonyLib.AccessTools.Field(typeof(Building_Door), "holdOpenInt");
 
         // 左键动作：先起挥击动画（空手挥拳 / 持械挥砍或射击后座），
         // 若准星命中可攻击的 pawn 且在动词射程内，则下达一次攻击。
@@ -888,80 +1097,235 @@ namespace RimFirstPerson3D
             verb.TryStartCastOn(target);
         }
 
-        // E 键交互：准星命中项执行一次交互（门开关、拾取、装备、挖掘）。
+        // E 键交互：准星命中项执行一次情境交互（门、拾取/装备、挖掘、收割、使用建筑、救援）。
         public static void Interact()
         {
             if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return;
             var hit = RaycastCenter();
             if (hit == null) return;
             var thing = hit.Value.thing;
             if (thing == null) return;
+            if (hit.Value.dist > ReachWork) return;   // 够不着就不响应，避免隔墙远程操作
             Find.Selector.Select(thing);
-            ApplyInteraction(thing);
+            ApplyInteraction(thing, hit.Value.dist);
         }
 
-        // 选中之后的左键动作：仅当有附身者时生效。
-        private static void ApplyInteraction(Thing thing)
+        // F 键：快速拾取准星处的地面物品（不选中、不弹菜单，直接入背包）。
+        public static void QuickPickup()
+        {
+            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
+            var pawn = Possessed;
+            if (pawn == null) return;
+            var hit = RaycastCenter();
+            if (hit == null || hit.Value.thing == null) return;
+            if (hit.Value.dist > ReachUse) return;
+            PickUp(pawn, hit.Value.thing);
+        }
+
+        // G 键：拆解准星处的建筑（危险动作单列，与 E 分开，避免误拆）。
+        public static void DemolishAimed()
+        {
+            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
+            var pawn = Possessed;
+            if (pawn == null) return;
+            var hit = RaycastCenter();
+            if (hit == null || hit.Value.thing == null) return;
+            if (hit.Value.dist > ReachWork) return;
+            var b = hit.Value.thing as Building;
+            if (b == null || b.def == null || b.def.building == null) return;
+            if (b.def.building.isNaturalRock) return;
+            try
+            {
+                // 不作"可拆解"的本地判定：该标记在不同版本挂在 Thing/BuildingProperties 上，
+                // 名字不稳。原版 JobDriver_Deconstruct 自己会校验，非法目标会立即中止，
+                // 这里只排除天然岩（走挖掘而非拆解）。
+                Give(pawn, JobMaker.MakeJob(JobDefOf.Deconstruct, b));
+            }
+            catch { }
+        }
+
+        // 数字键 1..n：对背包第 n 件物品执行主要动作（装备/穿戴/食用）。
+        public static void UseHotbar(int slot)
+        {
+            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
+            Backpack3D.UseSlot(slot);
+        }
+
+        // 准星命中项的一次交互。dist 为相机到命中点的距离（米），用于触及判定。
+        private static void ApplyInteraction(Thing thing, float dist)
         {
             var pawn = Possessed;
-            if (pawn == null || thing == null) return;
-
-            // 门（栅栏门、动物帘同为 Building_Door）：手动开/关
-            var door = thing as Building_Door;
-            if (door != null)
+            if (pawn == null || thing == null || thing.Destroyed) return;
+            try
             {
-                if (!door.Open) door.StartManualOpenBy(pawn);
-                else door.StartManualCloseBy(pawn);
-                return;
-            }
-
-            // 地面物品：武器直接装备（原版 Equip 作业），其余拾入背包暂存。
-            if (thing.def != null && thing.def.category == ThingCategory.Item)
-            {
-                thing.SetForbidden(false, false);
-                if (thing.def.IsWeapon)
+                // 1) 门（栅栏门、动物帘同为 Building_Door）：手动开/关，并立刻重建门扇网格。
+                var door = thing as Building_Door;
+                if (door != null)
                 {
-                    pawn.jobs.TryTakeOrderedJob(JobMaker.MakeJob(JobDefOf.Equip, thing));
+                    if (dist <= ReachUse)
+                    {
+                        if (!door.Open)
+                        {
+                            if (door is Building_JammedDoor jammed && jammed.Jammed)
+                                jammed.UnlockAndOpenDoor();
+                            else
+                                door.StartManualOpenBy(pawn);
+                        }
+                        else
+                        {
+                            if (door.HoldOpen && DoorHoldOpenField != null)
+                                DoorHoldOpenField.SetValue(door, false);
+                            bool closedNow = false;
+                            if (DoorTryCloseMethod != null)
+                            {
+                                try { closedNow = (bool)DoorTryCloseMethod.Invoke(door, null); }
+                                catch { }
+                            }
+                            if (!closedNow)
+                                door.StartManualCloseBy(pawn);
+                        }
+                        ChangeNotify.NotifyDoorToggled(door);
+                    }
                     return;
                 }
-                Job job = JobMaker.MakeJob(JobDefOf.TakeInventory, thing);
-                job.count = 1;
+
+                // 2) 地面物品：拾取（武器且手上空着时直接装备）。
+                if (thing.def != null && thing.def.category == ThingCategory.Item)
+                {
+                    if (dist <= ReachUse) PickUp(pawn, thing);
+                    return;
+                }
+
+                // 3) 可挖掘：天然岩 / Mineable。
+                var building = thing as Building;
+                bool rock = (building != null && building.def != null && building.def.building != null
+                        && building.def.building.isNaturalRock)
+                    || thing is Mineable;
+                if (rock)
+                {
+                    if (dist <= ReachWork) Give(pawn, JobMaker.MakeJob(JobDefOf.Mine, thing));
+                    return;
+                }
+
+                // 4) 植物：收割。
+                if (thing is Plant)
+                {
+                    if (dist <= ReachWork) Give(pawn, JobMaker.MakeJob(JobDefOf.Harvest, thing));
+                    return;
+                }
+
+                // 5) 建筑：只做"使用"，绝不在这里顺手拆掉（拆解走 G 键）。
+                if (building != null)
+                {
+                    if (dist <= ReachUse) UseBuilding(pawn, building);
+                    return;
+                }
+
+                // 6) 人：敌对->攻击；倒地->救援/俘虏；需要治疗->治疗。
+                var target = thing as Pawn;
+                if (target != null && target != pawn && !target.Dead)
+                {
+                    if (target.HostileTo(pawn)) { AttackThing(pawn, target); return; }
+                    if (target.Downed)
+                    {
+                        bool friendly = target.Faction == null || !target.Faction.HostileTo(pawn.Faction);
+                        Give(pawn, JobMaker.MakeJob(friendly ? JobDefOf.Rescue : JobDefOf.Capture, target));
+                        return;
+                    }
+                    if (target.health != null && target.health.hediffSet != null
+                        && target.health.hediffSet.HasTendableHediff())
+                    {
+                        Give(pawn, JobMaker.MakeJob(JobDefOf.TendPatient, target));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static void Give(Pawn pawn, Job job)
+        {
+            try { if (pawn != null && pawn.jobs != null && job != null) pawn.jobs.TryTakeOrderedJob(job); }
+            catch { }
+        }
+
+        private static void AttackThing(Pawn pawn, Thing t)
+        {
+            try
+            {
+                var verb = pawn.TryGetAttackVerb(t, true);
+                if (verb == null || !verb.CanHitTarget(t)) return;
+                verb.TryStartCastOn(t);
+            }
+            catch { }
+        }
+
+        // 地面物品 -> 背包。武器且手上空着时直接装备，其余收进背包（原版 TakeInventory 作业）。
+        public static void PickUp(Pawn pawn, Thing item)
+        {
+            if (pawn == null || item == null || item.Destroyed) return;
+            if (item.def == null || item.def.category != ThingCategory.Item) return;
+            try
+            {
+                item.SetForbidden(false, false);
+                if (item.def.IsWeapon && (pawn.equipment == null || pawn.equipment.Primary == null))
+                {
+                    Give(pawn, JobMaker.MakeJob(JobDefOf.Equip, item));
+                    return;
+                }
+                var job = JobMaker.MakeJob(JobDefOf.TakeInventory, item);
+                job.count = item.stackCount;
                 job.checkEncumbrance = true;
-                job.takeInventoryDelay = 120;
-                pawn.jobs.TryTakeOrderedJob(job);
-                return;
+                job.takeInventoryDelay = 60;
+                Give(pawn, job);
             }
+            catch { }
+        }
 
-            // 天然岩 / 可挖掘：挖掘作业，距离交给作业本身，不再卡 1 格
-            var building = thing as Building;
-            if (building != null
-                && (building.def != null && building.def.building != null && building.def.building.isNaturalRock
-                    || thing is Mineable))
+        // 建筑"使用"：床->躺下休息；可开关电器->切换开关；工作台/容器只保留、不误拆。
+        private static bool UseBuilding(Pawn pawn, Building b)
+        {
+            try
             {
-                Job job = JobMaker.MakeJob(JobDefOf.Mine, thing);
-                pawn.jobs.TryTakeOrderedJob(job);
-                return;
+                if (b is Building_Bed bed)
+                {
+                    Give(pawn, JobMaker.MakeJob(JobDefOf.LayDown, bed));
+                    return true;
+                }
+                var fl = b.GetComp<CompFlickable>();
+                if (fl != null)
+                {
+                    fl.SwitchIsOn = !fl.SwitchIsOn;
+                    return true;
+                }
+                if (b is Building_WorkTable) return true;
+                if (b is Building_Storage) return true;
             }
-
-            // 敌对 pawn：能打就打（不重算伤害、不打友方），否则只保留选中
-            var target = thing as Pawn;
-            if (target != null && target.HostileTo(pawn))
-            {
-                var verb = pawn.TryGetAttackVerb(thing, true);
-                if (verb == null || !verb.CanHitTarget(thing)) return;
-                verb.TryStartCastOn(thing);
-            }
+            catch { }
+            return false;
         }
 
         public struct RayHit
         {
             public IntVec3 cell;
             public Thing thing;
+            public float dist;   // 相机到命中点的距离（米）
         }
 
-        // 屏幕中心射线 → 真实命中：对全部渲染图依次测地面平面、满格建筑体素盒、
-        // 人形立牌盒，取最近者——准星指什么就命中什么，不再穿墙落到墙后地面格。
+        private static int lastRaycastFrame = -1;
+        private static RayHit? cachedRayHit;
+
+        // 屏幕中心射线 → 真实命中：同帧内（OnGUI Layout/Repaint/输入调用）复用结果，避免单帧多重求交。
         public static RayHit? RaycastCenter()
+        {
+            int frame = Time.frameCount;
+            if (lastRaycastFrame == frame) return cachedRayHit;
+            lastRaycastFrame = frame;
+            cachedRayHit = DoRaycastCenter();
+            return cachedRayHit;
+        }
+
+        private static RayHit? DoRaycastCenter()
         {
             if (cam == null) return null;
             var ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
@@ -990,34 +1354,45 @@ namespace RimFirstPerson3D
                         if (cell.InBounds(map))
                         {
                             bestT = t;
-                            best = new RayHit { cell = cell };
+                            best = new RayHit { cell = cell, dist = t };
                             found = true;
                         }
                     }
                 }
 
-                // 满格建筑 / 门 / 地面物品：沿射线 0.25 格步进，首次命中即最近命中
-                for (float t = 0.6f; t < bestT; t += 0.25f)
+                // 满格建筑 / 门 / 地面物品：沿射线 0.25 格步进（从 0.05m 起，避免贴门 < 0.6m 时首步穿过门格），首次命中即最近命中
+                for (float t = 0.05f; t < bestT; t += 0.25f)
                 {
                     var p = ray.origin + ray.direction * t;
-                    if (p.y < baseY - 0.1f || p.y > baseY + Fps3DState.WallHeight + 0.05f) continue;
                     var cell = new IntVec3(
                         Mathf.FloorToInt(p.x - off.x), 0, Mathf.FloorToInt(p.z - off.z));
                     if (!cell.InBounds(map)) continue;
-                    // 满格实体墙：维持原命中并停止
                     var ed = cell.GetEdifice(map);
-                    if (ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full)
+                    var mountain = SceneRegistry.Find(map)?.Mountain;
+                    if (mountain != null && mountain.Contains(p.x - off.x, p.y - baseY, p.z - off.z))
                     {
                         bestT = t;
-                        best = new RayHit { cell = cell, thing = ed };
+                        best = new RayHit { cell = cell, thing = MountainField3D.IsRock(ed) ? ed : null, dist = t };
                         found = true;
                         break;
                     }
-                    // 门（不是满格）：同样命中该门并停止，不再穿过门打到门后的地面/墙
+                    if (MountainField3D.IsRock(ed)) continue;
+                    float top = baseY + Fps3DState.WallHeight + 0.05f;
+                    if (p.y < baseY - 0.1f || p.y > top) continue;
+                    // 门必须排在满格之前：门的 fillPercent=1 也是满格，
+                    // 单独判门语义更清楚，也保证门一定作为命中物返回。
                     if (ed is Building_Door)
                     {
                         bestT = t;
-                        best = new RayHit { cell = cell, thing = ed };
+                        best = new RayHit { cell = cell, thing = ed, dist = t };
+                        found = true;
+                        break;
+                    }
+                    // 满格实体墙：维持原命中并停止
+                    if (ed != null && ed.def != null && ed.def.Fillage == FillCategory.Full)
+                    {
+                        bestT = t;
+                        best = new RayHit { cell = cell, thing = ed, dist = t };
                         found = true;
                         break;
                     }
@@ -1028,7 +1403,7 @@ namespace RimFirstPerson3D
                         if (item != null)
                         {
                             bestT = t;
-                            best = new RayHit { cell = cell, thing = item };
+                            best = new RayHit { cell = cell, thing = item, dist = t };
                             found = true;
                             break;
                         }
@@ -1045,7 +1420,7 @@ namespace RimFirstPerson3D
                     if (RayBox(ray.origin, ray.direction, min, max, out float tp) && tp < bestT)
                     {
                         bestT = tp;
-                        best = new RayHit { cell = p.Position, thing = p };
+                        best = new RayHit { cell = p.Position, thing = p, dist = tp };
                         found = true;
                     }
                 }

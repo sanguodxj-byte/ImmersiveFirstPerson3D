@@ -1,0 +1,270 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>植被与树木 3D 检查</title>
+<style>
+  html,body{margin:0;height:100%;background:#1c1e26;font-family:Consolas,monospace}
+  #app{position:fixed;inset:0}
+  #hud{position:fixed;left:10px;top:8px;color:#cfd6e4;font-size:12px;line-height:1.6;
+       background:rgba(0,0,0,.5);padding:9px 11px;border-radius:4px;z-index:9}
+  #hud b{color:#7fd1ff}
+  #items,#views{position:fixed;right:10px;z-index:9;display:flex;gap:6px;flex-wrap:wrap;
+       justify-content:flex-end;max-width:62vw}
+  #items{top:44px} #views{top:8px}
+  button{background:#2e3446;color:#cfd6e4;border:1px solid #4a5568;border-radius:3px;
+         padding:5px 9px;font-size:12px;cursor:pointer}
+  button:hover{background:#3d465c}
+  button.on{background:#2f6f4f;border-color:#57b487;color:#eafff4}
+</style>
+</head>
+<body>
+<div id="app"></div><div id="hud"></div><div id="views"></div><div id="items"></div>
+<script>
+addEventListener('error', function(e){
+  document.getElementById('hud').textContent =
+    'ERR ' + e.message + ' @' + String(e.filename||'').split('/').pop() + ':' + e.lineno;
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+// ===========================================================================
+// 植被与树木 3D 检查页
+//
+// 几何 = 1.6/Assets/plants/*.obj（运行时 ObjImporter3D 加载的就是这些文件，
+// 零第二份口径）；材质 = 1.6/Textures/FPS3D/PlantAtlas.png。
+// 绕序反转与 ObjImporter3D 一致（OBJ 右手 CCW -> Unity 左手 CW），
+// 页面用 FrontSide 渲染 = 游戏实况（背面剔除下）所见。
+// ===========================================================================
+const VER = 'plant7';
+const qs = new URLSearchParams(location.search);
+const STILL = qs.get('still') === '1';
+const GALLERY = qs.get('gallery') === '1';   // 全员一排、相机人眼高度（1.62m）
+
+const hud = document.getElementById('hud');
+function hudSet(html){ hud.innerHTML = html; }
+addEventListener('unhandledrejection', e => hudSet('ERR ' + e.reason));
+
+// ---- 场景 ----
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1c1e26);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.05, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xc8d8f0, 0x3d4a33, 1.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.7);
+sun.position.set(4, 7, 3);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xd8e4ff, 0.5);
+fill.position.set(-3, 4, -4);
+scene.add(fill);
+
+// 地面 + 1m 网格（与游戏 1 格 = 1 米同口径）
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(60, 48),
+  new THREE.MeshLambertMaterial({color: 0x3a4230}));
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -0.005;
+scene.add(ground);
+const grid = new THREE.GridHelper(24, 24, 0x5a6650, 0x474f3c);
+grid.position.y = 0.001;
+scene.add(grid);
+
+// ---- 材质 ----
+const texLoader = new THREE.TextureLoader();
+const atlasTex = texLoader.load('plant_atlas.png?v=' + VER);
+atlasTex.colorSpace = THREE.SRGBColorSpace;
+atlasTex.magFilter = THREE.LinearFilter;
+atlasTex.minFilter = THREE.LinearFilter;
+atlasTex.generateMipmaps = false;
+const MAT = new THREE.MeshBasicMaterial({map: atlasTex, side: THREE.FrontSide});
+// 运行时 ShaderDatabase.Cutout = 无光照平涂；Basic 材质 = 实机观感
+const MAT2 = new THREE.MeshBasicMaterial({map: atlasTex, side: THREE.FrontSide,
+  color: new THREE.Color(0.90, 0.96, 0.82)});
+const MAT3 = new THREE.MeshBasicMaterial({map: atlasTex, side: THREE.FrontSide,
+  color: new THREE.Color(0.82, 0.90, 0.76)});
+const MATS = [MAT, MAT2, MAT3];
+
+// ---- OBJ 解析（v/vt/vn/f，三角扇；绕序反转 = ObjImporter3D 同款）----
+function parseOBJ(text){
+  const vs=[], vt=[], vn=[], tris=[];
+  const lines = text.split('\n');
+  for(let li=0; li<lines.length; li++){
+    const L = lines[li].trim();
+    if(!L || L[0]==='#') continue;
+    const sp = L.indexOf(' ');
+    if(sp<0) continue;
+    const k = L.slice(0, sp), b = L.slice(sp+1).trim();
+    if(k==='v') vs.push(b.split(/\s+/).map(Number));
+    else if(k==='vt') vt.push(b.split(/\s+/).map(Number));
+    else if(k==='vn') vn.push(b.split(/\s+/).map(Number));
+    else if(k==='f'){
+      const idx = b.split(/\s+/).map(tok=>{
+        const p = tok.split('/');
+        return [parseInt(p[0])-1, parseInt(p[1])-1, parseInt(p[2])-1];
+      });
+      // 三角扇 + 绕序反转（导入器同款）
+      for(let i=2;i<idx.length;i++){
+        tris.push([idx[0], idx[i], idx[i-1]]);
+      }
+    }
+  }
+  // 顶点按 (pos,uv,n) 唯一化
+  const map = new Map(), pv=[], nv=[], uvv=[];
+  const index = t=>{
+    const key = t.join('|');
+    if(map.has(key)) return map.get(key);
+    const id = pv.length;
+    const P = vs[t[0]], T = vt[t[1]], N = vn[t[2]];
+    pv.push(P ? [P[0],P[1],P[2]] : [0,0,0]);
+    uvv.push(T ? [T[0],T[1]] : [0,0]);
+    nv.push(N ? [N[0],N[1],N[2]] : [0,1,0]);
+    map.set(key, id);
+    return id;
+  };
+  const arr = [];
+  for(const t of tris){ arr.push(index(t[0]), index(t[1]), index(t[2])); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pv.flat(), 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nv.flat(), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvv.flat(), 2));
+  g.setIndex(arr);
+  return g;
+}
+
+// ---- 数据 ----
+const meta = await (await fetch('plant_uv.json?v=' + VER)).json();
+const ARCH = {};
+for(const a of meta.arch) ARCH[a.name] = a;
+const NAMES = meta.arch.map(a=>a.name);
+const loaded = {};
+async function getGeo(name){
+  if(loaded[name]) return loaded[name];
+  const r = await fetch(ARCH[name].obj + '?v=' + VER);
+  const g = parseOBJ(await r.text());
+  loaded[name] = g;
+  return g;
+}
+
+// ---- 机位 ----
+const VIEWS = {
+  '45°':    (h)=>[h*1.02, h*0.92, h*1.02, 0, h*0.48, 0],
+  '俯视':    (h)=>[0.01, h*2.2, 0.01, 0, 0, 0],
+  '主视·南': (h)=>[0, h*0.5, h*1.3, 0, h*0.48, 0],
+  '侧视·东': (h)=>[h*1.3, h*0.5, 0, 0, h*0.48, 0],
+  '低角度':  (h)=>[h*0.8, 0.18, h*0.8, 0, h*0.52, 0],
+  '贴脸':    (h)=>[0, 1.62, 1.75, 0, h*0.48, 0],
+};
+let cur = {item: qs.get('item') || 'oak', view: qs.get('view') || '45°', tint: 0};
+
+let group = null;
+async function build(){
+  if(group){ scene.remove(group); }
+  group = new THREE.Group();
+  const a = ARCH[cur.item];
+  const geo = await getGeo(cur.item);
+  const m = new THREE.Mesh(geo, MATS[cur.tint % MATS.length]);
+  group.add(m);
+  // 1m 占格参考框（与游戏同口径：树冠可以出格）
+  const box = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, a.height, 1)),
+    new THREE.LineBasicMaterial({color: 0x6a7590, transparent:true, opacity:0.35}));
+  box.position.y = a.height/2;
+  group.add(box);
+  scene.add(group);
+  const v = VIEWS[cur.view](a.height);
+  camera.position.set(v[0], v[1], v[2]);
+  controls.target.set(v[3], v[4], v[5]);
+  controls.update();
+  hudSet('<b>' + cur.item + '</b> H=' + a.height + 'm D=' + a.diameter +
+         'm tris=' + (geo.index ? geo.index.count/3 : '?') +
+         ' regions=' + Object.keys(a.regions||{}).join(','));
+}
+
+// ---- UI ----
+function mkbtn(txt, fn, on){
+  const b = document.createElement('button');
+  b.textContent = txt;
+  b.onclick = ()=>{ if(on) on(b); fn(); };
+  return b;
+}
+if(!STILL){
+  const vb = document.getElementById('views');
+  for(const k of Object.keys(VIEWS)){
+    const b = mkbtn(k, ()=>build(), el=>{ cur.view = k;
+      vb.querySelectorAll('button').forEach(x=>x.classList.remove('on')); el.classList.add('on'); });
+    if(k===cur.view) b.classList.add('on');
+    vb.appendChild(b);
+  }
+  const t3 = mkbtn('色调', ()=>{ cur.tint = (cur.tint+1)%3; build(); },
+    el=>{ el.textContent = '色调' + ((cur.tint)+1); });
+  vb.appendChild(t3);
+  const ib = document.getElementById('items');
+  for(const n of NAMES){
+    const b = mkbtn(n, ()=>build(), el=>{ cur.item = n;
+      ib.querySelectorAll('button').forEach(x=>x.classList.remove('on')); el.classList.add('on'); });
+    if(n===cur.item) b.classList.add('on');
+    ib.appendChild(b);
+  }
+}
+
+await build();
+
+if (GALLERY) {
+  // 眼列：全部原型一排排开（间距 = 3m），相机 1.62m 平视 —— 人眼高度审核标准机位。
+  if (group) scene.remove(group);
+  const g = new THREE.Group();
+  let cursor = 0;
+  const centers = [];
+  for(const a of meta.arch){
+    const geo = await getGeo(a.name);
+    const m = new THREE.Mesh(geo, MAT);
+    m.position.x = cursor + a.diameter * 0.5;
+    g.add(m);
+    centers.push(cursor + a.diameter * 0.5);
+    cursor += a.diameter + 1.6;
+  }
+  // 名字标牌用独立 canvas 贴图（避免共用同一 canvas 导致全员显示最后一个名字）
+  const texByName = {};
+  for(const a of meta.arch){
+    const cv = document.createElement('canvas');
+    cv.width = 256; cv.height = 64;
+    const ctx2 = cv.getContext('2d');
+    ctx2.font = '28px Consolas, monospace';
+    ctx2.fillStyle = '#cfd6e4';
+    ctx2.textAlign = 'center';
+    ctx2.fillText(a.name, 128, 40);
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: t, transparent: true}));
+    sp.scale.set(1.6, 0.4, 1);
+    sp.position.set(centers[meta.arch.indexOf(a)], 0.14, 0);
+    g.add(sp);
+    texByName[a.name] = t;
+  }
+  scene.add(g);
+  const part = parseFloat(qs.get('part') || '0.5');   // 0..1：眼列相机锚点（一排放不下，分段出图）
+  const mid = centers[Math.max(0, Math.min(centers.length - 1, Math.round(part * (centers.length - 1))))];
+  camera.position.set(mid, 1.62, 9.5);
+  controls.target.set(mid, 1.15, 0);
+  controls.update();
+  hudSet('<b>gallery</b> ' + NAMES.length + ' archetypes, eye=1.62m, part=' + part);
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

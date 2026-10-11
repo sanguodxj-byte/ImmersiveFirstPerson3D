@@ -9,70 +9,132 @@ using Verse;
 
 namespace RimFirstPerson3D
 {
-    // 指挥面板：查看期不把原版 UI 画在主画面上，改记到终端屏幕纹理里。
-    // 上帝相机在 Update 里会清掉 RT，所以这里只在 OnGUI 记账，下一帧 Capture 之后再叠上去。
-    // 只留下顶栏和底栏，并在终端上纵向拉开，中间地图不再叠窗口。
-    // 文字图集按原样采样会左右颠倒，叠的时候单独把字形源矩形横向翻过来。
+    // 指挥面板：查看期让原版 UIRoot 按终端分辨率排版并处理点击，
+    // 画到主画面的那一层记下来，主画面本身涂成全透明，下一帧贴回屏幕纹理。
+    // 贴图按原样 1:1。字形按字体网格的四个角贴，不用 DrawTexture 的矩形 UV。
     public static class CommandPanel3D
     {
-        // 原版 UI 纵坐标向下：顶栏、底栏（指令行 + 主按钮）。
-        const float SrcTop = 0.08f;
-        const float SrcBottom = 0.76f;
-        // 终端 UV 向上。顶栏贴上沿，底栏拉开，中间留给地图拖拽。
-        public const float DevTop = 0.90f;
-        public const float DevBottom = 0.42f;
+        const int StampCap = 12288;
 
-        const int StampCap = 4096;
+        // 1 表示按纹理像素排版，头像、底栏、检查文字和现在屏幕上的格子一致。
+        // 工作、日程这类默认 1010×684 的分页另在 CapMainTab 里限高限宽，避免再铺满终端。
+        const float UiShrink = 1f;
 
         struct Stamp
         {
+            public int order;
             public float nx, ny, nw, nh;
             public Texture tex;
             public Rect src;
             public Color tint;
             public int l, r, t, b;
-            public bool glyph;
+        }
+
+        // 四个角各自的 UV。DrawTexture 会把较小的 U 放在左边，字体图集经常是反的，整字就会镜像。
+        struct GlyphDraw
+        {
+            public int order;
+            public Texture tex;
+            public Color tint;
+            public float x0, y0, x1, y1, x2, y2, x3, y3;
+            public float u0, v0, u1, v1, u2, v2, u3, v3;
         }
 
         static readonly List<Stamp> recording = new List<Stamp>(512);
         static readonly List<Stamp> committed = new List<Stamp>(512);
+        static readonly List<GlyphDraw> glyphRecording = new List<GlyphDraw>(1024);
+        static readonly List<GlyphDraw> glyphCommitted = new List<GlyphDraw>(1024);
         static readonly List<UIVertex> glyphs = new List<UIVertex>(256);
+        static readonly Vector2[] glyphCorner = new Vector2[4];
+        static readonly Vector2[] glyphCornerUv = new Vector2[4];
         static TextGenerator textGen;
+        static int drawSeq;
+        static Material glyphMat;
+        static Shader glyphShader;
+        static Font glyphFont;
 
         static bool redirecting;
-        static bool pointerOnChrome;
+        static bool pointerOnScreen;
         static Vector2 pointerUv;
-        static float vanillaNx, vanillaNy;
+        static float layoutScale = 1f;
         static int hideDepth;
         static Color savedGuiColor;
         static bool logged;
         static bool loggedCap;
         static MethodInfo visibleRectGetter;
+        static MethodInfo unclipMethod;
         static bool visibleRectTried;
-
-        public static bool ChromeBand(Vector2 uv) => TryVanillaNorm(uv, out _, out _);
+        static int clipFixWindow = int.MinValue;
+        static int clipFixFrame = -1;
+        static int clipFixType = -1;
+        static Vector2 clipFixAdd;
+        static FieldInfo pawnTableField;
+        static MethodInfo pawnExtraBottom;
+        static MethodInfo pawnExtraTop;
+        static MethodInfo pawnMargin;
 
         public static void Clear()
         {
             recording.Clear();
             committed.Clear();
+            glyphRecording.Clear();
+            glyphCommitted.Clear();
+            drawSeq = 0;
         }
 
         public static void Patch(Harmony harmony)
         {
             harmony.Patch(AccessTools.Method(typeof(UIRoot_Play), nameof(UIRoot_Play.UIRootOnGUI)),
-                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(UIRootPrefix)),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(UIRootPrefix)) { priority = Priority.First },
                 postfix: new HarmonyMethod(typeof(CommandPanel3D), nameof(UIRootPostfix)));
+            harmony.Patch(AccessTools.Method(typeof(UI), nameof(UI.ApplyUIScale)),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(ApplyScaleWhileViewing)));
+            var innerWindow = AccessTools.Method(typeof(Window), "InnerWindowOnGUI", new[] { typeof(int) });
+            if (innerWindow != null)
+                harmony.Patch(innerWindow, prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(RememberWindowClip)));
+            else
+                Log.Warning(ModEntry.LogPrefix + "command panel missed window clip");
+            harmony.Patch(AccessTools.Method(typeof(UI), nameof(UI.GUIToScreenPoint)),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(GuiToScreenWhileViewing)));
+            harmony.Patch(AccessTools.Method(typeof(UI), nameof(UI.UIToMapPosition), new[] { typeof(Vector2) }),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(MapPositionWhileViewing)));
+            harmony.Patch(AccessTools.Method(typeof(UI), nameof(UI.MapToUIPosition)),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(MapToUIWhileViewing)));
+            var placeCost = AccessTools.Method(typeof(Designator_Build), "DrawPlaceMouseAttachments");
+            if (placeCost != null)
+                harmony.Patch(placeCost, prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(CostIconsAfterStuffMenu)));
+            else
+                Log.Warning(ModEntry.LogPrefix + "command panel missed place-cost attachments");
+            harmony.Patch(AccessTools.Method(typeof(FloatMenu), nameof(FloatMenu.DoWindowContents)),
+                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(KeepFloatMenu)));
+            var tabPlace = AccessTools.Method(typeof(MainTabWindow), "SetInitialSizeAndPosition");
+            if (tabPlace != null)
+                harmony.Patch(tabPlace, postfix: new HarmonyMethod(typeof(CommandPanel3D), nameof(CapMainTab)));
+            else
+                Log.Warning(ModEntry.LogPrefix + "command panel missed main tab placement");
+            var onScreen = new HarmonyMethod(typeof(CommandPanel3D), nameof(MapToolsOnlyOnScreen));
+            harmony.Patch(AccessTools.Method(typeof(DesignatorManager), nameof(DesignatorManager.ProcessInputEvents)),
+                prefix: onScreen);
+            harmony.Patch(AccessTools.Method(typeof(Targeter), nameof(Targeter.ProcessInputEvents)),
+                prefix: onScreen);
             harmony.Patch(AccessTools.PropertyGetter(typeof(UI), nameof(UI.MousePositionOnUI)),
                 prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(MouseOnUIPrefix)));
-            harmony.Patch(AccessTools.Method(typeof(MapInterface), nameof(MapInterface.HandleMapClicks)),
-                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(PassUnlessViewing)));
-            // 有窗口 absorbInputAroundWindow 时，这一步会在指令按钮之前把点击吃掉。
-            harmony.Patch(AccessTools.Method(typeof(WindowStack), nameof(WindowStack.HandleEventsHighPriority)),
-                prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(WindowEventsWhileViewing)));
+            // 左键留给终端拖地图。右键下令、取消选择仍走原版。
+            var selectorClicks = AccessTools.Method(typeof(Selector), "HandleMapClicks");
+            if (selectorClicks != null)
+                harmony.Patch(selectorClicks, prefix: new HarmonyMethod(typeof(CommandPanel3D), nameof(SelectorClicksWhileViewing)));
+            else
+                Log.Warning(ModEntry.LogPrefix + "command panel missed Selector.HandleMapClicks");
+            var drawLocs = AccessTools.Method(typeof(ColonistBarDrawLocsFinder), "CalculateDrawLocs",
+                new[] { typeof(List<Vector2>), typeof(float).MakeByRefType(), typeof(int) });
+            if (drawLocs != null)
+                harmony.Patch(drawLocs, postfix: new HarmonyMethod(typeof(CommandPanel3D), nameof(LeftAlignColonists)));
+            else
+                Log.Warning(ModEntry.LogPrefix + "command panel missed colonist draw locs");
 
-            var hideColor = new HarmonyMethod(typeof(CommandPanel3D), nameof(ZeroDrawColor));
-            var texPre = new HarmonyMethod(typeof(CommandPanel3D), nameof(TexPrefix));
+            // 先记账再把颜色参数清掉，避免记下的是已经透明的那一笔。
+            var hideColor = new HarmonyMethod(typeof(CommandPanel3D), nameof(ZeroDrawColor)) { priority = Priority.Last };
+            var texPre = new HarmonyMethod(typeof(CommandPanel3D), nameof(TexPrefix)) { priority = Priority.First };
             var texPost = new HarmonyMethod(typeof(CommandPanel3D), nameof(TexPostfix));
             foreach (var m in AccessTools.GetDeclaredMethods(typeof(GUI)))
             {
@@ -91,7 +153,7 @@ namespace RimFirstPerson3D
                 }
             }
 
-            var stylePre = new HarmonyMethod(typeof(CommandPanel3D), nameof(StylePrefix));
+            var stylePre = new HarmonyMethod(typeof(CommandPanel3D), nameof(StylePrefix)) { priority = Priority.First };
             var stylePost = new HarmonyMethod(typeof(CommandPanel3D), nameof(TexPostfix));
             foreach (var m in AccessTools.GetDeclaredMethods(typeof(GUIStyle)))
             {
@@ -104,23 +166,6 @@ namespace RimFirstPerson3D
                     Log.Warning(ModEntry.LogPrefix + "command panel skipped " + m + ": " + e.Message);
                 }
             }
-
-            PatchDesignators(harmony, new HarmonyMethod(typeof(CommandPanel3D), nameof(PassUnlessViewing)));
-        }
-
-        // 查看期不让设计器 / 地图点击落到真实地图上。面板中部的拖拽只移动俯视焦点。
-        static bool PassUnlessViewing() => !MapScreen3D.Viewing;
-
-        // 查看期仍把 Esc / 确认交给窗口，但不让“点在窗口外”把鼠标点击吃掉。
-        static bool WindowEventsWhileViewing(WindowStack __instance)
-        {
-            if (!MapScreen3D.Viewing) return true;
-            if (Event.current == null) return false;
-            if (KeyBindingDefOf.Cancel.KeyDownEvent)
-                __instance.Notify_PressedCancel();
-            if (KeyBindingDefOf.Accept.KeyDownEvent)
-                __instance.Notify_PressedAccept();
-            return false;
         }
 
         static bool HasColorArg(MethodBase m)
@@ -131,53 +176,72 @@ namespace RimFirstPerson3D
             return false;
         }
 
-        static void PatchDesignators(Harmony harmony, HarmonyMethod prefix)
+        // 原版把殖民者头像排在屏幕正中。终端上改从左边起排，点选矩形跟着同一份坐标走。
+        static void LeftAlignColonists(List<Vector2> outDrawLocs)
         {
-            Assembly asm = typeof(Designator).Assembly;
-            Type[] types;
-            try { types = asm.GetTypes(); }
-            catch (ReflectionTypeLoadException ex) { types = ex.Types; }
-            if (types == null) return;
-            for (int i = 0; i < types.Length; i++)
+            if (!MapScreen3D.Viewing || outDrawLocs == null || outDrawLocs.Count == 0) return;
+            float min = outDrawLocs[0].x;
+            for (int i = 1; i < outDrawLocs.Count; i++)
+                if (outDrawLocs[i].x < min) min = outDrawLocs[i].x;
+            float dx = 8f - min;
+            if (dx > -0.5f && dx < 0.5f) return;
+            for (int i = 0; i < outDrawLocs.Count; i++)
             {
-                Type t = types[i];
-                if (t == null || !typeof(Designator).IsAssignableFrom(t)) continue;
-                MethodInfo m;
-                try
-                {
-                    m = t.GetMethod(nameof(Designator.SelectedProcessInput),
-                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly,
-                        null, new[] { typeof(Event) }, null);
-                }
-                catch { continue; }
-                if (m == null) continue;
-                try { harmony.Patch(m, prefix: prefix); }
-                catch (Exception e)
-                {
-                    Log.Warning(ModEntry.LogPrefix + "command panel skipped " + t.Name + ": " + e.Message);
-                }
+                var p = outDrawLocs[i];
+                p.x += dx;
+                outDrawLocs[i] = p;
             }
         }
 
-        // ---- 指针：屏幕 UV 对到原版 UI。中部和未打中屏幕时把鼠标挪走，空白窗口吃不到点击。 ----
+        // 选择框会吃掉每一次没被按钮用掉的左键。查看期跳过左键，右键菜单保留。
+        static bool SelectorClicksWhileViewing()
+        {
+            if (!MapScreen3D.Viewing) return true;
+            if (!pointerOnScreen) return false;
+            var e = Event.current;
+            if (e == null || e.button != 0) return true;
+            if (e.type == EventType.MouseDown || e.type == EventType.MouseUp || e.rawType == EventType.MouseUp)
+                return false;
+            return true;
+        }
+
+        // 光标不在终端上时，设计器和目标选取不该打到地图外的某一格。
+        static bool MapToolsOnlyOnScreen()
+        {
+            if (!MapScreen3D.Viewing) return true;
+            return pointerOnScreen;
+        }
+
+        // ---- 指针：整块屏幕都映射到原版 UI。没打中屏幕时把鼠标挪走。 ----
+
+        public static void NotePointer(bool hit, Vector2 uv)
+        {
+            pointerOnScreen = hit;
+            if (hit) pointerUv = uv;
+        }
 
         static void UIRootPrefix()
         {
             redirecting = false;
-            pointerOnChrome = false;
             if (!MapScreen3D.Viewing) return;
             var rt = GodView3D.ScreenTexture as RenderTexture;
             if (rt == null || !rt.IsCreated()) return;
             redirecting = true;
             AimPointer();
             if (Event.current != null && Event.current.type == EventType.Repaint)
+            {
                 recording.Clear();
+                glyphRecording.Clear();
+                drawSeq = 0;
+            }
         }
 
         static void UIRootPostfix()
         {
             if (redirecting && Event.current != null && Event.current.type == EventType.Repaint)
                 Commit();
+            if (redirecting)
+                MapScreen3D.OnGuiGesture(pointerOnScreen, pointerUv);
             redirecting = false;
             if (hideDepth != 0)
             {
@@ -186,58 +250,185 @@ namespace RimFirstPerson3D
             }
         }
 
-        static void AimPointer()
+        // 查看期的排版尺寸。Update 和 OnGUI 都写同一对数字，避免窗口每帧被当成改了分辨率、材料菜单跟着鼠标重摆。
+        public static void HoldVirtualScreen()
         {
-            var cam = CameraRig3D.Cam;
-            bool hit = cam != null && HandTerminal3D.TryScreenUV(cam, 1f, out pointerUv);
-            pointerOnChrome = hit && TryVanillaNorm(pointerUv, out vanillaNx, out vanillaNy);
-            if (Event.current == null) return;
-            if (!pointerOnChrome)
-            {
-                Event.current.mousePosition = new Vector2(-10000f, -10000f);
-                return;
-            }
-            float w = UI.screenWidth > 0 ? UI.screenWidth : Screen.width;
-            float h = UI.screenHeight > 0 ? UI.screenHeight : Screen.height;
-            // 控件矩形在虚拟分辨率里，y 向下。和 UI.screenWidth 同一套，不走 ScreenToGUIPoint。
-            Event.current.mousePosition = new Vector2(vanillaNx * w, vanillaNy * h);
+            if (!MapScreen3D.Viewing) return;
+            VirtualPixels(out int w, out int h);
+            UI.screenWidth = w;
+            UI.screenHeight = h;
         }
 
-        static bool MouseOnUIPrefix(ref Vector2 __result)
+        // Root.OnGUI 会调 ApplyUIScale。查看期虚拟像素等于屏幕纹理，矩阵保持单位阵。
+        // Prefs.UIScale 是把 4K 显示器收成逻辑分辨率用的。终端纹理已经是排版像素，
+        // 再套这层缩放会把窗口画到左上角。大分页另由 CapMainTab 限尺寸。
+        static bool ApplyScaleWhileViewing()
         {
-            if (!redirecting) return true;
-            if (!pointerOnChrome)
+            if (!MapScreen3D.Viewing)
+            {
+                layoutScale = 1f;
+                return true;
+            }
+            HoldVirtualScreen();
+            layoutScale = 1f;
+            GUI.matrix = Matrix4x4.identity;
+            return false;
+        }
+
+        static void VirtualPixels(out int w, out int h)
+        {
+            var rt = GodView3D.ScreenTexture as RenderTexture;
+            int rw = rt != null && rt.width > 0 ? rt.width : 1536;
+            int rh = rt != null && rt.height > 0 ? rt.height : 1086;
+            float shrink = UiShrink > 0.2f && UiShrink <= 1f ? UiShrink : 1f;
+            w = Mathf.Max(rw, Mathf.RoundToInt(rw / shrink));
+            h = Mathf.Max(rh, Mathf.RoundToInt(rh / shrink));
+        }
+
+        // 窗口矩形在虚拟 UI 像素里。GUIToScreenPoint 会夹到物理屏幕，底栏和材料菜单就对不上点击。
+        static bool GuiToScreenWhileViewing(Vector2 guiPoint, ref Vector2 __result)
+        {
+            if (!MapScreen3D.Viewing) return true;
+            __result = GuiToVirtual(guiPoint);
+            return false;
+        }
+
+        // MouseCell、设计器和目标选取都从这里把指针换成地图坐标。主相机是第一人称，不能拿来反投影。
+        static bool MapPositionWhileViewing(Vector2 screenLoc, ref Vector3 __result)
+        {
+            if (!MapScreen3D.Viewing) return true;
+            if (!pointerOnScreen)
+            {
+                __result = new Vector3(-1000f, 0f, -1000f);
+                return false;
+            }
+            VirtualSize(out int w, out int h);
+            if (w < 1 || h < 1) return true;
+            if (!MapScreen3D.TryMapPoint(new Vector2(screenLoc.x / w, screenLoc.y / h), out var point))
+                return true;
+            point.y = 0f;
+            __result = point;
+            return false;
+        }
+
+        // 拖框和同类建筑的间距数字走 MapToUIPosition。主相机是第一人称，要按俯视相机折回虚拟像素。
+        static bool MapToUIWhileViewing(Vector3 v, ref Vector2 __result)
+        {
+            if (!MapScreen3D.Viewing) return true;
+            var cam = GodView3D.Camera;
+            if (cam == null) return true;
+            Vector3 vp = cam.WorldToViewportPoint(v);
+            if (vp.z < 0f)
             {
                 __result = new Vector2(-10000f, -10000f);
                 return false;
             }
-            float w = UI.screenWidth > 0 ? UI.screenWidth : Screen.width;
-            float h = UI.screenHeight > 0 ? UI.screenHeight : Screen.height;
-            __result = new Vector2(vanillaNx * w, (1f - vanillaNy) * h);
+            VirtualSize(out int w, out int h);
+            __result = new Vector2(vp.x * w, (1f - vp.y) * h);
             return false;
         }
 
-        // 终端 UV（y 向上）对回原版归一化坐标（y 向下）。中间地带返回 false。
-        static bool TryVanillaNorm(Vector2 uv, out float nx, out float ny)
+        // 材料还没选定、菜单还开着时，造价图标画在鼠标上，盖住菜单又点不中。菜单关掉后再显示造价。
+        static bool CostIconsAfterStuffMenu(Designator_Build __instance)
         {
-            nx = uv.x;
-            float devDown = 1f - uv.y;
-            if (uv.y >= DevTop)
+            if (!MapScreen3D.Viewing || __instance == null) return true;
+            if (Find.WindowStack == null || Find.WindowStack.FloatMenu == null) return true;
+            var thing = __instance.PlacingDef as ThingDef;
+            if (thing != null && thing.MadeFromStuff && __instance.StuffDefRaw == null)
+                return false;
+            return true;
+        }
+
+        // 菜单用窗口内鼠标到矩形的距离判断要不要自己关掉。坐标一对不上就会立刻消失。
+        static void KeepFloatMenu(FloatMenu __instance)
+        {
+            if (MapScreen3D.Viewing && __instance != null)
+                __instance.vanishIfMouseDistant = false;
+        }
+
+        // 建筑分类栏本来就窄，不动。工作、日程、研究这些默认铺大半块屏幕的分页，收成终端的一半左右。
+        static void CapMainTab(MainTabWindow __instance)
+        {
+            if (!MapScreen3D.Viewing || __instance == null) return;
+            if (UI.screenWidth < 8 || UI.screenHeight < 8) return;
+            Rect r = __instance.windowRect;
+            if (r.width <= 280f) return;
+            float maxW = UI.screenWidth * 0.48f;
+            float maxH = (UI.screenHeight - 35f) * 0.56f;
+            bool changed = false;
+            if (r.width > maxW) { r.width = maxW; changed = true; }
+            if (r.height > maxH) { r.height = maxH; changed = true; }
+            if (!changed) return;
+            if (__instance.Anchor == MainTabWindowAnchor.Left) r.x = 0f;
+            else r.x = UI.screenWidth - r.width;
+            r.y = (UI.screenHeight - 35f) - r.height;
+            __instance.windowRect = r;
+            if (__instance is MainTabWindow_PawnTable)
+                FitPawnTable(__instance, r);
+        }
+
+        // 工作表按创建时的整屏宽度排好列，窗口收小后右边列会被裁掉且不能横滑。按新窗口重算列宽。
+        static void FitPawnTable(MainTabWindow tab, Rect window)
+        {
+            if (pawnTableField == null)
             {
-                float span = 1f - DevTop;
-                float t = span > 1e-4f ? devDown / span : 0f;
-                ny = Mathf.Lerp(0f, SrcTop, t);
-                return true;
+                pawnTableField = AccessTools.Field(typeof(MainTabWindow_PawnTable), "table");
+                pawnExtraBottom = AccessTools.PropertyGetter(typeof(MainTabWindow_PawnTable), "ExtraBottomSpace");
+                pawnExtraTop = AccessTools.PropertyGetter(typeof(MainTabWindow_PawnTable), "ExtraTopSpace");
+                pawnMargin = AccessTools.PropertyGetter(typeof(MainTabWindow_PawnTable), "Margin");
             }
-            if (uv.y <= DevBottom)
+            var table = pawnTableField?.GetValue(tab) as PawnTable;
+            if (table == null) return;
+            float margin = pawnMargin != null ? (float)pawnMargin.Invoke(tab, null) : 6f;
+            float bottom = pawnExtraBottom != null ? (float)pawnExtraBottom.Invoke(tab, null) : 53f;
+            float top = pawnExtraTop != null ? (float)pawnExtraTop.Invoke(tab, null) : 0f;
+            int maxW = Mathf.Max(120, Mathf.FloorToInt(window.width - margin * 2f));
+            int maxH = Mathf.Max(80, Mathf.FloorToInt(window.height - bottom - top - margin * 2f));
+            table.SetMinMaxSize(120, maxW, 0, maxH);
+        }
+
+        static void AimPointer()
+        {
+            var cam = CameraRig3D.Cam;
+            pointerOnScreen = cam != null && HandTerminal3D.TryScreenUV(cam, 1f, out pointerUv);
+            if (Event.current == null) return;
+            if (!pointerOnScreen)
             {
-                float dev0 = 1f - DevBottom;
-                float t = DevBottom > 1e-4f ? (devDown - dev0) / DevBottom : 0f;
-                ny = Mathf.Lerp(SrcBottom, 1f, t);
-                return true;
+                Event.current.mousePosition = new Vector2(-10000f, -10000f);
+                return;
             }
-            ny = 0f;
+            VirtualSize(out int w, out int h);
+            Event.current.mousePosition = new Vector2(pointerUv.x * w, (1f - pointerUv.y) * h);
+        }
+
+        static bool MouseOnUIPrefix(ref Vector2 __result)
+        {
+            if (!MapScreen3D.Viewing) return true;
+            if (!pointerOnScreen)
+            {
+                __result = new Vector2(-10000f, -10000f);
+                return false;
+            }
+            VirtualSize(out int w, out int h);
+            __result = new Vector2(pointerUv.x * w, pointerUv.y * h);
             return false;
+        }
+
+        static void VirtualSize(out int w, out int h)
+        {
+            if (MapScreen3D.Viewing)
+            {
+                VirtualPixels(out w, out h);
+                return;
+            }
+            if (UI.screenWidth > 0 && UI.screenHeight > 0)
+            {
+                w = UI.screenWidth;
+                h = UI.screenHeight;
+                return;
+            }
+            w = 1536;
+            h = 1086;
         }
 
         // ---- 记账：Repaint 时把将要画到主画面的内容记下来，再把主画面这笔画成全透明。 ----
@@ -480,43 +671,98 @@ namespace RimFirstPerson3D
             textGen.GetVertices(glyphs);
             int quads = glyphs.Count / 4;
             if (quads > 512) quads = 512;
+            glyphFont = font;
             for (int q = 0; q < quads; q++)
-            {
-                int i = q * 4;
-                float minX = glyphs[i].position.x, maxX = minX;
-                float minY = glyphs[i].position.y, maxY = minY;
-                int bl = 0;
-                float blScore = glyphs[i].position.x + glyphs[i].position.y;
-                for (int k = 1; k < 4; k++)
-                {
-                    Vector3 p = glyphs[i + k].position;
-                    if (p.x < minX) minX = p.x;
-                    if (p.x > maxX) maxX = p.x;
-                    if (p.y < minY) minY = p.y;
-                    if (p.y > maxY) maxY = p.y;
-                    float score = p.x + p.y;
-                    if (score < blScore) { blScore = score; bl = k; }
-                }
-                float gw = maxX - minX;
-                float gh = maxY - minY;
-                if (gw < 0.2f || gh < 0.2f) continue;
-                Vector4 uvBL = glyphs[i + bl].uv0;
-                Vector4 uvTR = glyphs[i].uv0;
-                float trScore = glyphs[i].position.x + glyphs[i].position.y;
-                for (int k = 1; k < 4; k++)
-                {
-                    float score = glyphs[i + k].position.x + glyphs[i + k].position.y;
-                    if (score > trScore) { trScore = score; uvTR = glyphs[i + k].uv0; }
-                }
-                var src = new Rect(uvBL.x, uvBL.y, uvTR.x - uvBL.x, uvTR.y - uvBL.y);
-                if (Mathf.Abs(src.width) < 1e-6f || Mathf.Abs(src.height) < 1e-6f) continue;
-                var glyph = new Rect(rect.x + minX, rect.yMax - maxY, gw, gh);
-                Color vc = glyphs[i].color;
-                Record(glyph, atlas, src, vc, 0, 0, 0, 0, true);
-            }
+                RecordGlyph(rect, atlas, q * 4);
         }
 
-        static void Record(Rect gui, Texture tex, Rect src, Color tint, int l, int r, int t, int b, bool glyph = false)
+        // 字体网格的左上角经常对到图集的右侧。按角记下 UV，贴的时候才不会整字反过来。
+        static void RecordGlyph(Rect rect, Texture atlas, int i)
+        {
+            if (glyphRecording.Count >= StampCap) return;
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
+            var g = glyphCorner;
+            var uv = glyphCornerUv;
+            for (int k = 0; k < 4; k++)
+            {
+                Vector3 p = glyphs[i + k].position;
+                g[k] = new Vector2(rect.x + p.x, rect.yMax - p.y);
+                uv[k] = new Vector2(glyphs[i + k].uv0.x, glyphs[i + k].uv0.y);
+                if (g[k].x < minX) minX = g[k].x;
+                if (g[k].x > maxX) maxX = g[k].x;
+                if (g[k].y < minY) minY = g[k].y;
+                if (g[k].y > maxY) maxY = g[k].y;
+            }
+            if (maxX - minX < 0.2f || maxY - minY < 0.2f) return;
+            float x0 = minX, y0 = minY, x1 = maxX, y1 = maxY;
+            if (TryVisible(out Rect vis) && !IsPhysicalRootClip(vis) && ClipInDrawSpace(vis, minX, minY))
+            {
+                x0 = Mathf.Max(x0, vis.xMin);
+                y0 = Mathf.Max(y0, vis.yMin);
+                x1 = Mathf.Min(x1, vis.xMax);
+                y1 = Mathf.Min(y1, vis.yMax);
+                if (x1 - x0 < 0.2f || y1 - y0 < 0.2f) return;
+            }
+            Vector2 c00 = CornerUv(g, uv, minX, minY);
+            Vector2 c10 = CornerUv(g, uv, maxX, minY);
+            Vector2 c01 = CornerUv(g, uv, minX, maxY);
+            Vector2 c11 = CornerUv(g, uv, maxX, maxY);
+            // 屏幕自下而上：左下、左上、右上、右下。GUI 的 y 向下，所以 maxY 是底边。
+            if (!TryNormPoint(new Vector2(x0, y1), out Vector2 n0)) return;
+            if (!TryNormPoint(new Vector2(x0, y0), out Vector2 n1)) return;
+            if (!TryNormPoint(new Vector2(x1, y0), out Vector2 n2)) return;
+            if (!TryNormPoint(new Vector2(x1, y1), out Vector2 n3)) return;
+            Vector2 t0 = BilinearUv(c00, c10, c01, c11, minX, maxX, minY, maxY, x0, y1);
+            Vector2 t1 = BilinearUv(c00, c10, c01, c11, minX, maxX, minY, maxY, x0, y0);
+            Vector2 t2 = BilinearUv(c00, c10, c01, c11, minX, maxX, minY, maxY, x1, y0);
+            Vector2 t3 = BilinearUv(c00, c10, c01, c11, minX, maxX, minY, maxY, x1, y1);
+            Color vc = glyphs[i].color;
+            if (vc.a <= 0.004f) return;
+            glyphRecording.Add(new GlyphDraw
+            {
+                order = drawSeq++,
+                tex = atlas,
+                tint = vc,
+                x0 = n0.x, y0 = n0.y, x1 = n1.x, y1 = n1.y, x2 = n2.x, y2 = n2.y, x3 = n3.x, y3 = n3.y,
+                u0 = t0.x, v0 = t0.y, u1 = t1.x, v1 = t1.y, u2 = t2.x, v2 = t2.y, u3 = t3.x, v3 = t3.y
+            });
+        }
+
+        static Vector2 CornerUv(Vector2[] g, Vector2[] uv, float x, float y)
+        {
+            int best = 0;
+            float bestD = float.MaxValue;
+            for (int k = 0; k < 4; k++)
+            {
+                float dx = g[k].x - x;
+                float dy = g[k].y - y;
+                float d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = k; }
+            }
+            return uv[best];
+        }
+
+        static Vector2 BilinearUv(Vector2 c00, Vector2 c10, Vector2 c01, Vector2 c11,
+            float minX, float maxX, float minY, float maxY, float x, float y)
+        {
+            float tx = maxX > minX + 1e-4f ? (x - minX) / (maxX - minX) : 0f;
+            float ty = maxY > minY + 1e-4f ? (y - minY) / (maxY - minY) : 0f;
+            return Vector2.Lerp(Vector2.Lerp(c00, c10, tx), Vector2.Lerp(c01, c11, tx), ty);
+        }
+
+        static bool TryNormPoint(Vector2 gui, out Vector2 n)
+        {
+            n = default;
+            float sw = UI.screenWidth;
+            float sh = UI.screenHeight;
+            if (sw < 1f || sh < 1f) return false;
+            Vector2 p = GuiToVirtual(gui);
+            n = new Vector2(p.x / sw, p.y / sh);
+            return true;
+        }
+
+        static void Record(Rect gui, Texture tex, Rect src, Color tint, int l, int r, int t, int b)
         {
             if (tex == null || tint.a <= 0.004f) return;
             if (recording.Count >= StampCap)
@@ -531,10 +777,10 @@ namespace RimFirstPerson3D
             if (!TryScreenRect(ref gui, ref src, l, r, t, b, out Rect n)) return;
             recording.Add(new Stamp
             {
+                order = drawSeq++,
                 nx = n.x, ny = n.y, nw = n.width, nh = n.height,
                 tex = tex, src = src, tint = tint,
-                l = l, r = r, t = t, b = b,
-                glyph = glyph
+                l = l, r = r, t = t, b = b
             });
         }
 
@@ -542,7 +788,7 @@ namespace RimFirstPerson3D
         {
             normalized = default;
             if (gui.width < 0.4f || gui.height < 0.4f) return false;
-            if (TryVisible(out Rect vis))
+            if (TryVisible(out Rect vis) && !IsPhysicalRootClip(vis) && ClipInDrawSpace(vis, gui.xMin, gui.yMin))
             {
                 float x0 = Mathf.Max(gui.xMin, vis.xMin);
                 float y0 = Mathf.Max(gui.yMin, vis.yMin);
@@ -565,10 +811,11 @@ namespace RimFirstPerson3D
                 }
                 gui = new Rect(x0, y0, x1 - x0, y1 - y0);
             }
-            Vector2 p0 = GUIUtility.GUIToScreenPoint(new Vector2(gui.xMin, gui.yMin));
-            Vector2 p1 = GUIUtility.GUIToScreenPoint(new Vector2(gui.xMax, gui.yMax));
-            float sw = Screen.width;
-            float sh = Screen.height;
+            Vector2 p0 = GuiToVirtual(new Vector2(gui.xMin, gui.yMin));
+            Vector2 p1 = GuiToVirtual(new Vector2(gui.xMax, gui.yMax));
+            // 归一化分母是虚拟像素。贴回时乘纹理尺寸，控件就按 UiShrink 变小。
+            float sw = UI.screenWidth;
+            float sh = UI.screenHeight;
             if (sw < 1f || sh < 1f) return false;
             float nx = Mathf.Min(p0.x, p1.x) / sw;
             float ny = Mathf.Min(p0.y, p1.y) / sh;
@@ -582,17 +829,7 @@ namespace RimFirstPerson3D
         static bool TryVisible(out Rect vis)
         {
             vis = default;
-            if (!visibleRectTried)
-            {
-                visibleRectTried = true;
-                try
-                {
-                    // UnityEngine.GUIClip 为 internal 类型，编译期不可直接引用，改为运行时按名解析。
-                    var clipType = AccessTools.TypeByName("UnityEngine.GUIClip");
-                    visibleRectGetter = clipType != null ? AccessTools.PropertyGetter(clipType, "visibleRect") : null;
-                }
-                catch { visibleRectGetter = null; }
-            }
+            EnsureClip();
             if (visibleRectGetter == null) return false;
             try
             {
@@ -600,6 +837,82 @@ namespace RimFirstPerson3D
                 return vis.width > 1f && vis.height > 1f;
             }
             catch { return false; }
+        }
+
+        // 裁剪矩形的左上角落到绘制矩形内部，说明它在另一套坐标里（窗口屏幕坐标对局部坐标）。
+        // 这时相交会把弹窗切走或再偏一次，整块不裁。
+        static bool ClipInDrawSpace(Rect vis, float x, float y)
+        {
+            return vis.xMin <= x + 2f && vis.yMin <= y + 2f;
+        }
+
+        // 根裁剪矩形是物理屏幕。虚拟像素比它大时，裁它会把底栏和右侧警报切掉。
+        static bool IsPhysicalRootClip(Rect vis)
+        {
+            if (Screen.width < 2 || Screen.height < 2) return false;
+            if (UI.screenWidth <= Screen.width + 2 && UI.screenHeight <= Screen.height + 2) return false;
+            return vis.xMin <= 1f && vis.yMin <= 1f
+                && Mathf.Abs(vis.width - Screen.width) <= 2f
+                && Mathf.Abs(vis.height - Screen.height) <= 2f;
+        }
+
+        static void EnsureClip()
+        {
+            if (visibleRectTried) return;
+            visibleRectTried = true;
+            try
+            {
+                // UnityEngine.GUIClip 为 internal 类型，编译期不可直接引用，改为运行时按名解析。
+                var clipType = AccessTools.TypeByName("UnityEngine.GUIClip");
+                visibleRectGetter = clipType != null ? AccessTools.PropertyGetter(clipType, "visibleRect") : null;
+                unclipMethod = clipType != null ? AccessTools.Method(clipType, "Unclip", new[] { typeof(Vector2) }) : null;
+            }
+            catch { visibleRectGetter = null; }
+        }
+
+        // GUI.Window 的回调里，绘制矩形是窗口局部坐标。Unclip 没把窗口原点加回去时，弹窗会贴在终端左上角。
+        // 在窗口函数入口探测一次：Unclip(0,0) 已经靠近 windowRect 就不要再加，避免叠两次。
+        static void RememberWindowClip(Window __instance)
+        {
+            Window window = __instance;
+            clipFixAdd = Vector2.zero;
+            clipFixWindow = int.MinValue;
+            if (!MapScreen3D.Viewing || window == null || Event.current == null) return;
+            clipFixWindow = window.ID;
+            clipFixFrame = Time.frameCount;
+            clipFixType = (int)Event.current.type;
+            Rect wr = window.windowRect;
+            Vector2 zero = RawUnclip(Vector2.zero);
+            float dx = zero.x - wr.x;
+            float dy = zero.y - wr.y;
+            if (dx * dx + dy * dy <= 96f * 96f) return;
+            if (zero.x > -48f && zero.x < 96f && zero.y > -48f && zero.y < 160f)
+                clipFixAdd = new Vector2(wr.x, wr.y);
+        }
+
+        // GUIClip.Unclip 给出虚拟像素。矩阵在查看期是单位阵，结果和 UI.screenWidth 同一套。
+        static Vector2 GuiToVirtual(Vector2 gui)
+        {
+            Vector2 p = RawUnclip(gui);
+            if (clipFixAdd.sqrMagnitude > 0.01f && Event.current != null
+                && Time.frameCount == clipFixFrame && (int)Event.current.type == clipFixType
+                && Find.WindowStack != null && Find.WindowStack.currentlyDrawnWindow != null
+                && Find.WindowStack.currentlyDrawnWindow.ID == clipFixWindow)
+                p += clipFixAdd;
+            return p;
+        }
+
+        static Vector2 RawUnclip(Vector2 gui)
+        {
+            EnsureClip();
+            if (unclipMethod != null)
+            {
+                try { return (Vector2)unclipMethod.Invoke(null, new object[] { gui }); }
+                catch { unclipMethod = null; }
+            }
+            Vector2 p = GUIUtility.GUIToScreenPoint(gui);
+            if (layoutScale > 0.01f && layoutScale < 0.999f) p /= layoutScale;
+            return p;
         }
 
         static void ClampBorder(Texture tex, ref int l, ref int r, ref int t, ref int b)
@@ -620,62 +933,29 @@ namespace RimFirstPerson3D
             {
                 var s = recording[i];
                 if (s.tex == null) continue;
-                if (!PlaceChrome(ref s)) continue;
                 committed.Add(s);
             }
             recording.Clear();
-        }
-
-        // 中心不在顶栏或底栏的丢掉（中间那块窗口、肖像黑块）。留下来的裁进源带，再拉到终端上下沿。
-        static bool PlaceChrome(ref Stamp s)
-        {
-            float y0 = s.ny;
-            float y1 = s.ny + s.nh;
-            if (s.nh < 1e-4f) return false;
-            float cy = (y0 + y1) * 0.5f;
-            float band0, band1, dev0, dev1;
-            if (cy <= SrcTop)
+            glyphCommitted.Clear();
+            for (int i = 0; i < glyphRecording.Count; i++)
             {
-                band0 = 0f;
-                band1 = SrcTop;
-                dev0 = 0f;
-                dev1 = 1f - DevTop;
+                var g = glyphRecording[i];
+                if (g.tex == null) continue;
+                glyphCommitted.Add(g);
             }
-            else if (cy >= SrcBottom)
-            {
-                band0 = SrcBottom;
-                band1 = 1f;
-                dev0 = 1f - DevBottom;
-                dev1 = 1f;
-            }
-            else return false;
-
-            float c0 = Mathf.Max(y0, band0);
-            float c1 = Mathf.Min(y1, band1);
-            if (c1 - c0 < 0.0008f) return false;
-            float topClip = (c0 - y0) / s.nh;
-            float botClip = (y1 - c1) / s.nh;
-            float vB = s.src.y;
-            float vT = s.src.y + s.src.height;
-            s.src.y = Mathf.Lerp(vB, vT, botClip);
-            s.src.height = Mathf.Lerp(vB, vT, 1f - topClip) - s.src.y;
-
-            float span = band1 - band0;
-            float scale = span > 1e-4f ? (dev1 - dev0) / span : 1f;
-            float mid = Mathf.Lerp(dev0, dev1, ((c0 + c1) * 0.5f - band0) / span);
-            float nh = (c1 - c0) * scale;
-            s.ny = mid - nh * 0.5f;
-            s.nh = nh;
-            return s.nh > 0.0008f && s.nw > 0.0008f;
+            glyphRecording.Clear();
         }
 
         // 叠到上一帧记下来的界面。调用点在上帝相机 Render 之后、终端 DrawMesh 之前。
         public static void CompositeOntoScreen()
         {
             var rt = GodView3D.ScreenTexture as RenderTexture;
-            if (rt == null || !rt.IsCreated() || committed.Count == 0) return;
+            if (rt == null || !rt.IsCreated()) return;
+            if (committed.Count == 0 && glyphCommitted.Count == 0) return;
             RenderTexture prev = RenderTexture.active;
             bool pushed = false;
+            bool glyphOpen = false;
+            Texture glyphTex = null;
             try
             {
                 RenderTexture.active = rt;
@@ -683,30 +963,76 @@ namespace RimFirstPerson3D
                 pushed = true;
                 GL.LoadPixelMatrix(0f, rt.width, 0f, rt.height);
                 GL.Clear(true, false, Color.clear);
-                for (int i = 0; i < committed.Count; i++)
+                int si = 0, gi = 0;
+                while (si < committed.Count || gi < glyphCommitted.Count)
                 {
-                    var s = committed[i];
-                    if (s.tex == null) continue;
-                    float x = s.nx * rt.width;
-                    float w = s.nw * rt.width;
-                    float h = s.nh * rt.height;
-                    float y = rt.height - s.ny * rt.height - h;
-                    Rect src = s.src;
-                    // 字形用顶点 UV 重建后仍是反的；图标方向是对的，只翻文字。
-                    if (s.glyph)
+                    bool useGlyph = gi < glyphCommitted.Count
+                        && (si >= committed.Count || glyphCommitted[gi].order < committed[si].order);
+                    if (!useGlyph)
                     {
-                        src.x += src.width;
-                        src.width = -src.width;
+                        if (glyphOpen) { GL.End(); glyphOpen = false; glyphTex = null; }
+                        GL.LoadPixelMatrix(0f, rt.width, 0f, rt.height);
+                        var s = committed[si++];
+                        if (s.tex == null) continue;
+                        float x = s.nx * rt.width;
+                        float w = s.nw * rt.width;
+                        float h = s.nh * rt.height;
+                        float y = rt.height - s.ny * rt.height - h;
+                        Graphics.DrawTexture(new Rect(x, y, w, h), s.tex, s.src, s.l, s.r, s.t, s.b, s.tint);
+                        continue;
                     }
-                    Graphics.DrawTexture(new Rect(x, y, w, h), s.tex, src, s.l, s.r, s.t, s.b, s.tint);
+                    var gd = glyphCommitted[gi++];
+                    if (gd.tex == null) continue;
+                    if (!glyphOpen || glyphTex != gd.tex)
+                    {
+                        if (glyphOpen) GL.End();
+                        if (!BeginGlyphPass(rt, gd.tex)) { glyphOpen = false; glyphTex = null; continue; }
+                        GL.Begin(GL.QUADS);
+                        glyphOpen = true;
+                        glyphTex = gd.tex;
+                    }
+                    GlyphVert(rt, gd.x0, gd.y0, gd.u0, gd.v0, gd.tint);
+                    GlyphVert(rt, gd.x1, gd.y1, gd.u1, gd.v1, gd.tint);
+                    GlyphVert(rt, gd.x2, gd.y2, gd.u2, gd.v2, gd.tint);
+                    GlyphVert(rt, gd.x3, gd.y3, gd.u3, gd.v3, gd.tint);
                 }
+                if (glyphOpen) { GL.End(); glyphOpen = false; }
             }
             catch (Exception e) { LogOnce(e); }
             finally
             {
+                if (glyphOpen) GL.End();
                 if (pushed) GL.PopMatrix();
                 RenderTexture.active = prev;
             }
+        }
+
+        static bool BeginGlyphPass(RenderTexture rt, Texture tex)
+        {
+            if (glyphFont == null || glyphFont.material == null || tex == null) return false;
+            Shader sh = glyphFont.material.shader;
+            if (sh == null) return false;
+            if (glyphMat == null || glyphShader != sh)
+            {
+                if (glyphMat != null) UnityEngine.Object.Destroy(glyphMat);
+                glyphMat = new Material(glyphFont.material) { hideFlags = HideFlags.HideAndDontSave };
+                glyphShader = sh;
+                glyphMat.SetInt("_ZWrite", 0);
+                glyphMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
+                glyphMat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+            }
+            glyphMat.mainTexture = tex;
+            glyphMat.color = Color.white;
+            if (!glyphMat.SetPass(0)) return false;
+            GL.LoadPixelMatrix(0f, rt.width, 0f, rt.height);
+            return true;
+        }
+
+        static void GlyphVert(RenderTexture rt, float nx, float ny, float u, float v, Color tint)
+        {
+            GL.Color(tint);
+            GL.TexCoord2(u, v);
+            GL.Vertex3(nx * rt.width, (1f - ny) * rt.height, 0f);
         }
 
         static void LogOnce(Exception e)

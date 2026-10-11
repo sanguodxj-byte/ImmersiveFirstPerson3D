@@ -19,6 +19,9 @@ namespace RimFirstPerson3D
         // 水平流式偏移（世界坐标 = 图内局部 + 此偏移）
         public Vector3 worldOffset = Vector3.zero;
 
+        // 光照场（F013）：立牌用实例材质乘子受光，按脚下格取样。
+        public LightField3D light;
+
         public PawnLayer3D(Map map, float baseY)
         {
             this.map = map;
@@ -72,8 +75,24 @@ namespace RimFirstPerson3D
         {
             if (pawn == null || pawn.Destroyed) return;
             if (pawn.CarriedBy != null) return;
+            // 动物（非人形、非机械族）改走 Animal3D 程序化模型，由 AnimalLayer3D 绘制
+            if (Animal3D.HandlesPawn(pawn)) return;
             var cell = pawn.Position;
             if (cell.Fogged(map)) return;
+
+            // DrawPos.y 是原版绘制海拔层（Pawn 层=23 → y≈8.4 悬空），不是真实高度：
+            // 只取 x/z，立牌底边锚定地面 baseY；水平加流式偏移。
+            // 例外：躺睡的 Pawn 不在地面上 —— 要抬到床面上，见 LyingYFor。
+            var dp = pawn.DrawPos;
+            float px = dp.x + worldOffset.x;
+            float pz = dp.z + worldOffset.z;
+            // 附身者的绘制 XZ 由连续位移控制器接管（脚点），其他 pawn 仍用 DrawPos。
+            var xz = CameraRig3D.PawnDrawXZ(pawn);
+            if (xz.HasValue) { px = xz.Value.x; pz = xz.Value.y; }
+            // 身处水体则整具下沉（水面落差 + 水深），脚踩河床而非浮在水面上方。
+            float sink = WaterLayer3D.SinkAt(map, cell);
+            var pos = new Vector3(px, LyingYFor(pawn, baseY) - sink, pz);
+            if (!Frustum3D.VisiblePoint(pos, 2.5f)) return;
 
             var tree = pawn.Drawer.renderer.renderTree;
             if (tree == null) return;
@@ -85,16 +104,12 @@ namespace RimFirstPerson3D
             catch { }
             if (tree.rootNode == null) return;
 
-            // DrawPos.y 是原版绘制海拔层（Pawn 层=23 → y≈8.4 悬空），不是真实高度：
-            // 只取 x/z，立牌底边锚定地面 baseY；水平加流式偏移。
-            // 例外：躺睡的 Pawn 不在地面上 —— 要抬到床面上，见 LyingYFor。
-            var dp = pawn.DrawPos;
-            float px = dp.x + worldOffset.x;
-            float pz = dp.z + worldOffset.z;
-            // 附身者的绘制 XZ 由连续位移控制器接管（脚点），其他 pawn 仍用 DrawPos。
-            var xz = CameraRig3D.PawnDrawXZ(pawn);
-            if (xz.HasValue) { px = xz.Value.x; pz = xz.Value.y; }
-            var pos = new Vector3(px, LyingYFor(pawn, baseY), pz);
+            // 放置亮度按 pawn 脚下格中心取（图内局部坐标，与光照场同一系），
+            // 不受附身者连续位移与流式偏移影响。
+            var lit = Lighting3D.InstanceLevel(pawn, light,
+                new Vector3(cell.x + 0.5f, baseY, cell.z + 0.5f));
+            // 受击红闪强度（F014）：0 = 没在闪。整只 pawn 一个值，走三条绘制通路都不再各算各的。
+            float hurt = HitFx3D.Strength(pawn);
 
             // 立牌朝向相机的偏航
             float yaw = Mathf.Atan2(camPos.x - pos.x, camPos.z - pos.z) * Mathf.Rad2Deg;
@@ -110,9 +125,6 @@ namespace RimFirstPerson3D
             float headS = H * (st != null ? st.headScale : 0.34f);
             int depth = 0;
 
-            // 动物（非人形、非机械族）改走 Animal3D 程序化模型，由 AnimalLayer3D 绘制
-            if (Animal3D.HandlesPawn(pawn)) return;
-
             if (pawn.RaceProps.Humanlike)
             {
                 // 首选：原版远缩放 blit 路线——整只 pawn（含服装头部）烘进图集页，
@@ -127,7 +139,8 @@ namespace RimFirstPerson3D
                     catch { }
                     if (blit != null)
                     {
-                        Material mat = MaterialPool.MatFrom(new MaterialRequest(fs.atlas, ShaderDatabase.Cutout));
+                        Material mat = Lighting3D.MatFor(
+                            MaterialPool.MatFrom(new MaterialRequest(fs.atlas, ShaderDatabase.Cutout)), lit);
                         // blit mesh 是躺地平面 quad（原版俯视用、v 朝北、中心未必在锚点）：
                         // 绕 X -90° 竖起后 mesh z 轴映射为世界 y，按 bounds 精确贴地；
                         // 横纵解耦：高=pawnHeight，宽=pawnHeight*pawnWidthScale（原生帧偏宽扁）。
@@ -139,12 +152,13 @@ namespace RimFirstPerson3D
                         var center = pos + new Vector3(0f, -b.min.z * sy, 0f) + fwd * 0.02f;
                         var matrix = Matrix4x4.TRS(center, rot, new Vector3(sx, sy, 1f));
                         Graphics.DrawMesh(blit, matrix, mat, 0);
+                        HitFx3D.DrawOverlay(blit, matrix, mat, hurt);
                         PerfCounters.PawnQuads++;
                         return;
                     }
                 }
                 // 兜底：分层走树（图集不可用时）
-                WalkNode(tree.rootNode, pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, 0);
+                WalkNode(tree.rootNode, pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, 0, lit, hurt);
             }
             else
             {
@@ -156,7 +170,7 @@ namespace RimFirstPerson3D
                 var ds = body.drawSize;
                 float aH = Mathf.Max(0.3f, ds.y);
                 float aW = Mathf.Max(0.3f, ds.x);
-                DrawQuad(pos, yaw, aW, aH, mat, quad, 0f);
+                DrawQuad(pos, yaw, aW, aH, mat, quad, 0f, lit, hurt);
             }
         }
 
@@ -183,7 +197,7 @@ namespace RimFirstPerson3D
         }
 
         private void WalkNode(PawnRenderNode node, Pawn pawn, Vector3 pos, float yaw, Rot4 viewRot,
-            float H, float W, float headY, float headS, Mesh quad, ref int depth, int guard)
+            float H, float W, float headY, float headS, Mesh quad, ref int depth, int guard, Color lit, float hurt)
         {
             if (node == null || guard > 8) return;
             var typeName = node.GetType().Name;
@@ -215,7 +229,7 @@ namespace RimFirstPerson3D
                         float qw = headZone ? headS : W;
                         float qh = headZone ? headS * 1.05f : H;
                         var qpos = headZone ? pos + new Vector3(0f, headY - headS * 0.5f + 0.02f, 0f) : pos;
-                        DrawQuad(qpos, yaw, qw, qh, mat, quad, 0.012f * depth);
+                        DrawQuad(qpos, yaw, qw, qh, mat, quad, 0.012f * depth, lit, hurt);
                         depth++;
                     }
                 }
@@ -224,7 +238,7 @@ namespace RimFirstPerson3D
             var children = node.children;
             if (children == null) return;
             for (int i = 0; i < children.Length; i++)
-                WalkNode(children[i], pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, guard + 1);
+                WalkNode(children[i], pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, guard + 1, lit, hurt);
         }
 
         private static PawnDrawParms BuildParms(Pawn pawn, Vector3 pos, Rot4 viewRot)
@@ -240,12 +254,14 @@ namespace RimFirstPerson3D
             return p;
         }
 
-        private void DrawQuad(Vector3 pos, float yaw, float w, float h, Material mat, Mesh quad, float depthOffset)
+        private void DrawQuad(Vector3 pos, float yaw, float w, float h, Material mat, Mesh quad,
+            float depthOffset, Color lit, float hurt)
         {
             var rot = Quaternion.AngleAxis(yaw, Vector3.up);
             var fwd = rot * Vector3.forward;
             var matrix = Matrix4x4.TRS(pos + fwd * depthOffset, rot, new Vector3(w, h, 1f));
-            Graphics.DrawMesh(quad, matrix, mat, 0);
+            Graphics.DrawMesh(quad, matrix, Lighting3D.MatFor(mat, lit), 0);
+            HitFx3D.DrawOverlay(quad, matrix, mat, hurt);
             PerfCounters.PawnQuads++;
         }
 

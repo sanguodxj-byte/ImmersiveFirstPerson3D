@@ -8,7 +8,7 @@ created: 2026-10-10
 
 # F004: 准星交互
 
-> Status: coded | Owner: 实现见 `docs/tasks/T-P2-crosshair.md`（已收，待实机验收）。落地键位：左键只攻击，门 / 拾取与装备 / 挖掘在 E 键（`CameraRig3D.Attack` / `Interact`）
+> Status: coded | Owner: 实现见 `docs/tasks/T-P2-crosshair.md`（已收，待实机验收）。落地键位：左键只攻击（按住以 0.30 s 连击），门 / 拾取与装备 / 挖掘等快速情境动作在 E 键（`CameraRig3D.Interact`），右键对准目标弹**原版浮动菜单**（`CameraRig3D.OpenAimedFloatMenu` → `Thing.GetFloatMenuOptions`，一次覆盖工作台配方 / 翻找储物 / 装卸 / 使用 / 治疗 / 逮捕 / 收割等全部原版动作）。空格纯为跳跃（F003）；接管期暂停与倍速改走玩家自己的原版键位（`KeyBindingDefOf.TogglePause` 等），不再占用空格。
 
 ## Why
 

@@ -1,10 +1,13 @@
+// AI生成
 using System.IO;
 using System.Text;
 using UnityEngine;
+using Verse;
 
 namespace RimFirstPerson3D
 {
     // 性能监控：帧率/帧耗时/GC/绘制计数，HUD 与文件双输出。
+    [StaticConstructorOnStartup]
     public static class PerfMon3D
     {
         private const int FrameWindow = 120;
@@ -81,7 +84,7 @@ namespace RimFirstPerson3D
                 "\"gc\":{5:F2},\"terr\":{6},\"bld\":{7},\"hull\":{8},\"plant\":{9},\"plantB\":{10},\"item\":{11},\"itemB\":{12},\"pawnQ\":{13}," +
                 "\"tb\":{14:F2},\"bb\":{15:F2},\"pb\":{16:F2},\"cam\":\"{17:F1};{18:F1};{19:F1}\",\"who\":\"{20}\"," +
                 "\"fov\":{21:F0},\"fog\":\"{22};{23:F0}\",\"census\":\"{24}\"," +
-                "\"tq\":{25},\"bq\":{26}}}",
+                "\"tq\":{25},\"bq\":{26},\"animal\":{27}}}",
                 Fps3DState.Mode.ToString(), fpsResult, avgMs, p95Ms, maxMs, gcMbPerSec,
                 PerfCounters.TerrainMeshesDrawn, PerfCounters.BuildingMeshesDrawn, PerfCounters.OutlineMeshesDrawn,
                 PerfCounters.PlantInstances, PerfCounters.PlantBatches, PerfCounters.ItemInstances, PerfCounters.ItemBatches, PerfCounters.PawnQuads,
@@ -92,7 +95,7 @@ namespace RimFirstPerson3D
                 st != null && st.fogOn ? "on" : "off",
                 st == null ? 0f : st.fogEnd,
                 JsonEscape(CameraRig3D.CameraCensus()),
-                PerfCounters.TerrainQuads, PerfCounters.BuildingQuads);
+                PerfCounters.TerrainQuads, PerfCounters.BuildingQuads, PerfCounters.AnimalMeshes);
         }
 
         // JSON 字符串转义（不含首尾引号，引号由格式串提供）：

@@ -11,6 +11,7 @@ namespace RimFirstPerson3D
     // 原版地图走 Graphics.DrawMesh，提交进本帧所有相机会看到的队列，不会被第一台相机吃掉。
     // 捕获窗内把这些提交改到 layer 31，并尽量绑到下面这台停用相机；
     // 该相机只留这一层，用 Camera.Render 写进屏幕 RT。主相机每帧去掉这一层。
+    [StaticConstructorOnStartup]
     public static class GodView3D
     {
         public const int GodLayer = 31;
@@ -44,6 +45,8 @@ namespace RimFirstPerson3D
 
             var getter = AccessTools.PropertyGetter(typeof(CameraDriver), nameof(CameraDriver.CurrentViewRect));
             harmony.Patch(getter, postfix: new HarmonyMethod(typeof(GodView3D), nameof(CurrentViewRectPostfix)));
+            harmony.Patch(AccessTools.Method(typeof(DesignatorManager), nameof(DesignatorManager.DesignatorManagerUpdate)),
+                prefix: new HarmonyMethod(typeof(GodView3D), nameof(DesignatorUpdateWhileViewing)));
 
             foreach (MethodInfo method in AccessTools.GetDeclaredMethods(typeof(Graphics)))
             {
@@ -97,6 +100,21 @@ namespace RimFirstPerson3D
             {
                 map.mapDrawer.DrawMapMesh();
                 map.dynamicDrawManager.DrawDynamicThings();
+                // 放置幽灵和拖选高亮只在捕获窗内画，才会进终端。平时那次提交打在第一人称相机上。
+                try
+                {
+                    if (Find.DesignatorManager != null && Find.DesignatorManager.SelectedDesignator != null)
+                        Find.DesignatorManager.DesignatorManagerUpdate();
+                }
+                catch (Exception ghostEx)
+                {
+                    if (!loggedCaptureFail)
+                    {
+                        loggedCaptureFail = true;
+                        Log.Warning(ModEntry.LogPrefix + "god view designator draw failed: "
+                            + ghostEx.GetType().Name + ": " + ghostEx.Message);
+                    }
+                }
                 godCam.Render();
                 godCam.enabled = false;
             }
@@ -175,6 +193,13 @@ namespace RimFirstPerson3D
                 Log.Warning(ModEntry.LogPrefix + "god view tilt not snapshotted, using straight down");
             }
             return Quaternion.Euler(90f, 0f, 0f);
+        }
+
+        // 查看期平时跳过，改在捕获里画一次。否则幽灵每帧画两遍，还会打进主相机。
+        static bool DesignatorUpdateWhileViewing()
+        {
+            if (!MapScreen3D.Viewing) return true;
+            return Capturing;
         }
 
         // 视锥剔除读的是主相机位置。捕获窗内换成这台正交相机的焦点，公式与 CameraDriver.CurrentViewRect 相同。

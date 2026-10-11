@@ -7,42 +7,74 @@ using Verse;
 namespace RimFirstPerson3D
 {
     // ============================================================
-    // 草地细节层：相机周围的地被草丛
+    // 草地细节层：相机周围的地被草丛（16x16 Chunk 分块缓存 + 视锥剔除）
     // ============================================================
     //
     // 原版地表只是一张平铺贴图，第一人称贴地看时寸草不生。本层在相机周围
     // 半径 R 内，于天然肥沃地表格上按哈希散布 1~3 丛草，带三档色差。
-    // 位置/缩放/色档全由格坐标哈希决定，相机移动时不会"闪"。
     //
-    // 【关键修复 r44】原先用 Graphics.DrawMeshInstanced 提交，但 RimWorld 的原版
-    // 着色器不含 instancing 变体，实例化绘制会**静默**产出 0 像素（不报错），
-    // 导致第一人称下看不到任何草。现改为：把每个实例逐顶点烘焙进合并网格，
-    // 再用 Graphics.DrawMesh 绘制——与地形/建筑/人物完全相同的绘制路径，已证明可正常出图。
-    // 造型改用十字交叉面片（双面），因此与视角无关、无需逐帧朝相机。
-    //
-    // 摇摆：材质改用原版 materials/map/plantwindsway 着色器（GPU 顶点动画，由 WindManager
-    // 每帧驱动），草叶同样随风摆动；十字片本身与视角无关，无需朝相机。
+    // 性能重构：
+    //   1. 16x16 Chunk 分块烘焙与缓存，彻底移除 2.5s 全量重扫定时器与移动全量推倒重烘。
+    //   2. 稳态原地环视 0 开销；持续移动时仅对新进入半径的边沿块分帧增量烘焙（<=2 块/帧）。
+    //   3. 视锥剔除（Frustum3D.Visible）：相机后方与侧后方草块不向 GPU 提交 DrawMesh。
+    [StaticConstructorOnStartup]
     public class GrassLayer3D
     {
+        public const int ChunkSize = 16;
         private readonly Map map;
         private readonly float baseY;
         public Vector3 worldOffset = Vector3.zero;
 
-        private struct Tuft
+        // 光照场（F013）：草丛实例批按每丛位置取放置亮度
+        public LightField3D light;
+        private LightField3D LF => light != null && Lighting3D.Enabled ? light : null;
+
+        /// <summary>把本层草丛网格的颜色统计并进探针（只在按需导出时走）。</summary>
+        public void Summarize(Lighting3D.Probe p)
         {
-            public Vector3 pos;
-            public float w, h;
-            public byte tint;
+            foreach (var kv in chunks)
+            {
+                var ch = kv.Value;
+                for (int i = 0; i < 3; i++)
+                {
+                    if (ch.meshes[i] != null) p.Add(ch.meshes[i]);
+                }
+            }
         }
 
-        private readonly List<Tuft> tufts = new List<Tuft>(8192);
-        private IntVec3 lastCenter = IntVec3.Invalid;
-        private float rescanTimer;
-        private bool dirty = true;
-        private bool meshDirty = true;
+        private class GrassChunk
+        {
+            public readonly Mesh[] meshes = new Mesh[3];
+            public readonly Vector3[][] positions = new Vector3[3][];
+            public readonly Color32[][] colors = new Color32[3][];
+            public Mesh shadowMesh;
+            public Bounds bounds;
+            public int tuftCount;
+            public bool dirty = true;
+            public bool colorDirty;
+            public float lastUsedTime;
+        }
+
+        private readonly Dictionary<int, GrassChunk> chunks = new Dictionary<int, GrassChunk>();
+        private readonly List<int> pruneKeys = new List<int>();
 
         private static Material[] mats;
-        private readonly Mesh[] grassMeshes = new Mesh[3];
+        private static Material tuftShadowMat;
+
+        private static Material TuftShadowMat
+        {
+            get
+            {
+                if (tuftShadowMat != null) return tuftShadowMat;
+                tuftShadowMat = new Material(ShaderDatabase.Transparent)
+                {
+                    name = "Fps3D_GrassShadow",
+                    mainTexture = ProcTex3D.Radial(32, 0.20f, 1.35f),
+                    color = new Color(0f, 0f, 0f, 0.38f)
+                };
+                return tuftShadowMat;
+            }
+        }
 
         public GrassLayer3D(Map map, float baseY)
         {
@@ -50,8 +82,30 @@ namespace RimFirstPerson3D
             this.baseY = baseY;
         }
 
-        public void MarkAllDirty() { dirty = true; meshDirty = true; }
-        public void MarkCellDirty(IntVec3 c) { dirty = true; meshDirty = true; }
+        public void MarkAllDirty()
+        {
+            foreach (var kv in chunks) kv.Value.dirty = true;
+        }
+
+        public void MarkAllColorDirty()
+        {
+            foreach (var kv in chunks)
+                if (!kv.Value.dirty && kv.Value.tuftCount > 0)
+                    kv.Value.colorDirty = true;
+        }
+
+        public void MarkCellDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch)) ch.dirty = true;
+        }
+
+        public void MarkCellColorDirty(IntVec3 c)
+        {
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch) && !ch.dirty && ch.tuftCount > 0)
+                ch.colorDirty = true;
+        }
 
         private static bool Enabled
         {
@@ -61,13 +115,6 @@ namespace RimFirstPerson3D
         private static float Radius
         {
             get { var s = FirstPerson3DMod.settings; return s != null ? Mathf.Clamp(s.grassRadius, 6f, 60f) : 28f; }
-        }
-
-        // 重建步长（格）：相机跨越这么多格才重扫/重新烘焙，避免每走 1 米就重建整片合并网格。
-        // 半径远大于步长，因此草不会在视野边缘出现"空洞"。
-        private static int RescanStep
-        {
-            get { return Mathf.Max(3, Mathf.RoundToInt(Radius / 7f)); }
         }
 
         private static void EnsureMaterials()
@@ -88,9 +135,9 @@ namespace RimFirstPerson3D
             mats = new Material[3];
             Color[] tints =
             {
-                new Color(0.84f, 0.90f, 0.70f, 1f),
-                new Color(1.00f, 1.00f, 1.00f, 1f),
-                new Color(0.70f, 0.80f, 0.58f, 1f)
+                new Color(0.95f, 1.02f, 0.80f, 1f),
+                new Color(1.06f, 1.10f, 0.92f, 1f),
+                new Color(0.82f, 0.94f, 0.70f, 1f)
             };
             for (int i = 0; i < 3; i++)
             {
@@ -120,45 +167,12 @@ namespace RimFirstPerson3D
             if (td == null || td.IsWater || !td.natural) return false;
             if (td.fertility < 0.5f) return false;
             if (td.defName.Contains("Sand") || td.defName.Contains("Ice")) return false;
-            // 任何建筑物（含家具）所在格不长草，否则草会从床、桌子里戳出来；
-            // 有屋顶的格也不长（室内裸土地面不该是草地）。
             if (c.GetEdifice(map) != null) return false;
             try { if (c.Roofed(map)) return false; } catch { }
             try { if (map.snowGrid != null && map.snowGrid.GetDepth(c) > 0.3f) return false; } catch { }
             if (c.Fogged(map)) return false;
             fertility = td.fertility;
             return true;
-        }
-
-        private void Rescan(IntVec3 center)
-        {
-            tufts.Clear();
-            int r = Mathf.CeilToInt(Radius);
-            float r2 = Radius * Radius;
-            for (int dz = -r; dz <= r; dz++)
-                for (int dx = -r; dx <= r; dx++)
-                {
-                    if (dx * dx + dz * dz > r2) continue;
-                    var c = new IntVec3(center.x + dx, 0, center.z + dz);
-                    if (!c.InBounds(map)) continue;
-                    if (!Eligible(c, out float fert)) continue;
-                    int n = fert >= 1.0f ? 3 : fert >= 0.7f ? 2 : 1;
-                    for (int k = 0; k < n; k++)
-                    {
-                        uint h = Hash(c.x, c.z, k);
-                        float ox = 0.12f + ((h & 0xFF) / 255f) * 0.76f;
-                        float oz = 0.12f + (((h >> 8) & 0xFF) / 255f) * 0.76f;
-                        float sc = 0.75f + (((h >> 16) & 0xFF) / 255f) * 0.55f;
-                        tufts.Add(new Tuft
-                        {
-                            pos = new Vector3(c.x + ox + worldOffset.x, baseY, c.z + oz + worldOffset.z),
-                            w = 0.42f * sc,
-                            // 世界高度约定：各种草 0.5m（不再随哈希/肥力随机，保证第一人称空间感一致）。
-                            h = 0.5f,
-                            tint = (byte)((h >> 5) % 3)
-                        });
-                    }
-                }
         }
 
         private static uint Hash(int x, int z, int k)
@@ -168,21 +182,93 @@ namespace RimFirstPerson3D
             return h;
         }
 
-        // 把当前全部草丛按色档烘焙成 3 张合并网格（脏时一次性完成）。
-        private void RebuildMeshes()
+        private void DisposeChunk(GrassChunk chunk)
         {
-            meshDirty = false;
-            for (int i = 0; i < 3; i++) { Util3D.SafeDestroy(grassMeshes[i]); grassMeshes[i] = null; }
-            var byTint = new List<Matrix4x4>[3];
-            for (int i = 0; i < 3; i++) byTint[i] = new List<Matrix4x4>(tufts.Count / 3 + 16);
-            for (int i = 0; i < tufts.Count; i++)
-            {
-                var tf = tufts[i];
-                int b = tf.tint; if (b < 0 || b > 2) b = 1;
-                byTint[b].Add(Matrix4x4.TRS(tf.pos, Quaternion.identity, new Vector3(tf.w, tf.h, tf.w)));
-            }
+            if (chunk == null) return;
             for (int i = 0; i < 3; i++)
-                grassMeshes[i] = Util3D.BuildInstancedMesh(Util3D.CrossMesh, byTint[i]);
+            {
+                if (chunk.meshes[i] != null)
+                {
+                    Util3D.SafeDestroy(chunk.meshes[i]);
+                    chunk.meshes[i] = null;
+                }
+                chunk.positions[i] = null;
+                chunk.colors[i] = null;
+            }
+            if (chunk.shadowMesh != null)
+            {
+                Util3D.SafeDestroy(chunk.shadowMesh);
+                chunk.shadowMesh = null;
+            }
+            chunk.tuftCount = 0;
+        }
+
+        private void RebuildChunk(int cx, int cz, GrassChunk chunk)
+        {
+            DisposeChunk(chunk);
+            chunk.dirty = false;
+            chunk.colorDirty = false;
+            int x0 = cx * ChunkSize;
+            int z0 = cz * ChunkSize;
+            int x1 = Mathf.Min(x0 + ChunkSize, map.Size.x);
+            int z1 = Mathf.Min(z0 + ChunkSize, map.Size.z);
+            if (x0 >= x1 || z0 >= z1) return;
+
+            var byTint = new List<Matrix4x4>[3];
+            for (int i = 0; i < 3; i++) byTint[i] = new List<Matrix4x4>(64);
+            var shadowMats = new List<Matrix4x4>(128);
+            int count = 0;
+
+            for (int z = z0; z < z1; z++)
+            {
+                for (int x = x0; x < x1; x++)
+                {
+                    var c = new IntVec3(x, 0, z);
+                    if (!Eligible(c, out float fert)) continue;
+                    int n = fert >= 1.0f ? 3 : fert >= 0.7f ? 2 : 1;
+                    for (int k = 0; k < n; k++)
+                    {
+                        uint h = Hash(c.x, c.z, k);
+                        float ox = 0.12f + ((h & 0xFF) / 255f) * 0.76f;
+                        float oz = 0.12f + (((h >> 8) & 0xFF) / 255f) * 0.76f;
+                        float sc = 0.75f + (((h >> 16) & 0xFF) / 255f) * 0.55f;
+                        int b = (int)((h >> 5) % 3);
+                        if (b < 0 || b > 2) b = 1;
+                        var pos = new Vector3(c.x + ox + worldOffset.x, baseY, c.z + oz + worldOffset.z);
+                        float w = 0.42f * sc;
+                        byTint[b].Add(Matrix4x4.TRS(pos, Quaternion.identity, new Vector3(w, 0.5f, w)));
+                        shadowMats.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.018f, 0f), Quaternion.identity, new Vector3(w * 1.35f, 1f, w * 1.35f)));
+                        count++;
+                    }
+                }
+            }
+
+            chunk.tuftCount = count;
+            if (count > 0)
+            {
+                var lf = LF;
+                for (int i = 0; i < 3; i++)
+                {
+                    if (byTint[i].Count > 0)
+                        chunk.meshes[i] = Util3D.BuildInstancedMesh(Util3D.CrossMesh, byTint[i], lf, worldOffset,
+                            out chunk.positions[i], out chunk.colors[i]);
+                }
+                chunk.shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowMats);
+                Vector3 center = new Vector3((x0 + x1) * 0.5f + worldOffset.x, baseY + 0.25f, (z0 + z1) * 0.5f + worldOffset.z);
+                Vector3 size = new Vector3(x1 - x0, 1.5f, z1 - z0);
+                chunk.bounds = new Bounds(center, size);
+            }
+        }
+
+        private void RecolorChunk(GrassChunk chunk)
+        {
+            chunk.colorDirty = false;
+            var lf = LF;
+            for (int i = 0; i < 3; i++)
+            {
+                if (chunk.meshes[i] != null)
+                    Util3D.RecolorInstancedMesh(chunk.meshes[i], Util3D.CrossMesh, chunk.positions[i], chunk.colors[i], lf);
+            }
         }
 
         public void Draw(Vector3 camPos)
@@ -190,35 +276,107 @@ namespace RimFirstPerson3D
             if (!Enabled || !Fps3DState.DrawPlants) return;
             EnsureMaterials();
             var local = camPos - worldOffset;
-            var center = new IntVec3(Mathf.FloorToInt(local.x), 0, Mathf.FloorToInt(local.z));
-            rescanTimer += Time.deltaTime;
-            bool moved = !lastCenter.IsValid
-                || Mathf.Abs(center.x - lastCenter.x) >= RescanStep
-                || Mathf.Abs(center.z - lastCenter.z) >= RescanStep;
-            if (dirty || moved || rescanTimer > 2.5f)
-            {
-                dirty = false;
-                rescanTimer = 0f;
-                lastCenter = center;
-                Rescan(center);
-                meshDirty = true;
-            }
-            if (tufts.Count == 0) return;
-            if (meshDirty) RebuildMeshes();
+            float r = Radius;
+            int minCx = Mathf.Max(0, Mathf.FloorToInt((local.x - r) / ChunkSize));
+            int maxCx = Mathf.Min((map.Size.x - 1) / ChunkSize, Mathf.FloorToInt((local.x + r) / ChunkSize));
+            int minCz = Mathf.Max(0, Mathf.FloorToInt((local.z - r) / ChunkSize));
+            int maxCz = Mathf.Min((map.Size.z - 1) / ChunkSize, Mathf.FloorToInt((local.z + r) / ChunkSize));
 
-            for (int i = 0; i < 3; i++)
+            float now = Time.realtimeSinceStartup;
+            int totalTufts = 0;
+            // 初始阶段快速就位，稳态跨界时至多 2 块/帧平滑构建
+            int buildBudget = chunks.Count < 16 ? 8 : 2;
+            int colorBudget = 8;
+            var sMat = TuftShadowMat;
+            Matrix4x4 shMatrix = Matrix4x4.identity;
+            var env = Lighting3D.Current;
+            if (env.glow > 0.05f && env.sunDir.y > 0.05f)
             {
-                var mesh = grassMeshes[i];
-                if (mesh == null) continue;
-                Graphics.DrawMesh(mesh, Matrix4x4.identity, mats[i], 0);
+                float off = Mathf.Clamp(0.12f / Mathf.Max(0.25f, env.sunDir.y), 0.06f, 0.24f);
+                shMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * off, 0f, -env.sunDir.z * off));
             }
-            PerfCounters.GrassInstances += tufts.Count;
+
+            for (int cz = minCz; cz <= maxCz; cz++)
+            {
+                for (int cx = minCx; cx <= maxCx; cx++)
+                {
+                    float chunkCenterX = (cx + 0.5f) * ChunkSize;
+                    float chunkCenterZ = (cz + 0.5f) * ChunkSize;
+                    float dx = chunkCenterX - local.x;
+                    float dz = chunkCenterZ - local.z;
+                    // 保守放行：超出半径+半对角线(12m)的块不参与
+                    if (dx * dx + dz * dz > (r + 12f) * (r + 12f)) continue;
+
+                    int key = cx * 10000 + cz;
+                    if (!chunks.TryGetValue(key, out var chunk))
+                    {
+                        chunk = new GrassChunk();
+                        chunks[key] = chunk;
+                    }
+                    chunk.lastUsedTime = now;
+
+                    if (chunk.dirty)
+                    {
+                        if (buildBudget > 0)
+                        {
+                            RebuildChunk(cx, cz, chunk);
+                            buildBudget--;
+                        }
+                    }
+                    else if (chunk.colorDirty && colorBudget > 0)
+                    {
+                        RecolorChunk(chunk);
+                        colorBudget--;
+                    }
+
+                    if (chunk.tuftCount > 0)
+                    {
+                        // 视锥剔除：屏幕外 chunk 直接不提交绘制
+                        if (Frustum3D.Visible(chunk.bounds))
+                        {
+                            if (chunk.shadowMesh != null && sMat != null)
+                            {
+                                Graphics.DrawMesh(chunk.shadowMesh, shMatrix, sMat, 0);
+                                PerfCounters.PlantBatches++;
+                            }
+                            for (int i = 0; i < 3; i++)
+                            {
+                                var mesh = chunk.meshes[i];
+                                if (mesh != null)
+                                {
+                                    Graphics.DrawMesh(mesh, Matrix4x4.identity, mats[i], 0);
+                                    PerfCounters.PlantBatches++;
+                                }
+                            }
+                        }
+                        totalTufts += chunk.tuftCount;
+                    }
+                }
+            }
+            PerfCounters.GrassInstances = totalTufts;
+
+            // 远距 chunk 惰性卸载（超过 60 秒未进入半径且总数过多时释放，避免小范围折返反复销毁重建）
+            if (chunks.Count > 48)
+            {
+                pruneKeys.Clear();
+                foreach (var kv in chunks)
+                {
+                    if (now - kv.Value.lastUsedTime > 60f)
+                        pruneKeys.Add(kv.Key);
+                }
+                for (int i = 0; i < pruneKeys.Count; i++)
+                {
+                    int k = pruneKeys[i];
+                    DisposeChunk(chunks[k]);
+                    chunks.Remove(k);
+                }
+            }
         }
 
         public void Dispose()
         {
-            for (int i = 0; i < 3; i++) { Util3D.SafeDestroy(grassMeshes[i]); grassMeshes[i] = null; }
-            tufts.Clear();
+            foreach (var kv in chunks) DisposeChunk(kv.Value);
+            chunks.Clear();
         }
     }
 }
