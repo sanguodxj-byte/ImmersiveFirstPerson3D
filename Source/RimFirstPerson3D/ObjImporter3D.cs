@@ -21,6 +21,8 @@ namespace RimFirstPerson3D
             public List<Vector2> uvs;
             public List<Vector3> normals;
             public List<List<int>> groupTris = new List<List<int>>();
+            // usemtl 名 -> 贴图绝对路径（解析同目录 .mtl 的 map_Kd 得来；无 mtl/无贴图组不在表中）。
+            public Dictionary<string, string> texByGroup = new Dictionary<string, string>();
         }
 
         public static ImportResult Load(string path)
@@ -39,6 +41,7 @@ namespace RimFirstPerson3D
             var groupTris = new List<KeyValuePair<string, List<int>>>();
             List<int> cur = null;
             bool skipObj = false;
+            string mtlName = null;
 
             foreach (var raw in File.ReadAllLines(path))
             {
@@ -48,6 +51,8 @@ namespace RimFirstPerson3D
                 if (sp < 0) continue;
                 var key = line.Substring(0, sp);
                 var body = line.Substring(sp + 1).Trim();
+
+                if (key == "mtllib") mtlName = body;
 
                 if (key == "v")
                 {
@@ -116,12 +121,23 @@ namespace RimFirstPerson3D
             if (verts.Count == 0 || groupTris.Count == 0) return null;
 
             var mesh = new Mesh { name = Path.GetFileNameWithoutExtension(path) };
+            if (verts.Count > 65000)
+                mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.SetVertices(verts);
             mesh.SetUVs(0, vertUvs);
-            mesh.SetNormals(vertNormals);
             mesh.subMeshCount = groupTris.Count;
             for (int i = 0; i < groupTris.Count; i++)
                 mesh.SetTriangles(groupTris[i].Value, i);
+
+            if (normals.Count == 0)
+            {
+                mesh.RecalculateNormals();
+                vertNormals = new List<Vector3>(mesh.normals);
+            }
+            else
+            {
+                mesh.SetNormals(vertNormals);
+            }
             mesh.RecalculateBounds();
 
             var res = new ImportResult { mesh = mesh, verts = verts, uvs = vertUvs, normals = vertNormals };
@@ -130,9 +146,49 @@ namespace RimFirstPerson3D
                 res.groups.Add(g.Key);
                 res.groupTris.Add(g.Value);
             }
+            ParseMtl(path, mtlName, res.texByGroup);
             Log.Message(ModEntry.LogPrefix + "obj imported: " + verts.Count + "v/"
                 + groupTris.Count + "grp " + watch.ElapsedMilliseconds + "ms (" + path + ")");
             return res;
+        }
+
+        // 解析 obj 同目录的 mtl（mtllib 声明的文件名，缺省回退 <obj名>.mtl），
+        // 收集 newmtl -> map_Kd 的贴图绝对路径，供调用方按材质组上贴图。
+        private static void ParseMtl(string objPath, string mtllib, Dictionary<string, string> texByGroup)
+        {
+            string dir = Path.GetDirectoryName(objPath);
+            string mtlPath = null;
+            if (!string.IsNullOrEmpty(mtllib))
+            {
+                var cand = Path.Combine(dir, mtllib);
+                if (File.Exists(cand)) mtlPath = cand;
+            }
+            if (mtlPath == null)
+            {
+                var cand = Path.ChangeExtension(objPath, ".mtl");
+                if (File.Exists(cand)) mtlPath = cand;
+            }
+            if (mtlPath == null) return;
+            string cur = null;
+            foreach (var raw in File.ReadAllLines(mtlPath))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line[0] == '#') continue;
+                int sp = line.IndexOf(' ');
+                if (sp < 0) continue;
+                var key = line.Substring(0, sp);
+                var body = line.Substring(sp + 1).Trim();
+                if (key == "newmtl") cur = body;
+                else if (key == "map_Kd" && cur != null)
+                {
+                    // 文件名可能带路径或引号；只取最终文件名，解析为绝对路径。
+                    var fn = body.Trim('"');
+                    fn = Path.GetFileName(fn);
+                    var abs = Path.Combine(dir, fn);
+                    if (File.Exists(abs)) texByGroup[cur] = abs;
+                    cur = null;
+                }
+            }
         }
 
         // f 令牌解析并按需登记合并顶点；负索引为相对末尾（OBJ 规范）。
@@ -151,10 +207,17 @@ namespace RimFirstPerson3D
             else
             {
                 if (!int.TryParse(tok.Substring(0, a), out vi)) return -1;
-                string mid = b > a + 1 ? tok.Substring(a + 1, b - a - 1) : "";
-                if (mid.Length > 0 && !int.TryParse(mid, out ti)) ti = 0;
-                if (b >= 0)
+                if (b < 0)
                 {
+                    // 格式 vi/ti
+                    string mid = tok.Substring(a + 1);
+                    if (mid.Length > 0 && !int.TryParse(mid, out ti)) ti = 0;
+                }
+                else
+                {
+                    // 格式 vi/ti/ni 或 vi//ni
+                    string mid = b > a + 1 ? tok.Substring(a + 1, b - a - 1) : "";
+                    if (mid.Length > 0 && !int.TryParse(mid, out ti)) ti = 0;
                     string tail = tok.Substring(b + 1);
                     if (tail.Length > 0 && !int.TryParse(tail, out ni)) ni = 0;
                 }

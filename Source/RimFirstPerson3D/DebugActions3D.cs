@@ -687,5 +687,88 @@ namespace RimFirstPerson3D
                 }
             }
         }
+
+        // ---- HAR / 动态表情兼容验证（dump pawn render）----
+        // 把在场人形 pawn 的渲染树节点形态（FA 节点 / HAR 额外部件 / 原版头）与
+        // FacialAnimation 控制器的推进度写进日志，供 GABS list_logs 断言：
+        //   PAWNDUMP{...fa=n har=n head=1 faTick=12345@T=12345 job=GotoWander...}
+        // faTick 与 T（当前游戏 tick）一致 = PreDraw 推进链在跑；faTick 远小于 T = 表情冻结。
+        // FacialAnimation 是软依赖，全部走反射，缺失时安全降级。
+        [DebugAction("FirstPerson3D", "dump pawn render")]
+        public static void DumpPawnRender()
+        {
+            var map = Find.CurrentMap;
+            if (map == null)
+            {
+                Log.Message(ModEntry.LogPrefix + "PAWNDUMP nomap");
+                return;
+            }
+            int T = Find.TickManager.TicksGame;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("PAWNDUMP T=").Append(T).Append(" mode=").Append(Fps3DState.Mode);
+            var poss = CameraRig3D.Possessed;
+            int n = 0;
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+            {
+                if (pawn == null || !pawn.RaceProps.Humanlike) continue;
+                if (n++ >= 8) break;
+                var tree = pawn.Drawer != null && pawn.Drawer.renderer != null ? pawn.Drawer.renderer.renderTree : null;
+                if (tree == null || tree.rootNode == null) continue;
+                int fa = 0, har = 0, head = 0, total = 0;
+                DumpWalk(tree.rootNode, ref fa, ref har, ref head, ref total, 0);
+                bool fpSelf = pawn == poss && Fps3DState.Mode == ViewMode.FirstPerson;
+                sb.Append(" {id=").Append(pawn.thingIDNumber).Append(" def=").Append(pawn.def.defName);
+                sb.Append(" nodes=").Append(total).Append(" fa=").Append(fa).Append(" har=").Append(har);
+                sb.Append(" head=").Append(head).Append(" fpSelf=").Append(fpSelf ? 1 : 0);
+                sb.Append(" faTick=").Append(FaLastTick(pawn));
+                sb.Append(" job=").Append(pawn.CurJobDef != null ? pawn.CurJobDef.defName : "-");
+                sb.Append('}');
+            }
+            Log.Message(ModEntry.LogPrefix + sb);
+        }
+
+        private static void DumpWalk(PawnRenderNode node, ref int fa, ref int har, ref int head, ref int total, int guard)
+        {
+            if (node == null || guard > 12) return;
+            total++;
+            var name = node.GetType().Name;
+            if (name.StartsWith("NLFacialAnimation", System.StringComparison.Ordinal)) fa++;
+            else if (name == "AlienPawnRenderNode_BodyAddon") har++;
+            else if (name == "PawnRenderNode_Head") head++;
+            var kids = node.children;
+            if (kids == null) return;
+            for (int i = 0; i < kids.Length; i++)
+                DumpWalk(kids[i], ref fa, ref har, ref head, ref total, guard + 1);
+        }
+
+        // 反射读 FacialAnimation.FacialAnimationControllerComp 的 lastTick：
+        // FA 每帧由 NLFacialAnimationMasterNodeWorker.PreDraw -> UpdateStatus 更新它，
+        // 停在旧值说明本模组的 3D 立牌路径没把 PreDraw 链接上（表情冻结）。
+        private static int FaLastTick(Pawn pawn)
+        {
+            try
+            {
+                ThingComp comp = null;
+                foreach (var c in pawn.AllComps)
+                {
+                    if (c.GetType().FullName == "FacialAnimation.FacialAnimationControllerComp")
+                    {
+                        comp = c;
+                        break;
+                    }
+                }
+                if (comp == null) return -1;   // 该 pawn 无动态表情
+                var t = comp.GetType();
+                object v = null;
+                for (var bt = t; bt != null && v == null; bt = bt.BaseType)
+                {
+                    var f = bt.GetField("lastTick", System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                    if (f != null) v = f.GetValue(comp);
+                }
+                return v is int i ? i : -2;
+            }
+            catch { return -2; }
+        }
     }
 }

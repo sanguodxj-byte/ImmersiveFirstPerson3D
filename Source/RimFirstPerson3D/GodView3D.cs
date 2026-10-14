@@ -2,6 +2,7 @@
 using System;
 using System.Reflection;
 using HarmonyLib;
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -345,13 +346,31 @@ namespace RimFirstPerson3D
         static void RetargetLayerAndCamera(ref int layer, ref Camera camera)
         {
             if (!Capturing || godCam == null) return;
+            if (IsWaterDepthDataLayer(layer)) return;
             layer = GodLayer;
             camera = godCam;
+        }
+
+        // 水体深度数据通道：SectionLayer_Watergen 用 Map/WaterDepth shader 把深度编码成
+        // 颜色（红/绿梯度），只提交到 WaterDepth 层供数据相机烘焙 _WaterOutputTex，
+        // 再由 TerrainWater 采样成水面颜色。捕获窗内若把它重定向进 godCam，
+        // 终端屏上画出来的就是那层原始深度梯度——橙红一片，水体看起来像熔岩。
+        // 放行原调用，让数据回它自己的层；可见水面由 SectionLayer_Terrain 的
+        // TerrainWater 材质正常进终端。
+        static bool IsWaterDepthDataLayer(int layer)
+        {
+            try
+            {
+                var def = SubcameraDefOf.WaterDepth;
+                return def != null && layer == def.LayerId;
+            }
+            catch { return false; }
         }
 
         static bool RedirectPosLayer(Mesh mesh, Vector3 position, Quaternion rotation, Material material, int layer)
         {
             if (!Capturing || godCam == null || redirecting) return true;
+            if (IsWaterDepthDataLayer(layer)) return true;
             redirecting = true;
             try
             {
@@ -367,6 +386,7 @@ namespace RimFirstPerson3D
         static bool RedirectMatrixLayer(Mesh mesh, Matrix4x4 matrix, Material material, int layer)
         {
             if (!Capturing || godCam == null || redirecting) return true;
+            if (IsWaterDepthDataLayer(layer)) return true;
             redirecting = true;
             try
             {

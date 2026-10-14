@@ -140,15 +140,15 @@ namespace RimFirstPerson3D
             return false;
         }
 
-        // 该物品在第一人称下的主要动作按钮文案（取原版翻译键，缺失时回退中文）。
+        // 该物品在第一人称下的主要动作按钮文案（取原版标准翻译键）。
         public static string PrimaryActionLabel(Thing t)
         {
             if (t == null || t.def == null) return "";
             try
             {
-                if (t.def.IsWeapon) return T("Equip", "装备");
-                if (t.def.IsApparel) return T("Wear", "穿戴");
-                if (t.def.ingestible != null) return T("Consume", "使用");
+                if (t.def.IsWeapon) return T("Equipment", "装备");
+                if (t.def.IsApparel) return T("Apparel", "穿戴");
+                if (t.def.ingestible != null) return T("ConsumeThing", "食用");
             }
             catch { }
             return "";
@@ -157,8 +157,9 @@ namespace RimFirstPerson3D
         // 原版翻译键优先；键缺失时 string.Translate() 会原样返回键名，此时用中文兜底。
         private static string T(string key, string fallback)
         {
-            string s = key.Translate();
-            return string.IsNullOrEmpty(s) || s == key ? fallback : s;
+            if (LanguageDatabase.activeLanguage != null && key.CanTranslate())
+                return key.Translate().ToString();
+            return fallback;
         }
     }
 }

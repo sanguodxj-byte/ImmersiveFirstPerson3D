@@ -239,8 +239,10 @@ namespace RimFirstPerson3D
                     ? nors[i].normalized : Vector3.up;
                 float ndl = Mathf.Clamp01(0.5f + 0.5f * Vector3.Dot(n, dir));
                 float hy = Mathf.Clamp01((verts[i].y - yMin) / ySpan);
-                // 树冠顶亮、背阴侧柔和通透、树干根部带轻微地面遮蔽，保持叶片鲜亮
-                float shade = Mathf.Lerp(0.88f, 1.02f, ndl) * Mathf.Lerp(0.90f, 1.03f, hy);
+                // 树冠顶部饱满受光(1.08)，叶丛底层与树根部具有明显环境遮蔽(AO ~0.55)，背阴侧自然明暗
+                float ao = Mathf.Lerp(0.55f, 1.08f, Mathf.Pow(hy, 0.75f));
+                float diff = Mathf.Lerp(0.65f, 1.05f, ndl);
+                float shade = diff * ao;
                 byte v = (byte)Mathf.RoundToInt(Mathf.Clamp01(shade) * 255f);
                 cols[i] = new Color32(v, v, v, 255);
             }

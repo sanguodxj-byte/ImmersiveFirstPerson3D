@@ -50,6 +50,7 @@ namespace RimFirstPerson3D
         private static float footHeight;     // 离地高度（米）
         private static float waterSink;      // 身处水体的视觉下沉（米；平滑趋近水面落差+水深）
         private static float vy;             // 竖直速度（米/秒）
+        private static bool spacePrev;       // 空格边沿检测（着地才起跳）
         private static Vector2 stepDir;      // cmdKey 单步方向（世界 XZ，已归一）
         private static float stepRemaining;  // cmdKey 单步剩余格数
         private static Vector2 lastMousePosition;
@@ -76,7 +77,6 @@ namespace RimFirstPerson3D
             && !VanillaUiBusy();
         // 本帧的这次左键已被"重新锁定光标"消费：不再当作准星点击选择/下令。
         private static bool clickConsumedByLook;
-        private static readonly Dictionary<int, Vector2> lastMouseByButton = new Dictionary<int, Vector2>();
 
         // 脚点（世界 XZ + 离地高度）；未启用为 null。相机锚点 XZ 用它替代 DrawPos。
         public static Vector3? FootPoint
@@ -216,6 +216,7 @@ namespace RimFirstPerson3D
             HandleLook();
             HandleMovementOrders(dt);
             HandleClick();
+            HandleInteractionKeys();
             // 消费标记只在产生它的这一帧有效，避免残留到后续帧吞掉正常点击。
             clickConsumedByLook = false;
 
@@ -424,8 +425,8 @@ namespace RimFirstPerson3D
                 return false;
             }
 
-            // 与 HandleLook 的终端早退重复一道：避免以后单独调用时把光标藏起来并回中。
-            if (MapScreen3D.BlocksGameplay)
+            // 与 HandleLook 的终端/背包早退重复一道：避免以后单独调用时把光标藏起来并回中。
+            if (MapScreen3D.BlocksGameplay || FpsHud3D.inventoryOpen)
             {
                 YieldCursor();
                 return false;
@@ -696,6 +697,7 @@ namespace RimFirstPerson3D
             if (paused || windowBlocked || focusBlocked)
             {
                 vy = 0f;
+                spacePrev = Input.GetKey(KeyCode.Space);
                 return;
             }
 
@@ -778,10 +780,17 @@ namespace RimFirstPerson3D
 
         // 竖直：地面 = 脚下格的支撑面（地面 0，或家具顶面）；着地时按空格起跳；
         // 每帧 vy -= Gravity*dt，离地高度 += vy*dt；下落穿过支撑面时钳住并清零竖直速度。
-        // 空格完全放行给原版UI暂停，不再作为跳跃键。
         private static void IntegrateVertical(Map map, float dt)
         {
             float support = SupportUnderFoot(map);
+            bool space = Input.GetKey(KeyCode.Space);
+            bool grounded = footHeight <= support + 0.05f;
+            if (grounded && space && !spacePrev)
+            {
+                vy = Mathf.Sqrt(2f * Metrics3D.Gravity * Metrics3D.JumpApex);
+            }
+            spacePrev = space;
+
             vy -= Metrics3D.Gravity * dt;
             footHeight += vy * dt;
             if (vy <= 0f && footHeight <= support)
@@ -951,6 +960,7 @@ namespace RimFirstPerson3D
             footHeight = 0f;
             waterSink = 0f;
             vy = 0f;
+            spacePrev = false;
             stepDir = Vector2.zero;
             stepRemaining = 0f;
             footActive = true;
@@ -963,6 +973,7 @@ namespace RimFirstPerson3D
             footHeight = 0f;
             waterSink = 0f;
             vy = 0f;
+            spacePrev = false;
             stepDir = Vector2.zero;
             stepRemaining = 0f;
         }
@@ -1018,28 +1029,91 @@ namespace RimFirstPerson3D
             else if (Input.GetMouseButton(0) && attackCooldown <= 0f) { Attack(); attackCooldown = cdInterval; }
         }
 
+        // 键盘交互热键与快捷操作：E 键情境交互、F 键/右键原版菜单、Tab/B 键背包物品栏
+        private static void HandleInteractionKeys()
+        {
+            if (MapScreen3D.BlocksGameplay) return;
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return;
+            if (!Application.isFocused || !MouseLookDelta.IsGameWindowActive()) return;
+
+            // 背包打开时按 Escape、Tab 或 B 关闭背包
+            if (FpsHud3D.inventoryOpen)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.B))
+                {
+                    FpsHud3D.CloseInventory();
+                }
+                return;
+            }
+
+            // 弹窗、暂停或光标在 UI 上时不响应 3D 快捷热键
+            if (VanillaUiBusy() || OverUI()) return;
+
+            // E 键：全部交互与浮动菜单（原右键全部功能迁移至此）。门等直接开关，工作台/角色/物品/地块等呼出原版浮动指令菜单
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                Interact();
+                return;
+            }
+
+            // F 键：搬运（准星处可搬运地面物端在身前随身携带；手上已端着则就地放下）
+            if (Input.GetKeyDown(KeyCode.F))
+            {
+                CarryAimed();
+                return;
+            }
+
+            // G 键：拆解准星处建筑
+            if (Input.GetKeyDown(KeyCode.G))
+            {
+                DemolishAimed();
+                return;
+            }
+
+            // Tab 或 B 键：第一人称物品栏与背包开关
+            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.B))
+            {
+                FpsHud3D.ToggleInventory();
+                return;
+            }
+
+            // 数字键 1..6：使用背包第 n 件物品（装备 / 穿戴 / 食用）
+            for (int i = 1; i <= Backpack3D.HotbarSlots; i++)
+            {
+                if (Input.GetKeyDown(KeyCode.Alpha0 + i))
+                {
+                    UseHotbar(i);
+                    return;
+                }
+            }
+        }
+
         // 按住左键的连击节奏（秒），与挥击动画时长（0.26s）接近。
         private const float AttackInterval = 0.30f;
         private static float attackCooldown;
 
-        // F / 右键：对准命中格弹完整原版地图浮动菜单。优先走 FloatMenuMakerMap，
-        // 让工作台配方、翻找储物、装卸、使用、治疗、逮捕、收割、移动等所有原版
-        // FloatMenuOptionProvider 都参与生成；异常时才回退到目标 Thing 的旧入口。
-        public static void OpenAimedFloatMenu()
+        // E 键 / 浮动菜单：对准命中实体目标呼出完整原版地图浮动菜单。优先走 FloatMenuMakerMap，
+        // 让工作台配方、翻找储物、装卸、使用、治疗、逮捕、收割等所有原版
+        // FloatMenuOptionProvider 都参与生成；严禁空地响应或弹出“走到那里”。
+        public static bool OpenAimedFloatMenu()
         {
-            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
-            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return;
-            if (Find.WindowStack == null || Find.WindowStack.FloatMenu != null) return;
+            if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return false;
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return false;
+            if (Find.WindowStack == null || Find.WindowStack.FloatMenu != null) return false;
             var pawn = Possessed;
-            if (pawn == null) return;
+            if (pawn == null) return false;
             var hit = RaycastCenter();
-            if (hit == null) return;
+            if (hit == null) return false;
+
+            // 严格要求命中实体目标且在触及范围内，空地坚决不弹菜单、不寻路
+            var thing = hit.Value.thing;
+            if (thing == null || thing.Destroyed || hit.Value.dist > ReachWork) return false;
 
             var aimedCell = hit.Value.cell;
             var map = Find.CurrentMap;
-            if (map == null || !aimedCell.IsValid || !aimedCell.InBounds(map)) return;
-            if (!pawn.Spawned || pawn.Map != map) return;
-            if (hit.Value.thing != null && hit.Value.thing.Map != map) return;
+            if (map == null || !aimedCell.IsValid || !aimedCell.InBounds(map)) return false;
+            if (!pawn.Spawned || pawn.Map != map) return false;
+            if (thing.Map != map) return false;
 
             // FloatMenuMap 的重验证依赖 Find.Selector.SelectedPawns；让附身 pawn 成为
             // 原版菜单的唯一操作者，而不是把准星目标 Thing 错当成选择对象。
@@ -1058,21 +1132,26 @@ namespace RimFirstPerson3D
 
             if (vanillaMenuBuilt)
             {
-                string labelCap = context.IsMultiselect ? null : context.FirstSelectedPawn.LabelCap;
-                var menu = new RightBottomFloatMenuMap(opts, labelCap, clickPos)
+                // 彻底过滤掉任何带有“走到这里/走到那里”的移动指令选项，第一人称移动由 WASD 控制
+                opts.RemoveAll(o => o == null || o.isGoto || o.Priority == MenuOptionPriority.GoHere
+                    || (o.Label != null && o.Label.IndexOf("GoHere".Translate(), System.StringComparison.OrdinalIgnoreCase) >= 0));
+
+                if (opts.Count > 0)
                 {
-                    givesColonistOrders = true,
-                    vanishIfMouseDistant = false
-                };
-                // 菜单接管后立即释放第一人称光标，避免本帧/下一帧鼠标视角或攻击穿透。
-                ReleaseMouseLook();
-                Find.WindowStack.Add(menu);
-                return;
+                    string labelCap = context.IsMultiselect ? null : context.FirstSelectedPawn.LabelCap;
+                    var menu = new RightBottomFloatMenuMap(opts, labelCap, clickPos)
+                    {
+                        givesColonistOrders = true,
+                        vanishIfMouseDistant = false
+                    };
+                    // 菜单接管后立即释放第一人称光标，避免本帧/下一帧鼠标视角或攻击穿透。
+                    ReleaseMouseLook();
+                    Find.WindowStack.Add(menu);
+                    return true;
+                }
             }
 
             // 兼容原版/第三方 provider 生成失败的情况，保留原有 Thing 菜单行为。
-            var thing = hit.Value.thing;
-            if (thing == null || thing.Destroyed) return;
             opts = new List<FloatMenuOption>();
             try
             {
@@ -1080,9 +1159,12 @@ namespace RimFirstPerson3D
                     if (o != null) opts.Add(o);
             }
             catch { }
-            if (opts.Count == 0) return;
+            opts.RemoveAll(o => o == null || o.isGoto || o.Priority == MenuOptionPriority.GoHere
+                || (o.Label != null && o.Label.IndexOf("GoHere".Translate(), System.StringComparison.OrdinalIgnoreCase) >= 0));
+            if (opts.Count == 0) return false;
             ReleaseMouseLook();
             Find.WindowStack.Add(new RightBottomFloatMenu(opts));
+            return true;
         }
 
         // F/右键菜单固定贴在第一人称自绘准星的右下方，不跟随原版 UI 或当前鼠标位置漂移。
@@ -1264,7 +1346,8 @@ namespace RimFirstPerson3D
             }
         }
 
-        // E 键交互：准星命中项执行一次非破坏性情境交互（工作台工作、拾取/装备、蓝图/框架建造、开门/关门、成熟作物收获、研究、修理、休息、救援等）。
+        // E 键交互与菜单统合：门等即时交互直接执行；其余准星目标呼出原版浮动指令菜单（包含配方选择、救援/俘虏、装备穿戴、优先工作等全部操作）。
+        // 准星指向空地或超出触及范围时坚决不响应，严禁出现“走到那里/走到这里”的移动行为。
         public static void Interact()
         {
             if (MapScreen3D.Viewing || FpsHud3D.inventoryOpen) return;
@@ -1273,9 +1356,25 @@ namespace RimFirstPerson3D
             if (pawn == null) return;
             var hit = RaycastCenter();
             if (hit == null) return;
+
+            // 准星指向空地（无实体）或超出触及距离：坚决忽略，不响应亦不寻路
             var thing = hit.Value.thing;
-            if (thing == null || thing.Destroyed) return;
-            if (hit.Value.dist > ReachWork) return;
+            if (thing == null || thing.Destroyed || hit.Value.dist > ReachWork) return;
+
+            // 1) 门：最高频操作，贴身按 E 瞬间开关门
+            if (thing is Building_Door door && hit.Value.dist <= ReachUse)
+            {
+                ToggleDoor(pawn, door);
+                return;
+            }
+
+            // 2) 呼出原版浮动指令菜单（全部配方、救援/俘虏、装备穿戴、使用等，已过滤 GoHere 寻路）
+            if (OpenAimedFloatMenu())
+            {
+                return;
+            }
+
+            // 3) 兜底：若未生成浮动菜单，对命中物体执行单一情境动作
             Find.Selector.Select(thing);
             if (TryResolveNonDestructiveInteraction(pawn, thing, hit.Value.dist, out _, out var perform) && perform != null)
             {
@@ -1426,17 +1525,38 @@ namespace RimFirstPerson3D
             var pawn = Possessed;
             if (pawn == null || pawn.Dead || pawn.Downed || pawn.carryTracker == null) return;
 
-            // 手上已端着：再按 F 就地放下（原版 TryDropCarriedThing，落在脚下附近）。
+            // 手上已端着：再按 F 放下到准星指向的地图格（最多 3 格以内），若准星无有效目标或超距则落在身前脚下。
             Thing held = null;
             try { held = pawn.carryTracker.CarriedThing; } catch { }
             if (held != null)
             {
                 try
                 {
+                    IntVec3 targetCell = pawn.Position;
+                    var dropHit = RaycastCenter();
+                    if (dropHit != null && dropHit.Value.cell.IsValid && dropHit.Value.cell.InBounds(pawn.Map))
+                    {
+                        float d = (dropHit.Value.cell - pawn.Position).LengthHorizontal;
+                        if (d <= 3.5f)
+                        {
+                            targetCell = dropHit.Value.cell;
+                        }
+                        else
+                        {
+                            // 钳制在朝向准星最多 3 格处
+                            Vector3 dir = (dropHit.Value.cell - pawn.Position).ToVector3().normalized;
+                            IntVec3 clamped = (pawn.Position.ToVector3Shifted() + dir * 3f).ToIntVec3();
+                            if (clamped.InBounds(pawn.Map))
+                                targetCell = clamped;
+                        }
+                    }
+
                     Thing dropped;
-                    if (pawn.carryTracker.TryDropCarriedThing(pawn.Position, ThingPlaceMode.Near, out dropped)
+                    if (pawn.carryTracker.TryDropCarriedThing(targetCell, ThingPlaceMode.Near, out dropped)
                         && dropped != null)
+                    {
                         dropped.SetForbidden(false, false);
+                    }
                 }
                 catch { }
                 return;
@@ -2240,7 +2360,9 @@ namespace RimFirstPerson3D
             }
             if (d.Fillage == FillCategory.Full) return Fps3DState.WallHeight;
             if (d.building != null && (d.building.canPlaceOverWall || d.building.isAttachment)) return Fps3DState.WallHeight;
-            if (d.defName == "Column") return Fps3DState.WallHeight;
+            if (d.defName.IndexOf("Column", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || d.defName.IndexOf("Pillar", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return Furniture3D.ColumnHeight;
             float support = Furniture3D.SupportAt(map, cell);
             return Mathf.Max(0.95f, support + 0.25f, d.fillPercent * 1.6f);
         }

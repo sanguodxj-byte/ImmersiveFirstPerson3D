@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Verse;
+using Verse.Sound;
 using RimWorld;
 
 namespace RimFirstPerson3D
@@ -44,10 +45,9 @@ namespace RimFirstPerson3D
         {
             get
             {
-                float w = 372f;
-                var items = Backpack3D.Items();
-                float h = Mathf.Min(UI.screenHeight * 0.82f, 140f + items.Count * 30f);
-                return new Rect(UI.screenWidth * 0.5f - w * 0.5f, (UI.screenHeight - h) * 0.5f, w, h);
+                float w = 480f;
+                float h = Mathf.Clamp(UI.screenHeight * 0.72f, 420f, 620f);
+                return new Rect((UI.screenWidth - w) * 0.5f, (UI.screenHeight - h) * 0.5f, w, h);
             }
         }
 
@@ -172,7 +172,7 @@ namespace RimFirstPerson3D
             GUI.color = Color.white;
         }
 
-        // 背包界面：装备栏（只读）+ 背包物品列表（每行一个主要动作按钮 + 丢弃）。
+        // 背包界面：原版质感窗口（装备栏 + 负重条 + 货物列表，集成图标/丢弃/食用/穿戴与标准翻译键）。
         private static void DrawInventory()
         {
             var pawn = CameraRig3D.Possessed;
@@ -183,72 +183,211 @@ namespace RimFirstPerson3D
 
             var r = InventoryRect;
             float w = r.width;
-            Fill(r, new Color(0f, 0f, 0f, 0.78f));
 
-            Text.Font = GameFont.Small;
+            // 原版质感窗口底框与边框
+            Widgets.DrawWindowBackground(r);
+
+            // 1. 标题与头部
+            Text.Font = GameFont.Medium;
             Text.Anchor = TextAnchor.MiddleLeft;
-            GUI.color = new Color(0.95f, 0.97f, 1f);
+            GUI.color = Color.white;
+            string title = (pawn.Name != null ? pawn.Name.ToStringShort : pawn.def.label) + " (" + T("TabGear", "装备") + ")";
+            Widgets.Label(new Rect(r.x + 16f, r.y + 12f, w - 60f, 28f), title);
 
-            float y = r.y + 8f;
-            string head = pawn.Name != null ? pawn.Name.ToStringShort : pawn.def.label;
-            Widgets.Label(new Rect(r.x + 12f, y, w - 90f, 22f), head);
-            // 关闭按钮
-            if (Widgets.ButtonText(new Rect(r.x + w - 74f, y - 1f, 62f, 24f), T("Close", "关闭")))
+            // 原版右上角标准关闭按钮
+            if (Widgets.CloseButtonFor(r))
+            {
+                SoundDefOf.Click.PlayOneShotOnCamera();
                 inventoryOpen = false;
-            y += 28f;
+            }
 
-            // 装备中的主武器（只读，附带说明拿在手上）。
+            // 2. 负重信息与进度条
+            float curMass = MassUtility.GearAndInventoryMass(pawn);
+            float maxMass = MassUtility.Capacity(pawn);
+            bool overloaded = curMass > maxMass;
+            Text.Font = GameFont.Small;
+            GUI.color = overloaded ? ColorLibrary.RedReadable : new Color(0.9f, 0.9f, 0.9f, 1f);
+            Widgets.Label(new Rect(r.x + 16f, r.y + 40f, w - 32f, 22f),
+                "MassCarried".Translate(curMass.ToString("0.##"), maxMass.ToString("0.##")));
+            GUI.color = Color.white;
+
+            // 细长实心负重填充条
+            var barRect = new Rect(r.x + 16f, r.y + 63f, w - 32f, 4f);
+            Fill(barRect, new Color(0.12f, 0.12f, 0.12f, 0.8f));
+            float frac = Mathf.Clamp01(curMass / Mathf.Max(0.1f, maxMass));
+            Color barColor = overloaded ? new Color(0.85f, 0.2f, 0.2f) : new Color(0.35f, 0.75f, 0.35f);
+            Fill(new Rect(barRect.x, barRect.y, barRect.width * frac, barRect.height), barColor);
+
+            // 3. 滚动列表区域
+            float listY = r.y + 74f;
+            var outRect = new Rect(r.x + 12f, listY, w - 24f, r.yMax - 14f - listY);
+
+            // 预估滚动高度：装备项 + 货物项 + 2个分段标题
+            float contentHeight = 32f + (primary != null ? 32f : 24f) + 32f + Mathf.Max(26f, items.Count * 32f) + 20f;
+            var viewRect = new Rect(0f, 0f, outRect.width - 16f, Mathf.Max(outRect.height, contentHeight));
+
+            Widgets.BeginScrollView(outRect, ref scroll, viewRect);
+            float curY = 0f;
+
+            // ---- 装备分段 ----
+            Widgets.ListSeparator(ref curY, viewRect.width, T("Equipment", "装备"));
             if (primary != null)
             {
-                Fill(new Rect(r.x + 8f, y - 2f, w - 16f, 24f), new Color(1f, 1f, 1f, 0.10f));
-                Widgets.Label(new Rect(r.x + 16f, y, w - 32f, 22f),
-                    primary.def.label + "  " + T("Equipped", "已装备"));
-                y += 28f;
-            }
-
-            // 列表区域
-            var outRect = new Rect(r.x + 8f, y, w - 16f, r.yMax - 12f - y);
-            float rowH = 30f;
-            var viewRect = new Rect(0f, 0f, outRect.width - 18f, Mathf.Max(outRect.height, items.Count * rowH));
-            Widgets.BeginScrollView(outRect, ref scroll, viewRect);
-            float ry = 0f;
-            for (int i = 0; i < items.Count; i++)
-            {
-                var th = items[i];
-                int slot = i + 1;
-                var row = new Rect(0f, ry, viewRect.width, rowH - 4f);
-                Fill(row, new Color(1f, 1f, 1f, 0.06f));
-
-                // 前 N 件标出快捷栏号（数字键直接使用）。
-                if (slot <= Backpack3D.HotbarSlots)
-                    Widgets.Label(new Rect(row.x + 6f, row.y + 3f, 16f, 20f), slot.ToString());
-
-                string label = th.def.label + (th.stackCount > 1 ? " x" + th.stackCount : "");
-                Widgets.Label(new Rect(row.x + 26f, row.y + 3f, row.width - 150f, 20f), label);
-
-                string act = Backpack3D.PrimaryActionLabel(th);
-                if (!string.IsNullOrEmpty(act))
+                var row = new Rect(0f, curY, viewRect.width, 28f);
+                if (Mouse.IsOver(row))
                 {
-                    if (Widgets.ButtonText(new Rect(row.x + row.width - 118f, row.y + 1f, 58f, 22f), act))
-                        Backpack3D.PrimaryAction(th);
+                    GUI.color = new Color(0.5f, 0.5f, 0.5f, 1f);
+                    GUI.DrawTexture(row, TexUI.HighlightTex);
+                    GUI.color = Color.white;
                 }
-                if (Widgets.ButtonText(new Rect(row.x + row.width - 56f, row.y + 1f, 54f, 22f), T("DropThing", "丢弃")))
-                    Backpack3D.Drop(th);
 
-                ry += rowH;
+                // 武器真实图标
+                if (primary.def.DrawMatSingle != null && primary.def.DrawMatSingle.mainTexture != null)
+                {
+                    Widgets.ThingIcon(new Rect(4f, curY, 28f, 28f), primary);
+                }
+
+                // 武器名称与品质
+                Text.Anchor = TextAnchor.MiddleLeft;
+                Text.Font = GameFont.Small;
+                GUI.color = new Color(0.9f, 0.9f, 0.9f, 1f);
+                Rect labelRect = new Rect(36f, curY, row.width - 36f - 56f, 28f);
+                Widgets.Label(labelRect, primary.LabelCap.Truncate(labelRect.width));
+                if (Mouse.IsOver(row))
+                {
+                    TooltipHandler.TipRegion(row, primary.GetTooltip());
+                }
+
+                // 右侧小操作按钮：信息卡与丢下
+                Widgets.InfoCardButton(row.width - 24f, curY + 2f, primary);
+
+                Rect dropR = new Rect(row.width - 50f, curY + 2f, 24f, 24f);
+                TooltipHandler.TipRegion(dropR, "DropThing".Translate());
+                if (Widgets.ButtonImage(dropR, TexButton.Drop))
+                {
+                    SoundDefOf.Tick_High.PlayOneShotOnCamera();
+                    Backpack3D.Drop(primary);
+                }
+
+                curY += 32f;
             }
-            if (items.Count == 0)
-                Widgets.Label(new Rect(0f, 0f, viewRect.width, 22f), T("InventoryEmpty", "背包是空的"));
-            Widgets.EndScrollView();
+            else
+            {
+                Text.Anchor = TextAnchor.MiddleLeft;
+                GUI.color = Color.grey;
+                Widgets.Label(new Rect(10f, curY, viewRect.width, 24f), "(" + T("EquippedNothing", "（无）") + ")");
+                GUI.color = Color.white;
+                curY += 26f;
+            }
 
+            // ---- 背包货物分段 ----
+            Widgets.ListSeparator(ref curY, viewRect.width, T("Inventory", "货物"));
+            if (items.Count == 0)
+            {
+                Text.Anchor = TextAnchor.MiddleLeft;
+                GUI.color = Color.grey;
+                Widgets.Label(new Rect(10f, curY, viewRect.width, 24f), "(" + T("EquippedNothing", "（无）") + ")");
+                GUI.color = Color.white;
+                curY += 26f;
+            }
+            else
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var th = items[i];
+                    int slot = i + 1;
+                    var row = new Rect(0f, curY, viewRect.width, 28f);
+                    if (Mouse.IsOver(row))
+                    {
+                        GUI.color = new Color(0.5f, 0.5f, 0.5f, 1f);
+                        GUI.DrawTexture(row, TexUI.HighlightTex);
+                        GUI.color = Color.white;
+                    }
+
+                    // 前 N 件快捷栏数字提示方块
+                    float xOffset = 4f;
+                    if (slot <= Backpack3D.HotbarSlots)
+                    {
+                        var slotRect = new Rect(xOffset, curY + 4f, 18f, 20f);
+                        Fill(slotRect, new Color(1f, 1f, 1f, 0.12f));
+                        Text.Anchor = TextAnchor.MiddleCenter;
+                        Text.Font = GameFont.Tiny;
+                        GUI.color = new Color(0.8f, 0.9f, 1f);
+                        Widgets.Label(slotRect, slot.ToString());
+                        xOffset += 22f;
+                    }
+
+                    // 物品真实图标
+                    if (th.def.DrawMatSingle != null && th.def.DrawMatSingle.mainTexture != null)
+                    {
+                        Widgets.ThingIcon(new Rect(xOffset, curY, 28f, 28f), th);
+                        xOffset += 32f;
+                    }
+
+                    // 物品名称与堆叠
+                    Text.Anchor = TextAnchor.MiddleLeft;
+                    Text.Font = GameFont.Small;
+                    GUI.color = new Color(0.9f, 0.9f, 0.9f, 1f);
+                    float rightBtnsWidth = 135f;
+                    Rect labelRect = new Rect(xOffset, curY, row.width - xOffset - rightBtnsWidth, 28f);
+                    Widgets.Label(labelRect, th.LabelCap.Truncate(labelRect.width));
+                    if (Mouse.IsOver(row))
+                    {
+                        TooltipHandler.TipRegion(row, th.GetTooltip());
+                    }
+
+                    // 右侧操作按钮组
+                    // 1) 信息按钮
+                    Widgets.InfoCardButton(row.width - 24f, curY + 2f, th);
+
+                    // 2) 丢弃图标按钮
+                    Rect dropR = new Rect(row.width - 50f, curY + 2f, 24f, 24f);
+                    TooltipHandler.TipRegion(dropR, "DropThing".Translate());
+                    if (Widgets.ButtonImage(dropR, TexButton.Drop))
+                    {
+                        SoundDefOf.Tick_High.PlayOneShotOnCamera();
+                        Backpack3D.Drop(th);
+                    }
+
+                    // 3) 主要动作按钮（食用图标 或 装备/穿戴文字按钮）
+                    if (th.def.ingestible != null)
+                    {
+                        Rect ingR = new Rect(row.width - 76f, curY + 2f, 24f, 24f);
+                        TooltipHandler.TipRegion(ingR, "ConsumeThing".CanTranslate() ? "ConsumeThing".Translate(th.LabelNoCount, th) : "ConsumeThing".Translate());
+                        if (Widgets.ButtonImage(ingR, TexButton.Ingest))
+                        {
+                            SoundDefOf.Tick_High.PlayOneShotOnCamera();
+                            Backpack3D.PrimaryAction(th);
+                        }
+                    }
+                    else
+                    {
+                        string act = Backpack3D.PrimaryActionLabel(th);
+                        if (!string.IsNullOrEmpty(act))
+                        {
+                            Rect actR = new Rect(row.width - 128f, curY + 2f, 74f, 24f);
+                            if (Widgets.ButtonText(actR, act))
+                            {
+                                SoundDefOf.Tick_High.PlayOneShotOnCamera();
+                                Backpack3D.PrimaryAction(th);
+                            }
+                        }
+                    }
+
+                    curY += 32f;
+                }
+            }
+
+            Widgets.EndScrollView();
             Text.Anchor = TextAnchor.UpperLeft;
             GUI.color = Color.white;
         }
 
         private static string T(string key, string fallback)
         {
-            string s = key.Translate();
-            return string.IsNullOrEmpty(s) || s == key ? fallback : s;
+            if (LanguageDatabase.activeLanguage != null && key.CanTranslate())
+                return key.Translate().ToString();
+            return fallback;
         }
 
         private static void Fill(Rect r, Color c)

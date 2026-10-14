@@ -84,7 +84,145 @@ namespace RimFirstPerson3D
 
         public void NotifyThingChanged(Thing t)
         {
-            if (t != null && t.def.category == ThingCategory.Item) { dirty = true; batchDirty = true; }
+            if (t != null && (t.def.category == ThingCategory.Item || t.def.category == ThingCategory.Building))
+            {
+                dirty = true;
+                batchDirty = true;
+            }
+        }
+
+        private readonly Dictionary<Material, List<Matrix4x4>> standByMat = new Dictionary<Material, List<Matrix4x4>>();
+        private readonly Dictionary<Material, List<Matrix4x4>> flatByMat = new Dictionary<Material, List<Matrix4x4>>();
+        private readonly Dictionary<string, List<Matrix4x4>> byModelKey = new Dictionary<string, List<Matrix4x4>>();
+        private readonly List<List<Matrix4x4>> pooledMatrixLists = new List<List<Matrix4x4>>();
+
+        private List<Matrix4x4> GetPooledList()
+        {
+            if (pooledMatrixLists.Count > 0)
+            {
+                int last = pooledMatrixLists.Count - 1;
+                var list = pooledMatrixLists[last];
+                pooledMatrixLists.RemoveAt(last);
+                list.Clear();
+                return list;
+            }
+            return new List<Matrix4x4>(64);
+        }
+
+        private void RecycleLists(Dictionary<Material, List<Matrix4x4>> dict)
+        {
+            foreach (var kv in dict)
+            {
+                if (kv.Value != null)
+                {
+                    kv.Value.Clear();
+                    pooledMatrixLists.Add(kv.Value);
+                }
+            }
+            dict.Clear();
+        }
+
+        private void RecycleStringLists(Dictionary<string, List<Matrix4x4>> dict)
+        {
+            foreach (var kv in dict)
+            {
+                if (kv.Value != null)
+                {
+                    kv.Value.Clear();
+                    pooledMatrixLists.Add(kv.Value);
+                }
+            }
+            dict.Clear();
+        }
+
+        public static bool TryResolveCorpse(Corpse corpse, out Graphic g, out Material m, out Vector2 drawSize, out float downedAngle)
+        {
+            g = null;
+            m = null;
+            drawSize = Vector2.one;
+            downedAngle = corpse.Rotation.AsAngle;
+
+            var p = corpse.InnerPawn;
+            if (p == null) return false;
+
+            if (p.Drawer?.renderer?.wiggler != null)
+            {
+                downedAngle = p.Drawer.renderer.wiggler.downedAngle;
+            }
+
+            RotDrawMode rotMode = corpse.CurRotDrawMode;
+
+            var tree = p.Drawer?.renderer?.renderTree;
+            if (tree != null)
+            {
+                try
+                {
+                    if (!tree.Resolved) tree.SetDirty();
+                    tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                }
+                catch { }
+            }
+
+            if (rotMode == RotDrawMode.Dessicated)
+            {
+                if (p.RaceProps.Humanlike && p.story?.bodyType != null && !string.IsNullOrEmpty(p.story.bodyType.bodyDessicatedGraphicPath))
+                {
+                    try
+                    {
+                        g = GraphicDatabase.Get<Graphic_Multi>(p.story.bodyType.bodyDessicatedGraphicPath, ShaderDatabase.Cutout, Vector2.one, Color.white);
+                    }
+                    catch { }
+                }
+                else
+                {
+                    var curKind = p.ageTracker != null ? p.ageTracker.CurKindLifeStage : null;
+                    if (curKind != null)
+                    {
+                        var dessData = (p.gender == Gender.Female && curKind.femaleDessicatedBodyGraphicData != null)
+                            ? curKind.femaleDessicatedBodyGraphicData
+                            : curKind.dessicatedBodyGraphicData;
+                        if (dessData != null)
+                        {
+                            try { g = dessData.GraphicColoredFor(p); } catch { }
+                        }
+                    }
+                }
+            }
+
+            if (g == null && tree != null)
+            {
+                try { g = tree.BodyGraphic; } catch { }
+            }
+
+            if (g == null)
+            {
+                try { g = PawnLayer3D.ResolveGraphic(p, corpse.Rotation); } catch { }
+            }
+
+            if (g == null) return false;
+
+            try { m = g.MatAt(corpse.Rotation, p); } catch { }
+            if (m == null || m.mainTexture == null || m.NullOrBad())
+            {
+                try { m = g.MatAt(corpse.Rotation, corpse); } catch { }
+            }
+            if (m == null || m.mainTexture == null || m.NullOrBad())
+            {
+                try { m = g.MatSingle; } catch { }
+            }
+
+            if (m == null || m.mainTexture == null || m.NullOrBad()) return false;
+
+            float sx = (g.drawSize.x > 0.1f) ? g.drawSize.x : 1f;
+            float sy = (g.drawSize.y > 0.1f) ? g.drawSize.y : 1f;
+            if (p.RaceProps != null)
+            {
+                float scale = Mathf.Clamp(p.BodySize, 0.4f, 4f);
+                sx = Mathf.Max(0.75f, sx * Mathf.Min(1.5f, Mathf.Sqrt(scale)));
+                sy = Mathf.Max(0.75f, sy * Mathf.Min(1.5f, Mathf.Sqrt(scale)));
+            }
+            drawSize = new Vector2(sx, sy);
+            return true;
         }
 
         public void Update()
@@ -93,53 +231,90 @@ namespace RimFirstPerson3D
             dirty = false;
             batchDirty = true;
             entries.Clear();
-            foreach (var t in map.listerThings.AllThings)
+
+            // 优先遍历已索引的物品/尸体列表（通常几十至几百个），彻底跳过全图数万个无关物体，降低扫描耗时 95%
+            var haulables = map.listerThings.ThingsInGroup(ThingRequestGroup.HaulableEverOrMinifiable);
+            if (haulables != null)
             {
-                if (t == null || !t.Spawned) continue;
-                if (t.def.category != ThingCategory.Item) continue;
-                try
+                for (int i = 0; i < haulables.Count; i++)
                 {
-                    var g = t.Graphic;
-                    if (g == null) continue;
-                    Material m = null;
+                    var t = haulables[i];
+                    if (t == null || !t.Spawned || t.def == null || t.def.category != ThingCategory.Item) continue;
+                    ProcessThing(t);
+                }
+            }
+
+            var corpses = map.listerThings.ThingsInGroup(ThingRequestGroup.Corpse);
+            if (corpses != null)
+            {
+                for (int i = 0; i < corpses.Count; i++)
+                {
+                    var t = corpses[i];
+                    if (t == null || !t.Spawned || t.def == null || t.def.category != ThingCategory.Item) continue;
+                    if (t.def.EverHaulable) continue; // 已在 haulables 中处理过
+                    ProcessThing(t);
+                }
+            }
+        }
+
+        private void ProcessThing(Thing t)
+        {
+            try
+            {
+                if (t.Position.Fogged(map)) return;
+                Graphic g = null;
+                Material m = null;
+                var corpse = t as Corpse;
+                float corpseW = 1f, corpseH = 1f, corpseAngle = t.Rotation.AsAngle;
+                if (corpse != null)
+                {
+                    if (!TryResolveCorpse(corpse, out g, out m, out var drawSize, out corpseAngle))
+                        return;
+                    corpseW = drawSize.x;
+                    corpseH = drawSize.y;
+                }
+                else
+                {
+                    g = t.Graphic;
+                    if (g == null) return;
                     try { m = g.MatAt(t.Rotation, t); } catch { }
                     if (m == null || m.mainTexture == null || m.NullOrBad()) { try { m = g.MatSingle; } catch { } }
-                    if (m == null || m.mainTexture == null || m.NullOrBad()) continue;
-                    var dp = t.DrawPos;
-                    var e = new Entry
-                    {
-                        thing = t,
-                        mat = m,
-                        pos = new Vector3(dp.x + worldOffset.x, baseY - WaterLayer3D.SinkAt(map, t.Position), dp.z + worldOffset.z)
-                    };
-                    var corpse = t as Corpse;
-                    if (corpse != null)
-                    {
-                        e.flatCorpse = true;
-                        e.w = Mathf.Max(0.7f, g.drawSize.x);
-                        e.h = Mathf.Max(0.7f, g.drawSize.y);
-                        e.flatYaw = t.Rotation.AsAngle;
-                    }
-                    else
-                    {
-                        string mk = ItemModels3D.KeyOf(t);
-                        if (mk != null && ItemModels3D.AtlasMat != null)
-                        {
-                            e.modelKey = mk;
-                            e.modelVariant = ItemModels3D.VariantOf(t, mk);
-                            // 天然石块与钢渣块按 thingIDNumber 给小幅角度变化打破全图重复，其余物块保持原版标准视角
-                            if (mk.StartsWith("chunk"))
-                                e.modelYaw = ((t.thingIDNumber * 7919) % 4) * 90f;
-                            else
-                                e.modelYaw = 0f;
-                        }
-                        e.w = Mathf.Max(0.28f, g.drawSize.x * 0.8f);
-                        e.h = Mathf.Max(0.28f, g.drawSize.y);
-                    }
-                    entries.Add(e);
+                    if (m == null || m.mainTexture == null || m.NullOrBad()) return;
                 }
-                catch { }
+
+                var dp = t.DrawPos;
+                float posY = baseY + (corpse != null ? 0.015f : 0f) - WaterLayer3D.SinkAt(map, t.Position);
+                var e = new Entry
+                {
+                    thing = t,
+                    mat = m,
+                    pos = new Vector3(dp.x + worldOffset.x, posY, dp.z + worldOffset.z)
+                };
+                if (corpse != null)
+                {
+                    e.flatCorpse = true;
+                    e.w = corpseW;
+                    e.h = corpseH;
+                    e.flatYaw = corpseAngle;
+                }
+                else
+                {
+                    string mk = ItemModels3D.KeyOf(t);
+                    if (mk != null && ItemModels3D.AtlasMat != null)
+                    {
+                        e.modelKey = mk;
+                        e.modelVariant = ItemModels3D.VariantOf(t, mk);
+                        if (mk.StartsWith("chunk"))
+                            e.modelYaw = ((t.thingIDNumber * 7919) % 4) * 90f;
+                        else
+                            e.modelYaw = 0f;
+                    }
+                    e.w = Mathf.Max(0.28f, g.drawSize.x * 0.8f);
+                    e.h = Mathf.Max(0.28f, g.drawSize.y);
+                }
+                entries.Add(e);
             }
+            catch { }
         }
 
         private void DestroyBatches()
@@ -158,21 +333,20 @@ namespace RimFirstPerson3D
         {
             DestroyBatches();
             colorDirty = false;
-            var standByMat = new Dictionary<Material, List<Matrix4x4>>();
-            var flatByMat = new Dictionary<Material, List<Matrix4x4>>();
-            var byModelKey = ItemModels3D.AtlasMat != null
-                ? new Dictionary<string, List<Matrix4x4>>()
-                : null;
+            RecycleLists(standByMat);
+            RecycleLists(flatByMat);
+            RecycleStringLists(byModelKey);
+            bool useModels = ItemModels3D.AtlasMat != null;
             for (int i = 0; i < entries.Count; i++)
             {
                 var e = entries[i];
                 if (e.thing == null || !e.thing.Spawned) continue;
-                if (e.modelKey != null && byModelKey != null)
+                if (e.modelKey != null && useModels)
                 {
                     string ck = e.modelKey + "#" + e.modelVariant;
                     if (!byModelKey.TryGetValue(ck, out var ml))
                     {
-                        ml = new List<Matrix4x4>(32);
+                        ml = GetPooledList();
                         byModelKey[ck] = ml;
                     }
                     ml.Add(Matrix4x4.TRS(e.pos, Quaternion.AngleAxis(e.modelYaw, Vector3.up), Vector3.one));
@@ -183,7 +357,11 @@ namespace RimFirstPerson3D
                     ? Matrix4x4.TRS(e.pos, Quaternion.AngleAxis(e.flatYaw, Vector3.up), new Vector3(e.w, 1f, e.h))
                     : Matrix4x4.TRS(e.pos, Quaternion.identity, new Vector3(e.w, e.h, e.w));
                 var dict = e.flatCorpse ? flatByMat : standByMat;
-                if (!dict.TryGetValue(e.mat, out var l)) { l = new List<Matrix4x4>(64); dict[e.mat] = l; }
+                if (!dict.TryGetValue(e.mat, out var l))
+                {
+                    l = GetPooledList();
+                    dict[e.mat] = l;
+                }
                 l.Add(m);
             }
             var lf = LF;

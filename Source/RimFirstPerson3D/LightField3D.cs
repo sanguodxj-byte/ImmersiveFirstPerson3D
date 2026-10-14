@@ -331,7 +331,7 @@ namespace RimFirstPerson3D
             return res;
         }
 
-        // 低带地面投影：实心墙/山体近距遮挡(0)，超过 4 米的远距山影平滑衰减，树木仅在近距离(<=3步)产生通透斑驳半影(165..185)。
+        // 低带地面投影：实心墙/山体近距遮挡(0)，超过 4 米的远距山影平滑衰减，树木产生自然软半影林荫(95..155)。
         private byte RayLitLow(int x, int z, float y)
         {
             float rx = x + 0.5f, rz = z + 0.5f;
@@ -339,7 +339,7 @@ namespace RimFirstPerson3D
             if (y >= baseY + bottomH[selfIdx] && baseY + topH[selfIdx] > y)
                 y = baseY + topH[selfIdx] + 0.05f;
             float selfTree = treeTopH[selfIdx];
-            byte res = selfTree > 1.2f ? (byte)165 : (byte)255;
+            byte res = selfTree > 1.2f ? (byte)95 : (byte)255;
             float ceilY = maxOccY > baseY ? maxOccY : baseY + Metrics3D.MountainMaxHeight + Fps3DState.StoryHeight;
             int maxSteps = mountain != null && mountain.Ready ? 10 : 8;
             for (int k = 1; k <= maxSteps; k++)
@@ -367,11 +367,14 @@ namespace RimFirstPerson3D
                     }
                     return 0;
                 }
-                if (k <= 3)
+                if (k <= 6)
                 {
                     float tr = treeTopH[idx];
-                    if (tr > 1.2f && baseY + tr > y && res > 185)
-                        res = 185;
+                    if (tr > 1.2f && baseY + tr > y)
+                    {
+                        byte treeShadow = (byte)Mathf.RoundToInt(95f + (k - 1) * 11f);
+                        if (treeShadow < res) res = treeShadow;
+                    }
                 }
             }
             return res;

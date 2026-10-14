@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
 using RimFirstPerson3D;
 
 namespace MountainTests
@@ -35,6 +37,8 @@ namespace MountainTests
             TestEnclosedNaturalRoofAtMountainEdge();
             TestEnclosedNaturalRoofRingAndUpperCap();
             TestThinRockRoofProtectedConstraints();
+            TestProtectedTransitionGradients();
+            TestUnprotectedOutputFingerprint();
 
             Microbench250x250();
 
@@ -241,23 +245,33 @@ namespace MountainTests
                 for (int sx = 0; sx < shape.SampleWidth; sx++)
                 {
                     float h = shape.SampleHeight(sx, sz);
+                    if (h <= 0f) continue;
                     if (sx + 1 < shape.SampleWidth)
                     {
                         float hR = shape.SampleHeight(sx + 1, sz);
-                        float g = Math.Abs(hR - h) / 0.5f;
-                        if (g > maxGrad) maxGrad = g;
+                        if (hR > 0f)
+                        {
+                            float g = Math.Abs(hR - h) / 0.5f;
+                            if (g > maxGrad) maxGrad = g;
+                        }
                     }
                     if (sz + 1 < shape.SampleDepth)
                     {
                         float hU = shape.SampleHeight(sx, sz + 1);
-                        float g = Math.Abs(hU - h) / 0.5f;
-                        if (g > maxGrad) maxGrad = g;
+                        if (hU > 0f)
+                        {
+                            float g = Math.Abs(hU - h) / 0.5f;
+                            if (g > maxGrad) maxGrad = g;
+                        }
                     }
                     if (sx + 1 < shape.SampleWidth && sz + 1 < shape.SampleDepth)
                     {
                         float hDiag = shape.SampleHeight(sx + 1, sz + 1);
-                        float g = Math.Abs(hDiag - h) / (0.5f * 1.41421356f);
-                        if (g > maxGrad) maxGrad = g;
+                        if (hDiag > 0f)
+                        {
+                            float g = Math.Abs(hDiag - h) / (0.5f * 1.41421356f);
+                            if (g > maxGrad) maxGrad = g;
+                        }
                     }
                 }
             }
@@ -675,6 +689,68 @@ namespace MountainTests
                 "Enclosed natural roof ring covers every roof cell with downward winding", $"area={area}");
             Assert(holeClear, "Enclosed room preserves unroofed skylight in roof ring");
             Assert(capped, "Enclosed room roof respects upper-level height cap");
+        }
+
+        static void TestUnprotectedOutputFingerprint()
+        {
+            using var output = new MemoryStream();
+            using var writer = new BinaryWriter(output);
+            foreach (int seed in new[] { 1, 777, 9999 })
+                foreach (int kind in new[] { 0, 1, 2, 3 })
+                {
+                    const int w = 32, d = 28;
+                    var fp = new bool[w * d];
+                    for (int z = 0; z < d; z++)
+                        for (int x = 0; x < w; x++)
+                            fp[z * w + x] = kind == 0 || (kind == 1 && x > 3 && x < 27 && z > 3 && z < 24)
+                                || (kind == 2 && (x == 1 && z == 1 || x > 12 && x < 22 && z > 8 && z < 18))
+                                || (kind == 3 && (x - 16) * (x - 16) + (z - 14) * (z - 14) < 100
+                                    && !(x > 13 && x < 19 && z > 11 && z < 17));
+                    var shape = new MountainShape3D(w, d, seed);
+                    shape.Build(fp);
+                    foreach (float h in shape.Heights) writer.Write(h);
+                }
+            writer.Flush();
+            string fingerprint = Convert.ToHexString(SHA256.HashData(output.ToArray()));
+            Assert(fingerprint == "BC4D716A52882229BDD7C30A3A988728110F53C2E1D7C04F57E542FC0CBEADC9",
+                "Unprotected heightfield remains bit-identical across twelve inputs", fingerprint);
+        }
+
+        static void TestProtectedTransitionGradients()
+        {
+            const int w = 24, d = 24;
+            foreach (int seed in new[] { 1, 42, 777, 9999 })
+            {
+                var fp = new bool[w * d];
+                var protectedRoofs = new bool[w * d];
+                for (int z = 2; z < 22; z++)
+                    for (int x = 2; x < 22; x++) fp[z * w + x] = true;
+                for (int z = 4; z < 20; z++) protectedRoofs[z * w + 2] = true;
+                var shape = new MountainShape3D(w, d, seed);
+                shape.Build(fp, protectedRoofs);
+                float maxGradient = 0;
+                for (int sz = 0; sz < shape.SampleDepth; sz++)
+                    for (int sx = 0; sx < shape.SampleWidth; sx++)
+                    {
+                        float h = shape.SampleHeight(sx, sz);
+                        if (h <= 0) continue;
+                        foreach (var delta in new[] { (1, 0), (0, 1), (1, 1), (-1, 1) })
+                        {
+                            float neighbor = shape.SampleHeight(sx + delta.Item1, sz + delta.Item2);
+                            if (neighbor <= 0) continue;
+                            float distance = delta.Item1 != 0 && delta.Item2 != 0 ? 0.70710678f : 0.5f;
+                            maxGradient = Math.Max(maxGradient, Math.Abs(h - neighbor) / distance);
+                        }
+                    }
+                float limit = (float)Math.Tan(Metrics3D.MountainMaxSlopeDegrees * Math.PI / 180);
+                Assert(maxGradient <= limit + 1e-4f,
+                    $"Protected transition obeys existing slope limit excluding outer cliffs, seed={seed}",
+                    $"max={maxGradient}, limit={limit}");
+            }
+            var isolated = new MountainShape3D(1, 1, 17);
+            isolated.Build(new[] { true }, new[] { true });
+            Assert(isolated.CellMin(0, 0) >= Metrics3D.RockHeight,
+                "Protected isolated cell retains all nine constrained samples at map boundaries");
         }
 
         static void TestThinRockRoofProtectedConstraints()

@@ -73,7 +73,8 @@ namespace RimFirstPerson3D
         {
             public readonly List<Batch> batches = new List<Batch>();
             public readonly List<ModelBatch> modelBatches = new List<ModelBatch>();
-            public Mesh shadowMesh;
+            public Mesh contactShadowMesh;
+            public Mesh canopyShadowMesh;
             public Bounds bounds;
             public int plantCount;
             public bool dirty = true;
@@ -86,6 +87,21 @@ namespace RimFirstPerson3D
         private bool allDirty = true;
         private float builtScale = -1f;
 
+        private class ChunkDistanceComparer : IComparer<int>
+        {
+            public float camX;
+            public float camZ;
+            public int Compare(int a, int b)
+            {
+                float ax = (a / 10000 + 0.5f) * ChunkSize - camX;
+                float az = (a % 10000 + 0.5f) * ChunkSize - camZ;
+                float bx = (b / 10000 + 0.5f) * ChunkSize - camX;
+                float bz = (b % 10000 + 0.5f) * ChunkSize - camZ;
+                return (ax * ax + az * az).CompareTo(bx * bx + bz * bz);
+            }
+        }
+        private static readonly ChunkDistanceComparer distComparer = new ChunkDistanceComparer();
+
         /// <summary>把本层实例批网格的颜色统计并进探针（只在按需导出时走）。</summary>
         public void Summarize(Lighting3D.Probe p)
         {
@@ -97,7 +113,8 @@ namespace RimFirstPerson3D
             }
         }
 
-        private static Material shadowMat;
+        private static Material contactShadowMat;
+        private static Material canopyShadowMat;
         private static readonly Dictionary<Material, Material[]> tintCache = new Dictionary<Material, Material[]>();
 
         public PlantLayer3D(Map map, float baseY)
@@ -146,19 +163,35 @@ namespace RimFirstPerson3D
 
         // ---- 共享材质 ----
 
-        private static Material ShadowMat
+        private static Material ContactShadowMat
         {
             get
             {
-                if (shadowMat != null) return shadowMat;
-                shadowMat = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
+                if (contactShadowMat != null) return contactShadowMat;
+                contactShadowMat = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
                 {
-                    name = "Fps3D_PlantShadow",
-                    mainTexture = ProcTex3D.Radial(64, 0.25f, 1.35f),
-                    color = new Color(0f, 0f, 0f, 0.22f),
+                    name = "Fps3D_PlantContactShadow",
+                    mainTexture = ProcTex3D.Radial(64, 0.40f, 1.8f),
+                    color = new Color(0f, 0f, 0f, 0.60f),
                     renderQueue = 2915
                 };
-                return shadowMat;
+                return contactShadowMat;
+            }
+        }
+
+        private static Material CanopyShadowMat
+        {
+            get
+            {
+                if (canopyShadowMat != null) return canopyShadowMat;
+                canopyShadowMat = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
+                {
+                    name = "Fps3D_PlantCanopyShadow",
+                    mainTexture = ProcTex3D.Radial(64, 0.15f, 1.30f),
+                    color = new Color(0f, 0f, 0f, 0.52f),
+                    renderQueue = 2916
+                };
+                return canopyShadowMat;
             }
         }
 
@@ -264,8 +297,10 @@ namespace RimFirstPerson3D
                 Util3D.SafeDestroy(chunk.modelBatches[i].hull);
             }
             chunk.modelBatches.Clear();
-            Util3D.SafeDestroy(chunk.shadowMesh);
-            chunk.shadowMesh = null;
+            Util3D.SafeDestroy(chunk.contactShadowMesh);
+            Util3D.SafeDestroy(chunk.canopyShadowMesh);
+            chunk.contactShadowMesh = null;
+            chunk.canopyShadowMesh = null;
             chunk.plantCount = 0;
         }
 
@@ -299,7 +334,8 @@ namespace RimFirstPerson3D
 
             var starByMat = new Dictionary<Material, InstGroup>();
             var crossByMat = new Dictionary<Material, InstGroup>();
-            var shadowList = new List<Matrix4x4>();
+            var contactShadowList = new List<Matrix4x4>();
+            var canopyShadowList = new List<Matrix4x4>();
             var byArch = PlantModels3D.TintMat(0) != null
                 ? new Dictionary<string, InstGroup>()
                 : null;
@@ -344,11 +380,17 @@ namespace RimFirstPerson3D
                             bool isTreeModel = plant.def.plant != null && plant.def.plant.IsTree;
                             if (isTreeModel)
                             {
-                                float shRadius = Mathf.Clamp(size.x * 0.85f, 1.05f, 1.55f);
-                                shadowList.Add(Matrix4x4.TRS(
+                                float contactR = Mathf.Clamp(size.x * 0.75f, 0.95f, 1.45f);
+                                contactShadowList.Add(Matrix4x4.TRS(
+                                    new Vector3(dp.x + worldOffset.x, baseY + 0.015f, dp.z + worldOffset.z),
+                                    Quaternion.identity,
+                                    new Vector3(contactR, 1f, contactR)));
+
+                                float canopyR = Mathf.Clamp(size.x * 1.40f, 2.2f, 3.8f);
+                                canopyShadowList.Add(Matrix4x4.TRS(
                                     new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
                                     Quaternion.identity,
-                                    new Vector3(shRadius, 1f, shRadius)));
+                                    new Vector3(canopyR, 1f, canopyR)));
                             }
                             continue;
                         }
@@ -370,9 +412,13 @@ namespace RimFirstPerson3D
                         var pos = new Vector3(plantDp.x + worldOffset.x, baseY, plantDp.z + worldOffset.z);
                         if (isTree)
                         {
-                            float shR = Mathf.Clamp(visualSize.x * 0.85f, 1.05f, 1.55f);
-                            shadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
-                                new Vector3(shR, 1f, shR)));
+                            float contactR = Mathf.Clamp(visualSize.x * 0.75f, 0.95f, 1.45f);
+                            contactShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.015f, 0f), Quaternion.identity,
+                                new Vector3(contactR, 1f, contactR)));
+
+                            float canopyR = Mathf.Clamp(visualSize.x * 1.40f, 2.2f, 3.8f);
+                            canopyShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
+                                new Vector3(canopyR, 1f, canopyR)));
                         }
 
                         var target = isTree ? starByMat : crossByMat;
@@ -406,8 +452,10 @@ namespace RimFirstPerson3D
                     var mesh = Util3D.BuildInstancedMesh(Util3D.CrossMesh, kv.Value.mats, lf, worldOffset, out var posArr, out var colBuf, 1.45f, tintsArr);
                     if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.CrossMesh, mesh = mesh, positions = posArr, colors = colBuf, tints = tintsArr });
                 }
-                if (shadowList.Count > 0)
-                    chunk.shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowList);
+                if (contactShadowList.Count > 0)
+                    chunk.contactShadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, contactShadowList);
+                if (canopyShadowList.Count > 0)
+                    chunk.canopyShadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, canopyShadowList);
 
                 if (byArch != null)
                 {
@@ -488,15 +536,9 @@ namespace RimFirstPerson3D
                 if (sortedDirtyKeys.Count > 3)
                 {
                     Vector3 camPos = CameraRig3D.LastCamPos - worldOffset;
-                    float camX = camPos.x, camZ = camPos.z;
-                    sortedDirtyKeys.Sort((a, b) =>
-                    {
-                        float ax = (a / 10000 + 0.5f) * ChunkSize - camX;
-                        float az = (a % 10000 + 0.5f) * ChunkSize - camZ;
-                        float bx = (b / 10000 + 0.5f) * ChunkSize - camX;
-                        float bz = (b % 10000 + 0.5f) * ChunkSize - camZ;
-                        return (ax * ax + az * az).CompareTo(bx * bx + bz * bz);
-                    });
+                    distComparer.camX = camPos.x;
+                    distComparer.camZ = camPos.z;
+                    sortedDirtyKeys.Sort(distComparer);
                 }
 
                 int budget = Fps3DState.ChunkRebuildBudget;
@@ -533,15 +575,18 @@ namespace RimFirstPerson3D
         {
             int inst = 0;
             int batchesCount = 0;
-            var shadowM = ShadowMat;
-            Matrix4x4 shadowMatrix = Matrix4x4.identity;
+            var contactM = ContactShadowMat;
+            var canopyM = CanopyShadowMat;
+            Matrix4x4 canopyMatrix = Matrix4x4.identity;
             var env = Lighting3D.Current;
-            if (shadowM != null)
-                shadowM.color = new Color(0f, 0f, 0f, 0.20f * Mathf.Clamp01(env.glow));
+            if (contactM != null)
+                contactM.color = new Color(0f, 0f, 0f, 0.60f * Mathf.Clamp01(env.glow));
+            if (canopyM != null)
+                canopyM.color = new Color(0f, 0f, 0f, 0.52f * Mathf.Clamp01(env.glow));
             if (env.glow > 0.05f && env.sunDir.y > 0.05f)
             {
-                float offScale = Mathf.Clamp(0.28f / Mathf.Max(0.25f, env.sunDir.y), 0.12f, 0.55f);
-                shadowMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * offScale, 0f, -env.sunDir.z * offScale));
+                float projDist = Mathf.Clamp(1.85f / Mathf.Max(0.22f, env.sunDir.y), 0.75f, 4.5f);
+                canopyMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * projDist, 0f, -env.sunDir.z * projDist));
             }
 
             var modelBaseMat = PlantModels3D.TintMat(0);
@@ -575,9 +620,14 @@ namespace RimFirstPerson3D
                     batchesCount++;
                     PerfCounters.PlantMeshesDrawn++;
                 }
-                if (ch.shadowMesh != null && shadowM != null)
+                if (ch.contactShadowMesh != null && contactM != null)
                 {
-                    Graphics.DrawMesh(ch.shadowMesh, shadowMatrix, shadowM, 0);
+                    Graphics.DrawMesh(ch.contactShadowMesh, Matrix4x4.identity, contactM, 0);
+                    batchesCount++;
+                }
+                if (ch.canopyShadowMesh != null && canopyM != null)
+                {
+                    Graphics.DrawMesh(ch.canopyShadowMesh, canopyMatrix, canopyM, 0);
                     batchesCount++;
                 }
                 inst += ch.plantCount;

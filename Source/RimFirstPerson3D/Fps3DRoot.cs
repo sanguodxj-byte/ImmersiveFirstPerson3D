@@ -81,6 +81,10 @@ namespace RimFirstPerson3D
             // 刷新本帧相机视锥（供各层 chunk 与逐件绘制的屏幕外/超远剔除）
             Frustum3D.Update();
             SkyScenery.DrawDistantRing();
+            if (CameraRig3D.Cam != null)
+            {
+                PerfCounters.ResetFrame();
+            }
             foreach (var m in Streaming3D.RenderMaps(Find.CurrentMap))
             {
                 if (m == null || m.Disposed) continue;
@@ -93,7 +97,6 @@ namespace RimFirstPerson3D
                     sc.Update();
                     if (CameraRig3D.Cam != null)
                     {
-                        PerfCounters.ResetFrame();
                         sc.Draw(camPos);
                     }
                 }
@@ -186,6 +189,13 @@ namespace RimFirstPerson3D
         private void OnGUI()
         {
             if (!Fps3DState.Active || Current.ProgramState != ProgramState.Playing) return;
+
+            // 空格键在第一人称接管期专供跳跃，在此尽早消费按键事件，防止透传到 GlobalControls / TimeControls 触发意外暂停
+            if (CameraRig3D.VanillaInputTakenOver && Event.current != null && Event.current.isKey && Event.current.keyCode == KeyCode.Space)
+            {
+                Event.current.Use();
+            }
+
             bool isRepaint = Event.current != null && Event.current.type == EventType.Repaint;
             if (!isRepaint && !FpsHud3D.HasInteractiveUI) return;
 
@@ -332,12 +342,17 @@ namespace RimFirstPerson3D
                 // M：指挥面板。终端抬起，地图和原版操作界面都在屏幕上，主画面保持第一人称。
                 if (Input.GetKeyDown(KeyCode.M)) MapScreen3D.Toggle();
 
-                // 原版暂停与时间控制热键放行：空格键（暂停）与时间速度按键
+                // 原版暂停与时间控制热键放行：
+                // 第一人称移动接管期（VanillaInputTakenOver）空格键作为第一人称跳跃键；非接管期（Esc唤出光标/Alt等）或通过Pause按键切换暂停
                 if (Find.TickManager != null)
                 {
-                    if (KeyBindingDefOf.TogglePause.KeyDownEvent || Input.GetKeyDown(KeyCode.Space))
-                        Find.TickManager.TogglePaused();
-                    else if (KeyBindingDefOf.TimeSpeed_Normal.KeyDownEvent)
+                    bool jumpTakesSpace = CameraRig3D.VanillaInputTakenOver;
+                    if (!jumpTakesSpace)
+                    {
+                        if (KeyBindingDefOf.TogglePause.KeyDownEvent || Input.GetKeyDown(KeyCode.Space))
+                            Find.TickManager.TogglePaused();
+                    }
+                    if (KeyBindingDefOf.TimeSpeed_Normal.KeyDownEvent)
                         Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
                     else if (KeyBindingDefOf.TimeSpeed_Fast.KeyDownEvent)
                         Find.TickManager.CurTimeSpeed = TimeSpeed.Fast;

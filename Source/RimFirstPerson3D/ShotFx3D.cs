@@ -111,11 +111,12 @@ namespace RimFirstPerson3D
             var map = __instance.Map;
             if (map == null) return;
             var dp = __instance.DrawPos;
-            var at = new Vector3(dp.x, Mathf.Max(0.05f, dp.y), dp.z);
+            bool onPawn = hitThing is Pawn;
+            float hitY = onPawn ? (Metrics3D.PawnHeight * 0.62f) : 0.15f;
+            var at = new Vector3(dp.x, hitY, dp.z);
             float dmg = 1f;
             try { dmg = __instance.DamageAmount; } catch { }
             float size = Mathf.Clamp(0.26f + dmg * 0.012f, 0.26f, 0.95f);
-            bool onPawn = hitThing is Pawn;
             AddPuff(map.uniqueID, at, size, onPawn ? BloodTint : DustTint);
         }
 
@@ -173,7 +174,16 @@ namespace RimFirstPerson3D
                 var p = list[i] as Projectile;
                 if (p == null || p.Destroyed) continue;
                 var dp = p.DrawPos;
-                var wp = new Vector3(dp.x + wo.x, baseY + Mathf.Max(0f, dp.y), dp.z + wo.z);
+                // 原版 dp.y 是 AltitudeLayer.Projectile 的图层海拔（约 20~25）加上抛物线高度。
+                // 3D 第一人称真实高度：枪口发射基准高度（约 1.08 米）加上抛物线弧线差值
+                float muzzleY = Metrics3D.PawnHeight * 0.62f;
+                float arc = 0f;
+                if (p.def != null)
+                {
+                    arc = Mathf.Max(0f, dp.y - p.def.Altitude);
+                }
+                float bulletY = baseY + muzzleY + arc;
+                var wp = new Vector3(dp.x + wo.x, bulletY, dp.z + wo.z);
                 if (!Frustum3D.VisiblePoint(wp, 1.5f)) continue;
                 var dir = SafeDir(p);
 

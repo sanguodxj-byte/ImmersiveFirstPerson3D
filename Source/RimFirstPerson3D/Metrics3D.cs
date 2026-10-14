@@ -109,19 +109,19 @@ namespace RimFirstPerson3D
 
         // 山体高程与坡度独立于室内层高；格距仍按一米计。
         // 任何实际属于山体的格子高度严格大于 2 米（外沿陡壁起跳 >= 2.35m），消除可走上去的缓坡错觉。
-        public const float MountainMinHeight = 2.35f;
-        public const float MountainEdgeHeight = 2.68f;
-        public const float MountainMaxHeight = 24f;
-        public const float MountainFootSlopeDegrees = 58f;
-        public const float MountainMainSlopeDegrees = 62f;
-        public const float MountainMaxSlopeDegrees = 74f;
-        public const float MountainFootDistance = 2f;
-        public const float MountainShoulderDistance = 8f;
-        public const float MountainNoiseScale = 7f;
-        public const float MountainNoiseAmplitude = 2.1f;
-        public const int MountainSmoothingPasses = 1;
+        public const float MountainMinHeight = 2.05f;
+        public const float MountainEdgeHeight = 2.45f;
+        public const float MountainMaxHeight = 18f;
+        public const float MountainFootSlopeDegrees = 38f;
+        public const float MountainMainSlopeDegrees = 45f;
+        public const float MountainMaxSlopeDegrees = 52f;
+        public const float MountainFootDistance = 2.5f;
+        public const float MountainShoulderDistance = 12f;
+        public const float MountainNoiseScale = 14f;
+        public const float MountainNoiseAmplitude = 0.95f;
+        public const int MountainSmoothingPasses = 3;
         public const float MountainCaveCeiling = CeilingHeight;
-        public const float MountainTextureMeters = 4f;
+        public const float MountainTextureMeters = 5f;
 
         public const float DoorHeight = 2.05f;
         public const float DoorWidth = 0.95f;

@@ -37,6 +37,18 @@ namespace RimFirstPerson3D
             if (doorTryCloseM != null)
                 harmony.Patch(doorTryCloseM,
                     postfix: new HarmonyMethod(typeof(ChangeNotify), nameof(AfterDoorOpenChanged)));
+
+            // 尸体腐烂阶段改变（Fresh -> Rotting -> Dessicated），精准标脏触发重新解析外观，无需轮询
+            var rotStageChangedM = AccessTools.Method(typeof(Corpse), nameof(Corpse.RotStageChanged));
+            if (rotStageChangedM != null)
+                harmony.Patch(rotStageChangedM,
+                    postfix: new HarmonyMethod(typeof(ChangeNotify), nameof(AfterRotStageChanged)));
+        }
+
+        private static void AfterRotStageChanged(Corpse __instance)
+        {
+            if (__instance == null) return;
+            SceneRegistry.NotifyThing(__instance.MapHeld, __instance);
         }
 
         private static void AfterDoorOpenChanged(Building_Door __instance)

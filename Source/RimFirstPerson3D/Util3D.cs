@@ -67,7 +67,7 @@ namespace RimFirstPerson3D
                 var cols = new Color32[verts.Count];
                 for (int i = 0; i < verts.Count; i++)
                 {
-                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(135f, 255f, Mathf.Clamp01(verts[i].y)));
+                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(120f, 255f, Mathf.Clamp01(verts[i].y)));
                     cols[i] = new Color32(v, v, v, 255);
                 }
                 crossMesh.colors32 = cols;
@@ -282,7 +282,7 @@ namespace RimFirstPerson3D
                 var cols = new Color32[verts.Count];
                 for (int i = 0; i < verts.Count; i++)
                 {
-                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(135f, 255f, Mathf.Clamp01(verts[i].y)));
+                    byte v = (byte)Mathf.RoundToInt(Mathf.Lerp(110f, 255f, Mathf.Clamp01(verts[i].y)));
                     cols[i] = new Color32(v, v, v, 255);
                 }
                 starMesh.colors32 = cols;
@@ -319,11 +319,11 @@ namespace RimFirstPerson3D
                 for (int i = 0; i < vn; i++)
                 {
                     float c01 = sc[i].r * (1f / 255f);
-                    float h01 = Mathf.Clamp01((sc[i].r - 135f) * (1f / 120f));
+                    float h01 = Mathf.Clamp01((sc[i].r - 100f) * (1f / 155f));
                     var sv0 = sv[i];
                     float ndl = sv0.x * sx + sv0.z * sz;
                     scratchBaseW[i] = (int)(c01 * baseLift * 1024f + 0.5f);
-                    scratchSunW[i] = (int)(c01 * (0.42f * h01 + 0.18f * Mathf.Clamp01(ndl + 0.35f)) * 1024f + 0.5f);
+                    scratchSunW[i] = (int)(c01 * (0.45f * h01 + 0.20f * Mathf.Clamp01(ndl + 0.35f)) * 1024f + 0.5f);
                 }
             }
             else

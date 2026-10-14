@@ -44,6 +44,7 @@ namespace RimFirstPerson3D
         private readonly Dictionary<int, Chunk> chunks = new Dictionary<int, Chunk>();
         private bool allDirty = true;
         private readonly HashSet<Thing> rebuildSeen = new HashSet<Thing>();
+        private readonly List<Thing> cachedBuildingModels = new List<Thing>();
         private readonly List<Thing> cachedFurniture = new List<Thing>();
         private readonly List<Thing> cachedWreckage = new List<Thing>();
         private bool furnitureListDirty = true;
@@ -476,7 +477,8 @@ namespace RimFirstPerson3D
                     bool s = !SolidAt(c + new IntVec3(0, 0, 1));
                     bool w = !SolidAt(c + new IntVec3(-1, 0, 0));
                     bool e = !SolidAt(c + new IntVec3(1, 0, 0));
-                    b.AppendSolidCell(c.x, c.z, baseY, Fps3DState.WallHeight, n, s, w, e);
+                    // 山体洞穴天花（2.70m 朝下面）与本顶面精确共面会 z-fighting 闪烁，命中格跳过顶面
+                    b.AppendSolidCell(c.x, c.z, baseY, Fps3DState.WallHeight, n, s, w, e, top: !CaveCeilCovers(c));
                     if (Fps3DState.DrawOutlines)
                     {
                         hull = hull ?? new MeshBuilderX();
@@ -496,6 +498,10 @@ namespace RimFirstPerson3D
                     Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one));
                 return;
             }
+
+            // 资产模型建筑：交给 BuildingModels3D 用外部 OBJ 逐件绘制（优先于家具关键字匹配，
+            // 避免 Ancient 桌台等被程序化几何用别的件像素错配）。
+            if (BuildingModels3D.Handles(t)) return;
 
             // 家具：交给 Furniture3D 按三视图重构的模型逐件绘制，不再立板。
             if (Furniture3D.Handles(t)) return;
@@ -824,7 +830,7 @@ namespace RimFirstPerson3D
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
-                if (!IsRoofCoveredAt(c))
+                if (!IsRoofCoveredAt(c) && !CaveCeilCovers(c))
                 {
                     b.AppendWallTop(c.x, c.z, y1, top);
                     if (shell) hull.AppendWallTopHull(c.x, c.z, y1, outline);
@@ -895,7 +901,7 @@ namespace RimFirstPerson3D
                 if (!chunkRect.Contains(c)) continue;
 
                 // 顶部封盖在 yTop，采用两侧填充墙的顶盖纹理（若已被房顶覆盖则不重复发射）
-                if (!IsRoofCoveredAt(c))
+                if (!IsRoofCoveredAt(c) && !CaveCeilCovers(c))
                 {
                     wallB.AppendWallTop(c.x, c.z, yTop, wallTop);
                     if (shell) hull.AppendWallTopHull(c.x, c.z, yTop, outline);
@@ -1093,7 +1099,7 @@ namespace RimFirstPerson3D
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
-                if (!IsRoofCoveredAt(c))
+                if (!IsRoofCoveredAt(c) && !CaveCeilCovers(c))
                 {
                     b.AppendWallTop(c.x, c.z, y1, top);
                     if (shell) sh.AppendWallTopHull(c.x, c.z, y1, outline);
@@ -1156,6 +1162,7 @@ namespace RimFirstPerson3D
         private void BakeConstructible(Thing t, CellRect occ, CellRect chunkRect,
             Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX bpHull, float outline)
         {
+            if (BuildingModels3D.Handles(t)) return;
             if (Furniture3D.Handles(t)) return;
             var atlas = WallAtlasTex();
             Material bpMat = Util3D.BlueprintMatFor(atlas, FilterMode.Point);
@@ -1449,6 +1456,16 @@ namespace RimFirstPerson3D
         {
             if (!c.InBounds(map) || roofCovered == null) return false;
             return roofCovered[c.z * map.Size.x + c.x];
+        }
+
+        // 山体洞穴天花板朝下盖满整格，高度恰为 MountainCaveCeiling == WallHeight == 2.70m。
+        // 墙体/门楣/穿墙设备在此类格上再发朝上顶面，两者精确共面而三角化不同（一面是
+        // 两三角形四边形，一面是逐格裁剪的子三角形带），深度逐像素争用 → 偶发重叠闪烁。
+        // 天花已由山体层封顶，建筑层这类格跳过顶面。
+        private bool CaveCeilCovers(IntVec3 c)
+        {
+            if (mountain == null || !mountain.Ready || !c.InBounds(map)) return false;
+            return mountain.Cells[c.z * map.Size.x + c.x] == 2;
         }
 
         private bool HasFullHeightWallOrHeaderAt(IntVec3 c)
@@ -1888,6 +1905,7 @@ namespace RimFirstPerson3D
                     PerfCounters.OutlineMeshesDrawn++;
                 }
             }
+            DrawBuildingModels();
             DrawFurniture();
             DrawWreckage();
         }
@@ -1896,17 +1914,71 @@ namespace RimFirstPerson3D
         {
             if (!furnitureListDirty) return;
             furnitureListDirty = false;
+            cachedBuildingModels.Clear();
             cachedFurniture.Clear();
             cachedWreckage.Clear();
-            var all = map.listerThings.AllThings;
-            for (int i = 0; i < all.Count; i++)
+
+            // 优先遍历预索引的人工建筑、蓝图和框架，避免在全图 AllThings（数万物体）中全量盲扫
+            var arts = map.listerThings.ThingsInGroup(ThingRequestGroup.BuildingArtificial);
+            if (arts != null)
             {
-                var t = all[i];
+                for (int i = 0; i < arts.Count; i++)
+                {
+                    var t = arts[i];
+                    if (t == null || !t.Spawned || t.def == null) continue;
+                    if (BuildingModels3D.Handles(t)) cachedBuildingModels.Add(t);
+                    else if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
+                    else if (Wreckage3D.Handles(t)) cachedWreckage.Add(t);
+                }
+            }
+
+            var bps = map.listerThings.ThingsInGroup(ThingRequestGroup.Blueprint);
+            if (bps != null)
+            {
+                for (int i = 0; i < bps.Count; i++)
+                {
+                    var t = bps[i];
+                    if (t == null || !t.Spawned || t.def == null) continue;
+                    if (BuildingModels3D.Handles(t)) cachedBuildingModels.Add(t);
+                    else if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
+                }
+            }
+
+            var frames = map.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame);
+            if (frames != null)
+            {
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    var t = frames[i];
+                    if (t == null || !t.Spawned || t.def == null) continue;
+                    if (BuildingModels3D.Handles(t)) cachedBuildingModels.Add(t);
+                    else if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
+                }
+            }
+        }
+
+        // 资产模型建筑逐件绘制（模型按 defName 缓存，不并入 chunk 网格）。
+        private void DrawBuildingModels()
+        {
+            if (!BuildingModels3D.Enabled) return;
+            EnsureSpecialLists();
+            var camPos = CameraRig3D.LastCamPos;
+            float maxDistSq = (Frustum3D.MaxDist + 4f) * (Frustum3D.MaxDist + 4f);
+            for (int i = 0; i < cachedBuildingModels.Count; i++)
+            {
+                var t = cachedBuildingModels[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
-                bool isConstruct = t is Blueprint || t is Frame;
-                if (t.def.category != ThingCategory.Building && !isConstruct) continue;
-                if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
-                else if (!isConstruct && Wreckage3D.Handles(t)) cachedWreckage.Add(t);
+                try
+                {
+                    var dp = t.DrawPos;
+                    var wp = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z);
+                    float dx = wp.x - camPos.x, dz = wp.z - camPos.z;
+                    if (dx * dx + dz * dz > maxDistSq) continue;
+                    if (t.Position.Fogged(map)) continue;
+                    if (!Frustum3D.VisiblePoint(wp, 4f)) continue;
+                    BuildingModels3D.TryDraw(t, wp, InstanceLit(t, dp));
+                }
+                catch { }
             }
         }
 
@@ -1915,15 +1987,19 @@ namespace RimFirstPerson3D
         {
             if (!Furniture3D.Enabled) return;
             EnsureSpecialLists();
+            var camPos = CameraRig3D.LastCamPos;
+            float maxDistSq = (Frustum3D.MaxDist + 4f) * (Frustum3D.MaxDist + 4f);
             for (int i = 0; i < cachedFurniture.Count; i++)
             {
                 var t = cachedFurniture[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
                 try
                 {
-                    if (t.Position.Fogged(map)) continue;
                     var dp = t.DrawPos;
                     var wp = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z);
+                    float dx = wp.x - camPos.x, dz = wp.z - camPos.z;
+                    if (dx * dx + dz * dz > maxDistSq) continue;
+                    if (t.Position.Fogged(map)) continue;
                     if (!Frustum3D.VisiblePoint(wp, 4f)) continue;
                     Furniture3D.TryDraw(t, wp, InstanceLit(t, dp));
                 }
@@ -1936,15 +2012,19 @@ namespace RimFirstPerson3D
         {
             if (!Wreckage3D.Enabled) return;
             EnsureSpecialLists();
+            var camPos = CameraRig3D.LastCamPos;
+            float maxDistSq = (Frustum3D.MaxDist + 4f) * (Frustum3D.MaxDist + 4f);
             for (int i = 0; i < cachedWreckage.Count; i++)
             {
                 var t = cachedWreckage[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
                 try
                 {
-                    if (t.Position.Fogged(map)) continue;
                     var dp = t.DrawPos;
                     var wp = new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z);
+                    float dx = wp.x - camPos.x, dz = wp.z - camPos.z;
+                    if (dx * dx + dz * dz > maxDistSq) continue;
+                    if (t.Position.Fogged(map)) continue;
                     // 残骸样板最大 6x4，取半径 4 保守放行，避免贴边误剔。
                     if (!Frustum3D.VisiblePoint(wp, 4f)) continue;
                     Wreckage3D.TryDraw(t, wp, InstanceLit(t, dp));
@@ -2056,7 +2136,7 @@ namespace RimFirstPerson3D
             // 满格建筑挡住的面 + 顶面。风序与 AppendBox 对应面一致（法线朝外），
             // 侧/顶 UV 保持 0..1（墙贴图是图集子格，不能跨格平铺）。
             public void AppendSolidCell(float x, float z, float y0, float h,
-                bool n, bool s, bool w, bool e)
+                bool n, bool s, bool w, bool e, bool top = true)
             {
                 float x1 = x + 1f, z1 = z + 1f, y1 = y0 + h;
                 var id = Matrix4x4.identity;
@@ -2070,7 +2150,7 @@ namespace RimFirstPerson3D
                     new Vector3(x, y1, z1), new Vector3(x, y1, z), a, b, c, d, id);
                 if (e) Quad(new Vector3(x1, y0, z1), new Vector3(x1, y0, z),
                     new Vector3(x1, y1, z), new Vector3(x1, y1, z1), a, b, c, d, id);
-                Quad(new Vector3(x, y1, z1), new Vector3(x1, y1, z1),
+                if (top) Quad(new Vector3(x, y1, z1), new Vector3(x1, y1, z1),
                     new Vector3(x1, y1, z), new Vector3(x, y1, z), a, b, c, d, id);
             }
 

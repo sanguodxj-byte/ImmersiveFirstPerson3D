@@ -536,14 +536,20 @@ namespace RimFirstPerson3D
                     if (!Frustum3D.Visible(wb)) continue;
                 }
                 Color edgeLit = Color.white;
-                if (lf != null)
-                {
-                    edgeLit = lf.Shade(chunk.bounds.center, Vector3.up, false);
-                }
+                bool edgeLitComputed = false;
                 for (int i = 0; i < chunk.surfaces.Count; i++)
                 {
                     var surf = chunk.surfaces[i];
-                    var drawMat = surf.isEdgeFan && lf != null ? Lighting3D.MatFor(surf.mat, edgeLit) : surf.mat;
+                    Material drawMat = surf.mat;
+                    if (surf.isEdgeFan && lf != null)
+                    {
+                        if (!edgeLitComputed)
+                        {
+                            edgeLit = lf.Shade(chunk.bounds.center, Vector3.up, false);
+                            edgeLitComputed = true;
+                        }
+                        drawMat = Lighting3D.MatFor(surf.mat, edgeLit);
+                    }
                     Graphics.DrawMesh(surf.mesh, m, drawMat, 0);
                     PerfCounters.TerrainMeshesDrawn++;
                     PerfCounters.TerrainQuads += surf.quadCount;

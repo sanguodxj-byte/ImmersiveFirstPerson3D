@@ -68,7 +68,7 @@ namespace RimFirstPerson3D
             // 竖面取图里那条带，图里没画的圆柱一律 wood。
             new Recipe(new[] { "standinglamp" }, Arch.Lamp, "standinglamp"),
             new Recipe(new[] { "floodlight" }, Arch.FloodLight, "floodlight"),
-            new Recipe(new[] { "column" }, Arch.Column, "column"),
+            new Recipe(new[] { "column", "pillar" }, Arch.Column, "column"),
             new Recipe(new[] { "plantpot" }, Arch.Pot, "plantpot"),
             new Recipe(new[] { "penmarker" }, Arch.Marker, "penmarker"),
             // Royalty 大件：王座沿用扶手椅的几何（箱体 + 靠背 + 两扶手），只把靠背加高；
@@ -841,7 +841,7 @@ namespace RimFirstPerson3D
         private const float PillowDepth = 0.34f;        // 沿床长方向占多深
         private const float BedrollThickness = 0.08f;
         private const float ChairBackThickness = 0.06f;
-        private const float ColumnHeight = 1.85f;   // 原版柱图 64x128：1 格宽、2 格高
+        public const float ColumnHeight = Fps3DState.WallHeight + 0.08f;   // 支撑柱高度略高于墙体（2.70m -> 2.78m），顶入天花板与承重梁
         private const float ThroneSeatHeight = 0.48f;
         private const float ThroneBackHeight = 1.35f;
         private const float DrapeRodHeight = 1.42f;
@@ -1172,7 +1172,7 @@ namespace RimFirstPerson3D
                     {
                         kind = Prim.Cylinder,
                         pos = new Vector3(0f, 0.14f, 0f),
-                        size = new Vector3(0.34f, ColumnHeight - 0.30f, 0.34f),
+                        size = new Vector3(0.36f, ColumnHeight - 0.30f, 0.36f),
                         uv = ci
                     });
                     int bi = uvs.Count;
@@ -1181,14 +1181,14 @@ namespace RimFirstPerson3D
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0f, 0f),
-                        size = new Vector3(0.56f, 0.14f, 0.56f),
+                        size = new Vector3(0.58f, 0.14f, 0.58f),
                         uv = bi
                     });
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, ColumnHeight - 0.16f, 0f),
-                        size = new Vector3(0.60f, 0.16f, 0.60f),
+                        size = new Vector3(0.62f, 0.16f, 0.62f),
                         uv = bi
                     });
                     break;

@@ -10,9 +10,22 @@ namespace RimFirstPerson3D
 {
     // Pawn 层：立式立牌，始终面向相机。
     // 复用原版渲染树：rootNode.AppendRequests 拿到 paint 顺序的绘制请求
-    // （含各层材质、头部偏移、缩放、朝向的完整矩阵），再把平面画布立起来。
+    // （含各层高清材质、头部偏移、缩放、朝向及动态表情的完整矩阵），再把平面画布立起来。
+    //
+    // 动态表情（[NL] Facial Animation 类）兼容：
+    // - FA 用 NLFacialAnimationMasterNode/PartNode 挂在原版 PawnRenderNode_Head 下替换头部，
+    //   并在 PostfixParallelPreDraw 里把原版头请求从 tree.drawRequests 摘掉。本层自建请求
+    //   列表不经那道补丁，必须自己镜像摘头，否则「原版头 + 表情脸」双绘。
+    // - FA 的表情帧推进在 NLFacialAnimationMasterNodeWorker.PreDraw 里，由原版
+    //   PawnRenderTree.Draw 逐请求调用。3D 模式下原版绘制被压制，本层必须同样逐请求
+    //   调 PreDraw，否则表情永远停在最后一帧（不眨眼、不随情绪/任务切换）。
+    //
+    // HAR（Humanoid Alien Races）兼容：额外部件是渲染树上的 AlienPawnRenderNode_BodyAddon
+    // 节点。第一人称附身自身的额外部件贴在相机上画（尾巴/翅膀/耳角挡视野），跳过不画；
+    // 其他 pawn 的额外部件保留——立牌上要有这些部件才像该种族。
     public class PawnLayer3D
     {
+        private static readonly List<PawnGraphicDrawRequest> cachedDrawRequests = new List<PawnGraphicDrawRequest>();
         private readonly Map map;
         private readonly float baseY;
 
@@ -91,7 +104,12 @@ namespace RimFirstPerson3D
             if (xz.HasValue) { px = xz.Value.x; pz = xz.Value.y; }
             // 身处水体则整具下沉（水面落差 + 水深），脚踩河床而非浮在水面上方。
             float sink = WaterLayer3D.SinkAt(map, cell);
-            var pos = new Vector3(px, LyingYFor(pawn, baseY) - sink, pz);
+            float py = LyingYFor(pawn, baseY) - sink;
+            if (pawn == CameraRig3D.Possessed && CameraRig3D.FootPoint.HasValue)
+            {
+                py = baseY + CameraRig3D.FootPoint.Value.y - sink;
+            }
+            var pos = new Vector3(px, py, pz);
             if (!Frustum3D.VisiblePoint(pos, 2.5f)) return;
 
             var tree = pawn.Drawer != null && pawn.Drawer.renderer != null ? pawn.Drawer.renderer.renderTree : null;
@@ -136,31 +154,87 @@ namespace RimFirstPerson3D
 
             if (pawn.RaceProps.Humanlike)
             {
-                // 首选：原版远缩放 blit 路线——整只 pawn（含服装头部）烘进图集页，
-                // mesh 自带图集 UV，材质用图集贴图。
-                PawnTextureAtlasFrameSet fs;
-                if (GlobalTextureAtlasManager.TryGetPawnFrameSet(pawn, out fs, out _) && fs != null && fs.atlas != null)
+                // 首选：复用原版 RenderTree 的 AppendRequests 获取全量绘制请求
+                // 保留 100% 原始贴图精度，完整支持动态表情模组（Facial Animation 等）的表情节点与每帧更新
+                if (tree != null && tree.rootNode != null)
                 {
-                    Mesh blit = null;
-                    try { blit = BlitMesh(pawn.Drawer.renderer, fs, viewRot, PawnDrawMode.BodyAndHead); }
+                    cachedDrawRequests.Clear();
+                    var parms = BuildParms(pawn, Vector3.zero, viewRot);
+                    try { tree.rootNode.AppendRequests(parms, cachedDrawRequests); }
                     catch { }
-                    if (blit != null)
+
+                    if (cachedDrawRequests.Count > 0)
                     {
-                        Material mat = Lighting3D.MatFor(
-                            MaterialPool.MatFrom(new MaterialRequest(fs.atlas, ShaderDatabase.Cutout)), lit);
-                        var b = blit.bounds;
-                        float sy = H / Mathf.Max(0.05f, b.size.z);
-                        float sx = W / Mathf.Max(0.05f, b.size.x);
+                        // 动态表情（Facial Animation 类）摘头：FA 把表情层挂在原版
+                        // PawnRenderNode_Head 下替换头部，并在 PostfixParallelPreDraw 里把
+                        // 原版头请求从 tree.drawRequests 摘掉。本层直接 AppendRequests 自建
+                        // 列表，不经那道补丁，要自己镜像摘头，否则原版头和表情脸双绘叠脏。
+                        bool faActive = false;
+                        for (int j = 0; j < cachedDrawRequests.Count; j++)
+                        {
+                            var n = cachedDrawRequests[j].node;
+                            if (n != null && n.GetType().Name.StartsWith("NLFacialAnimation", StringComparison.Ordinal))
+                            {
+                                faActive = true;
+                                break;
+                            }
+                        }
+                        // 第一人称自身的 HAR 额外部件（尾/翅/耳角）贴在相机位置画，跳过；
+                        // 其他 pawn 的额外部件保留——立牌上要有这些部件才像该种族。
+                        bool skipHarAddons = fpSelf;
+
+                        float sy = H / 1.55f;
+                        float sx = W / 1.15f;
                         var rot = Quaternion.AngleAxis(yaw + 180f, Vector3.up) * Quaternion.Euler(-90f, 0f, 0f);
-                        var fwd = rot * Vector3.forward;
-                        var center = pos + new Vector3(0f, -b.min.z * sy, 0f) + fwd * 0.02f;
-                        var matrix = Matrix4x4.TRS(center, rot, new Vector3(sx, sy, 1f));
-                        Graphics.DrawMesh(blit, matrix, mat, 0);
-                        HitFx3D.DrawOverlay(blit, matrix, mat, hurt);
-                        PerfCounters.PawnQuads++;
-                        return;
+                        var basis = Matrix4x4.TRS(pos + new Vector3(0f, 0.75f * sy, 0f), rot, new Vector3(sx, 1f, sy));
+
+                        for (int j = 0; j < cachedDrawRequests.Count; j++)
+                        {
+                            var req = cachedDrawRequests[j];
+                            if (req.node == null) continue;
+                            // FA 激活：原版头由表情层替换，跳过
+                            if (faActive && req.node is PawnRenderNode_Head) continue;
+                            // 第一人称自身：HAR 额外部件忽略
+                            if (skipHarAddons && req.node.GetType().Name == "AlienPawnRenderNode_BodyAddon") continue;
+
+                            Material baseMat = req.material;
+                            if (req.node.CheckMaterialEveryDrawRequest || baseMat == null)
+                            {
+                                try { baseMat = req.node.Worker.GetFinalizedMaterial(req.node, parms); }
+                                catch { }
+                            }
+                            // 镜像原版 PawnRenderTree.Draw：逐请求调 PreDraw。
+                            // FA 的表情帧推进（NLFacialAnimationMasterNodeWorker.PreDraw ->
+                            // controller.UpdateAnimation）只在这里发生；3D 模式下原版绘制被压制，
+                            // 不调则表情永远停在最后一帧（不眨眼、不随情绪/任务切换）。
+                            if (baseMat != null)
+                            {
+                                try { req.node.Worker.PreDraw(req.node, baseMat, parms); }
+                                catch { }
+                            }
+                            if (baseMat == null || baseMat.NullOrBad() || baseMat.mainTexture == null) continue;
+
+                            Mesh m = req.mesh;
+                            if (m == null)
+                            {
+                                try { m = req.node.GetMesh(parms); } catch { }
+                            }
+                            if (m == null) continue;
+
+                            if (!tree.TryGetMatrix(req.node, parms, out var localMat)) continue;
+                            Matrix4x4 finalMat = basis * localMat;
+
+                            Material mat = Lighting3D.MatFor(baseMat, lit);
+                            Graphics.DrawMesh(m, finalMat, mat, 0);
+                            if (hurt > 0f)
+                                HitFx3D.DrawOverlay(m, finalMat, baseMat, hurt);
+                            PerfCounters.PawnQuads++;
+                            depth++;
+                        }
+                        if (depth > 0) return;
                     }
                 }
+
                 // 兜底：分层走树（图集不可用时，如特殊异种人/外星种族）
                 if (tree != null && tree.rootNode != null)
                     WalkNode(tree.rootNode, pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, 0, lit, hurt);
@@ -196,31 +270,36 @@ namespace RimFirstPerson3D
             }
         }
 
-        // GetBlitMeshUpdatedFrame 是私有实例方法：反射委托 (renderer, frameSet, rot, mode) => mesh
-        private static readonly Func<PawnRenderer, PawnTextureAtlasFrameSet, Rot4, PawnDrawMode, Mesh> BlitMesh =
-            AccessTools.MethodDelegate<Func<PawnRenderer, PawnTextureAtlasFrameSet, Rot4, PawnDrawMode, Mesh>>(
-                AccessTools.Method(typeof(PawnRenderer), "GetBlitMeshUpdatedFrame"));
-
-        private static void DumpTree(PawnRenderNode node, System.Text.StringBuilder sb, int depth)
-        {
-            if (node == null || depth > 4) return;
-            object g = null;
-            try { g = node.PrimaryGraphic; } catch { }
-            string gName = "none";
-            if (g is Graphic gg)
-            {
-                try { gName = gg.MatAt(Rot4.South, null) != null ? gg.path ?? "mat-ok" : "mat-null"; } catch { gName = "mat-err"; }
-            }
-            sb.Append(" [").Append(node.GetType().Name).Append(" g=").Append(gName)
-              .Append(" kids=").Append(node.children == null ? -1 : node.children.Length).Append("]");
-            if (node.children == null) return;
-            for (int i = 0; i < node.children.Length; i++)
-                DumpTree(node.children[i], sb, depth + 1);
-        }
-
         public static Graphic ResolveGraphic(Pawn pawn, Rot4 viewRot)
         {
             if (pawn == null) return null;
+
+            // 0. 若已干瘪/白骨化，优先返回白骨/干尸贴图
+            try
+            {
+                if (pawn.Drawer?.renderer != null && pawn.Drawer.renderer.CurRotDrawMode == RotDrawMode.Dessicated)
+                {
+                    if (pawn.RaceProps.Humanlike && pawn.story?.bodyType != null && !string.IsNullOrEmpty(pawn.story.bodyType.bodyDessicatedGraphicPath))
+                    {
+                        var dg = GraphicDatabase.Get<Graphic_Multi>(pawn.story.bodyType.bodyDessicatedGraphicPath, ShaderDatabase.Cutout, Vector2.one, Color.white);
+                        if (dg != null) return dg;
+                    }
+                    var curKind = pawn.ageTracker != null ? pawn.ageTracker.CurKindLifeStage : null;
+                    if (curKind != null)
+                    {
+                        var dessData = (pawn.gender == Gender.Female && curKind.femaleDessicatedBodyGraphicData != null)
+                            ? curKind.femaleDessicatedBodyGraphicData
+                            : curKind.dessicatedBodyGraphicData;
+                        if (dessData != null)
+                        {
+                            var dg = dessData.GraphicColoredFor(pawn);
+                            if (dg != null) return dg;
+                        }
+                    }
+                }
+            }
+            catch { }
+
             // 1. 尝试从 PawnRenderTree 获取 BodyGraphic
             try
             {
@@ -295,9 +374,16 @@ namespace RimFirstPerson3D
         {
             if (node == null || guard > 8) return;
             var typeName = node.GetType().Name;
+            // 与首选路径同一套兼容规则：第一人称自身忽略 HAR 额外部件；
+            // FA 激活时原版头由表情层替换，不再画原版头。
+            bool fpSelf = pawn == CameraRig3D.Possessed && Fps3DState.Mode == ViewMode.FirstPerson;
+            if (fpSelf && typeName == "AlienPawnRenderNode_BodyAddon") return;
             bool isBody = typeName == "PawnRenderNode_Body";
-            bool isHead = typeName == "PawnRenderNode_Head";
+            bool isHead = typeName == "PawnRenderNode_Head"
+                && !NodeTreeHasFacialAnimation(node);
             bool isHair = typeName == "PawnRenderNode_Hair" || typeName == "PawnRenderNode_Beard";
+            bool isFAPart = typeName.StartsWith("NLFacialAnimation", StringComparison.Ordinal);
+            if (isFAPart) return;   // 表情部件按树内矩阵的分层走树画不准，留给首选路径；这里画了反而与 FA 脸重叠
             bool isApparel = typeName.Contains("Apparel");
             bool onHead = false;
             if (isApparel && node.apparel != null)
@@ -334,6 +420,19 @@ namespace RimFirstPerson3D
             if (children == null) return;
             for (int i = 0; i < children.Length; i++)
                 WalkNode(children[i], pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, guard + 1, lit, hurt);
+        }
+
+        // 该节点子树里是否存在 Facial Animation 的表情节点（NLFacialAnimation*）。
+        // FA 激活时原版头被表情层整个替换，画原版头只会与之重叠叠脏。
+        private static bool NodeTreeHasFacialAnimation(PawnRenderNode node, int guard = 0)
+        {
+            if (node == null || guard > 8) return false;
+            if (node.GetType().Name.StartsWith("NLFacialAnimation", StringComparison.Ordinal)) return true;
+            var kids = node.children;
+            if (kids == null) return false;
+            for (int i = 0; i < kids.Length; i++)
+                if (NodeTreeHasFacialAnimation(kids[i], guard + 1)) return true;
+            return false;
         }
 
         private static PawnDrawParms BuildParms(Pawn pawn, Vector3 pos, Rot4 viewRot)

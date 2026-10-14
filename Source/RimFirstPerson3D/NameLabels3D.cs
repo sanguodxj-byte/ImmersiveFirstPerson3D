@@ -20,21 +20,27 @@ namespace RimFirstPerson3D
             if (cam == null || st == null || Find.CurrentMap == null) return;
             float headTop = Mathf.Max(0.5f, st.pawnHeight);
             var camPos = cam.transform.position;
+            float maxDistSq = MaxDist * MaxDist;
             var maps = Streaming3D.RenderMaps(Find.CurrentMap);
-            foreach (var map in maps)
+            for (int m = 0; m < maps.Count; m++)
             {
+                var map = maps[m];
                 if (map == null || map.Disposed) continue;
                 var offset = Streaming3D.OffsetOf(map);
                 float baseY = LevelStack3D.LevelBaseY(map);
-                foreach (var p in map.mapPawns.AllPawnsSpawned)
+                var pawns = map.mapPawns.AllPawnsSpawned;
+                for (int i = 0; i < pawns.Count; i++)
                 {
+                    var p = pawns[i];
                     if (p == null || p.Dead || !p.RaceProps.Humanlike) continue;
-                    if (map.fogGrid.IsFogged(p.Position)) continue;
+                    var dp = p.DrawPos;
                     var head = new Vector3(
-                        p.DrawPos.x + offset.x,
+                        dp.x + offset.x,
                         baseY + headTop + 0.25f,
-                        p.DrawPos.z + offset.z);
-                    if (Vector3.Distance(camPos, head) > MaxDist) continue;
+                        dp.z + offset.z);
+                    float dx = camPos.x - head.x, dy = camPos.y - head.y, dz = camPos.z - head.z;
+                    if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
+                    if (map.fogGrid.IsFogged(p.Position)) continue;
                     Vector3 sp = cam.WorldToScreenPoint(head);
                     if (sp.z <= 0.1f) continue;   // 背后
                     var ui = new Vector2(sp.x / Prefs.UIScale, UI.screenHeight - sp.y / Prefs.UIScale);

@@ -341,11 +341,14 @@ namespace RimFirstPerson3D
                 }
                 case WallArch.WallPlanks:
                 {
-                    // 木板墙：上下横木梁 + 两侧木立柱筋
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
-                    m.Add(Prim.Box, FacePos(-0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
-                    m.Add(Prim.Box, FacePos( 0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    // 木板墙：上下横木梁 + 两侧木立柱筋。
+                    // 浮雕取样一律走 UV_SIDE（立面木纹）：UV_EXTRA 回落到 planks.top（墙帽端木色，
+                    // 灰度约 110/255），乘木色染色后比立面（灰度约 242）暗一倍多，
+                    // 四根梁在墙面上拼成一圈深棕色的框，必须与立面同色消除。
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_SIDE);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_SIDE);
+                    m.Add(Prim.Box, FacePos(-0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_SIDE);
+                    m.Add(Prim.Box, FacePos( 0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_SIDE);
                     break;
                 }
                 case WallArch.WallSmooth:
