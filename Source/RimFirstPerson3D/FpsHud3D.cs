@@ -35,7 +35,8 @@ namespace RimFirstPerson3D
                 float top = (Find.LetterStack != null && Find.LetterStack.LettersListForReading != null && Find.LetterStack.LettersListForReading.Count > 0)
                     ? Mathf.Min(Find.LetterStack.LastTopY, UI.screenHeight - 480f)
                     : (UI.screenHeight - 480f);
-                return new Rect(UI.screenWidth - 280f, Mathf.Max(0f, top - 20f), 280f, UI.screenHeight);
+                float y = Mathf.Max(0f, top - 20f);
+                return new Rect(UI.screenWidth - 300f, y, 300f, UI.screenHeight - y);
             }
         }
 
@@ -125,6 +126,9 @@ namespace RimFirstPerson3D
         {
             if (Current.ProgramState != ProgramState.Playing) return;
             if (Find.CurrentMap == null) return;
+            // 仅在原版 UIRootOnGUI 被完全跳过（VanillaInputTakenOver 为真）时，由模组负责补偿绘制 GlobalControls；
+            // 若原版处于让位态（按 Alt、开弹窗、Esc 等），原版 UIRoot 已经在绘制，此处不再重复绘制。
+            if (!CameraRig3D.VanillaInputTakenOver) return;
             var ui = Find.MapUI;
             if (ui == null || ui.globalControls == null) return;
 

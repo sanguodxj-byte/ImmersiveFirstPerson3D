@@ -34,6 +34,7 @@ namespace MountainTests
             TestArtificialRoofBoundaryTopology();
             TestEnclosedNaturalRoofAtMountainEdge();
             TestEnclosedNaturalRoofRingAndUpperCap();
+            TestThinRockRoofProtectedConstraints();
 
             Microbench250x250();
 
@@ -674,6 +675,106 @@ namespace MountainTests
                 "Enclosed natural roof ring covers every roof cell with downward winding", $"area={area}");
             Assert(holeClear, "Enclosed room preserves unroofed skylight in roof ring");
             Assert(capped, "Enclosed room roof respects upper-level height cap");
+        }
+
+        static void TestThinRockRoofProtectedConstraints()
+        {
+            // 1. 受保护屋顶相邻实心岩体连续性：
+            // 在山体边缘设置保护格 (x=2, z=2)，东侧 (x=3, z=2) 是实心岩体 (type 1)，
+            // 保护格要求最小高度约束下，整个单元格内所有样本高度均 >= RockHeight 且与东侧共享边高度完全一致。
+            int w = 8, d = 8;
+            var fp = new bool[w * d];
+            var enclosed = new bool[w * d];
+            fp[2 * w + 2] = true; enclosed[2 * w + 2] = true;
+            fp[2 * w + 3] = true; // neighbor solid rock
+            fp[3 * w + 3] = true;
+
+            var shape = new MountainShape3D(w, d, 42);
+            shape.Build(fp, enclosed);
+
+            Assert(shape.CellMin(2, 2) >= Metrics3D.RockHeight,
+                "ThinRockRoof: Protected roof cell achieves full RockHeight thickness");
+
+            // 检查与相邻实心岩体 (3, 2) 的共享边采样点连续且 >= RockHeight
+            bool sharedEdgeContinuous = true;
+            for (int sz = 4; sz <= 6; sz++)
+            {
+                float hShared = shape.SampleHeight(6, sz);
+                if (hShared < Metrics3D.RockHeight - 1e-4f) sharedEdgeContinuous = false;
+            }
+            Assert(sharedEdgeContinuous,
+                "ThinRockRoof: Shared edge between protected roof and adjacent solid rock is continuous >= RockHeight");
+
+            // 检查受保护屋顶生成完整 2.70m 洞顶几何（1.0 满平米）
+            var cells = new byte[w * d];
+            cells[2 * w + 2] = 2; // roof
+            cells[2 * w + 3] = 1; // solid rock
+            var tris = new List<MountainTriangle3D>();
+            MountainMesh3D.BuildCell(shape, 2, 2, cells, null, tris);
+
+            double ceilingArea = 0;
+            bool noGeometryBelowCeiling = true;
+            foreach (var t in tris)
+            {
+                if (t.na.y < -0.9f)
+                {
+                    double a = Math.Abs((t.b.x - t.a.x) * (t.c.z - t.a.z) - (t.b.z - t.a.z) * (t.c.x - t.a.x)) * 0.5;
+                    ceilingArea += a;
+                }
+                if (t.a.y < Metrics3D.MountainCaveCeiling - 1e-4f ||
+                    t.b.y < Metrics3D.MountainCaveCeiling - 1e-4f ||
+                    t.c.y < Metrics3D.MountainCaveCeiling - 1e-4f)
+                {
+                    noGeometryBelowCeiling = false;
+                }
+            }
+            Assert(Math.Abs(ceilingArea - 1.0) < 1e-5 && noGeometryBelowCeiling,
+                "ThinRockRoof: Protected roof generates complete 2.70m cave ceiling (1.0m2) with clear space below");
+
+            // 2. 无顶孔洞不封死、不向无顶格扩展天花板或footprint：
+            // 邻接格 (1, 2) 未在 footprint，高度必须为 0
+            bool noFootprintExpansion = true;
+            for (int sz = 4; sz <= 6; sz++)
+            {
+                if (shape.SampleHeight(2, sz) != 0f || shape.SampleHeight(3, sz) != 0f)
+                {
+                    noFootprintExpansion = false;
+                }
+            }
+            Assert(noFootprintExpansion,
+                "ThinRockRoof: Protection hard constraint does not expand footprint into adjacent unroofed cells");
+
+            // 3. 多保护Build重建与移除一致性：
+            var shapeRebuild = new MountainShape3D(w, d, 42);
+            shapeRebuild.Build(fp, null);
+            var shapeRestored = new MountainShape3D(w, d, 42);
+            // 先加保护再移除保护，恢复后应与无保护完全相同
+            shapeRestored.Build(fp, enclosed);
+            shapeRestored.Build(fp, null);
+
+            bool exactlyMatchesUnprotected = true;
+            for (int i = 0; i < shapeRebuild.Heights.Length; i++)
+            {
+                if (Math.Abs(shapeRebuild.Heights[i] - shapeRestored.Heights[i]) > 1e-6f)
+                {
+                    exactlyMatchesUnprotected = false;
+                    break;
+                }
+            }
+            Assert(exactlyMatchesUnprotected,
+                "ThinRockRoof: Rebuilding without enclosedRoofs fully restores unprotected mountain shape");
+
+            // 4. 上下 cap 与梯度在有保护时均正常：
+            var caps = new float[w * d];
+            for (int i = 0; i < caps.Length; i++) caps[i] = 2.80f; // cap lower than RockHeight
+            tris.Clear();
+            MountainMesh3D.BuildCell(shape, 2, 2, cells, caps, tris);
+            bool cappedProperly = true;
+            foreach (var t in tris)
+            {
+                if (t.a.y > 2.8001f || t.b.y > 2.8001f || t.c.y > 2.8001f) cappedProperly = false;
+            }
+            Assert(cappedProperly, "ThinRockRoof: Upper cap correctly clips protected roof surface");
         }
 
         static void TestArtificialRoofBoundaryTopology()

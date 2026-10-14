@@ -135,6 +135,7 @@ namespace RimFirstPerson3D
             FillRoofMaterials();
             if (seed == 0) seed = unchecked(map.uniqueID * 73856093 + 19349663);
             initialized = true;
+            map.events.RegionsRoomsChanged += NotifyRoomsChanged;
             shapeDirty = true;
         }
 
@@ -262,6 +263,8 @@ namespace RimFirstPerson3D
             foreach (var c in GenAdj.OccupiedRect(t)) NotifyCell(c);
         }
 
+        public void NotifyRoomsChanged() => roofRoomsDirty = true;
+
         public void InvalidateCaps() => capsDirty = true;
 
         public void UpdateField()
@@ -270,6 +273,16 @@ namespace RimFirstPerson3D
             changed.Clear();
             ShapeChanged = false;
             if (!initialized) return;
+            if (roofRoomsDirty)
+            {
+                var updater = map.regionAndRoomUpdater;
+                updater.TryRebuildDirtyRegionsAndRooms();
+                if (updater.AnythingToRebuild)
+                {
+                    RefreshCaps();
+                    return;
+                }
+            }
             foreach (int i in pending)
             {
                 var c = new IntVec3(i % map.Size.x, 0, i / map.Size.x);
