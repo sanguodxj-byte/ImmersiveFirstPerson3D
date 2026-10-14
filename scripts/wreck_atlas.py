@@ -3,7 +3,7 @@
 # 组装残骸图集并生成 WreckageUVGen.cs（生成物，请勿手改）
 #
 # 输入：docs/wreckage/clean/*.png + clean_report.json（含 bbox_after 紧贴剪影框）
-# 输出：1.6/Textures/FPS3D/WreckageAtlas.png（RGBA，边缘 clamp 防串色）
+# 输出：Textures/FPS3D/WreckageAtlas.png（RGBA，边缘 clamp 防串色）
 #       Source/RimFirstPerson3D/WreckageUVGen.cs
 #
 # 运行：C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe scripts/wreck_atlas.py
@@ -16,10 +16,46 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLEAN = os.path.join(ROOT, "docs", "wreckage", "clean")
-OUT_PNG = os.path.join(ROOT, "1.6", "Textures", "FPS3D", "WreckageAtlas.png")
+OUT_PNG = os.path.join(ROOT, "Textures", "FPS3D", "WreckageAtlas.png")
+VIEWER_PNG = os.path.join(ROOT, "viewer", "wreck_atlas.png")
 OUT_CS = os.path.join(ROOT, "Source", "RimFirstPerson3D", "WreckageUVGen.cs")
 ATLAS_W = 1024
 GAP = 2
+
+
+def fill_transparent(arr):
+    """把透明像素用邻域非透明像素均值补齐并将 alpha 设为 255，彻底消除图集外缘黑底污染。"""
+    mask = arr[:, :, 3] < 128
+    if not mask.any():
+        res = arr.copy()
+        res[:, :, 3] = 255
+        return res
+    out = arr[:, :, :3].astype(np.float32)
+    m = mask.copy()
+    for _ in range(64):
+        if not m.any():
+            break
+        valid = (~m).astype(np.float32)[..., None]
+        src = out * valid
+        acc = np.zeros_like(src)
+        cnt = np.zeros_like(valid)
+        acc[1:] += src[:-1]; acc[:-1] += src[1:]
+        acc[:, 1:] += src[:, :-1]; acc[:, :-1] += src[:, 1:]
+        cnt[1:] += valid[:-1]; cnt[:-1] += valid[1:]
+        cnt[:, 1:] += valid[:, :-1]; cnt[:, :-1] += valid[:, 1:]
+        reach = m & (cnt[..., 0] > 0)
+        if not reach.any():
+            break
+        out[reach] = acc[reach] / cnt[reach]
+        m &= ~reach
+    if m.any():
+        keep = ~mask
+        base = out[keep].mean(axis=0) if keep.any() else np.array([128.0, 128.0, 128.0])
+        out[m] = base
+    res = np.zeros_like(arr)
+    res[:, :, :3] = np.clip(out + 0.5, 0, 255).astype(np.uint8)
+    res[:, :, 3] = 255
+    return res
 
 
 def load_report():
@@ -114,6 +150,7 @@ def main():
     atlas = np.zeros((atlas_h, ATLAS_W, 4), np.uint8)
     for b in blocks:
         arr = np.asarray(b["img"], np.uint8)
+        arr = fill_transparent(arr)
         x, y, w, h = b["x"], b["y"], b["w"], b["h"]
         atlas[y:y + h, x:x + w] = arr
         # 边缘 clamp replication（右 / 下），防双线性与 mip 串色
@@ -123,7 +160,9 @@ def main():
             atlas[y + h:y + h + GAP, x:x + w] = arr[h - 1:h, :]
 
     os.makedirs(os.path.dirname(OUT_PNG), exist_ok=True)
-    Image.fromarray(atlas, "RGBA").save(OUT_PNG)
+    out_im = Image.fromarray(atlas, "RGBA")
+    out_im.save(OUT_PNG)
+    out_im.save(VIEWER_PNG)
 
     # ---- 生成 C# UV 表 ----
     rows_R = []

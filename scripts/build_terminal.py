@@ -2,14 +2,14 @@
 import math
 # AI生成
 # FP3D 手持地图终端建模：Blender 无头脚本
-# 产物：D:/rim mod/FirstPerson3D/1.6/Assets/hand_terminal.obj(+mtl)
+# 产物：D:/rim mod/FirstPerson3D/1.7/Assets/hand_terminal.obj(+mtl)
 # 坐标约定：Blender Z-up、屏幕正面朝 -Y；OBJ 默认导出(-Z fwd, Y up)后
 # 在 Unity 中正面朝 +Z（正对第一人称相机）、上方 +Y，无需二次旋转。
 # 尺寸单位：米（1 格 = 1 米的世界尺度）。
 import bpy
 import os
 
-OBJ_PATH = "D:/rim mod/FirstPerson3D/1.6/Assets/hand_terminal.obj"
+OBJ_PATH = "D:/rim mod/FirstPerson3D/1.7/Assets/hand_terminal.obj"
 QC_DIR = os.environ.get("DSH_OUTDIR", "D:/123/blender-rt/work/fp3d_terminal")
 
 W, H, T = 0.36, 0.27, 0.032          # 机身宽/高/厚

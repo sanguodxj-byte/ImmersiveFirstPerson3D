@@ -50,8 +50,17 @@ if (tex) {
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.flipY = false;
 }
-const matAtlas = new THREE.MeshLambertMaterial({ map: tex, side: THREE.FrontSide });
-const matHull  = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+const matAtlas = new THREE.MeshLambertMaterial({
+  map: tex, side: THREE.FrontSide,
+  stencilWrite: true, stencilRef: 1,
+  stencilFunc: THREE.AlwaysStencilFunc,
+  stencilZPass: THREE.ReplaceStencilOp
+});
+const matHull  = new THREE.MeshBasicMaterial({
+  color: 0x12131a, side: THREE.FrontSide,
+  stencilWrite: true, stencilRef: 1,
+  stencilFunc: THREE.NotEqualStencilFunc
+});
 
 const MISSING = new Set();
 function getUvRect(itemKey, regName) {
@@ -138,6 +147,8 @@ class Model3D {
       roll: opts.roll || 0,
       taper: opts.taper || 0,
       noOutline: !!opts.noOutline,
+      noTop: !!opts.noTop,
+      noBottom: !!opts.noBottom,
       uv: opts.uv !== undefined ? opts.uv : UV_TOP,
     });
   }
@@ -158,46 +169,58 @@ export function buildItemModel(key, arch, variant = 2) {
   const v = variant;
 
   switch (arch) {
-    case 'ChunkRock': {
+        case 'ChunkRock': {
       if (v === 0) {
-        m.add('box', [-0.08, 0.00,  0.04], [0.42, 0.28, 0.38], { yaw: -14, uv: UV_TOP });
-        m.add('wedge', [-0.08, 0.278, 0.04], [0.42, 0.13, 0.38], { yaw: 166, uv: UV_TOP });
-        m.add('box', [ 0.14, 0.00, -0.06], [0.38, 0.19, 0.32], { yaw: 12, uv: UV_SIDE });
-        m.add('wedge', [ 0.14, 0.188, -0.06], [0.38, 0.09, 0.32], { yaw: -168, uv: UV_SIDE });
-        m.add('box', [-0.19, 0.00, -0.07], [0.26, 0.21, 0.28], { yaw: 24, uv: UV_SHADE });
+        // rocklowa: L 形阶梯多面体巨石 (左后高耸斜劈岩峰 + 右前宽厚矮岩阶 + 前侧切削角岩)
+        m.add('box',   [-0.08, 0.00,  0.04], [0.44, 0.28, 0.40], { yaw: -14, uv: UV_TOP, noTop: true });
+        m.add('wedge', [-0.08, 0.28,  0.04], [0.44, 0.14, 0.40], { yaw: 166, uv: UV_TOP, noBottom: true });
+        m.add('box',   [ 0.16, 0.00, -0.06], [0.36, 0.18, 0.34], { yaw: -14, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [ 0.16, 0.18, -0.06], [0.36, 0.10, 0.34], { yaw: 166, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [-0.18, 0.00, -0.06], [0.24, 0.14, 0.26], { yaw: -14, uv: UV_SHADE, noTop: true });
+        m.add('wedge', [-0.18, 0.14, -0.06], [0.24, 0.07, 0.26], { yaw: -14, uv: UV_SHADE, noBottom: true });
       } else if (v === 1) {
-        m.add('box', [ 0.04, 0.00,  0.02], [0.46, 0.28, 0.40], { yaw: 18, uv: UV_TOP });
-        m.add('wedge', [ 0.04, 0.278, 0.02], [0.46, 0.13, 0.40], { yaw: -162, uv: UV_TOP });
-        m.add('box', [-0.15, 0.00, -0.05], [0.34, 0.20, 0.34], { yaw: -22, uv: UV_SIDE });
-        m.add('wedge', [-0.15, 0.198, -0.05], [0.34, 0.10, 0.34], { yaw: 158, uv: UV_SIDE });
+        // rocklowb: 浑厚多面斜脊巨石 (中央偏右浑厚斜脊主峰 + 左侧舒展劈裂斜坡面)
+        m.add('box',   [ 0.04, 0.00,  0.02], [0.48, 0.28, 0.42], { yaw:  18, uv: UV_TOP, noTop: true });
+        m.add('wedge', [ 0.04, 0.28,  0.02], [0.48, 0.13, 0.42], { yaw: -162, uv: UV_TOP, noBottom: true });
+        m.add('box',   [-0.16, 0.00, -0.05], [0.34, 0.20, 0.36], { yaw: -22, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [-0.16, 0.20, -0.05], [0.34, 0.10, 0.36], { yaw: 158, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [ 0.16, 0.00,  0.12], [0.28, 0.13, 0.26], { yaw:  18, uv: UV_SHADE, noTop: true });
+        m.add('wedge', [ 0.16, 0.13,  0.12], [0.28, 0.07, 0.26], { yaw: -162, uv: UV_SHADE, noBottom: true });
       } else {
-        m.add('box', [-0.06, 0.00,  0.06], [0.40, 0.31, 0.36], { yaw: -22, uv: UV_TOP });
-        m.add('wedge', [-0.06, 0.308, 0.06], [0.40, 0.13, 0.36], { yaw: 158, uv: UV_TOP });
-        m.add('box', [ 0.12, 0.00, -0.08], [0.36, 0.22, 0.32], { yaw: 26, uv: UV_SIDE });
-        m.add('wedge', [ 0.12, 0.218, -0.08], [0.36, 0.10, 0.32], { yaw: -154, uv: UV_SIDE });
-        m.add('box', [-0.15, 0.00, -0.09], [0.26, 0.19, 0.26], { yaw: 10, uv: UV_SHADE });
+        // rocklowc: 双峰交错对向劈裂岩 (双峰对峙、V形凹谷对切劈裂)
+        m.add('box',   [-0.10, 0.00,  0.06], [0.38, 0.31, 0.36], { yaw: -20, uv: UV_TOP, noTop: true });
+        m.add('wedge', [-0.10, 0.31,  0.06], [0.38, 0.14, 0.36], { yaw: 160, uv: UV_TOP, noBottom: true });
+        m.add('box',   [ 0.14, 0.00, -0.04], [0.36, 0.20, 0.34], { yaw: -20, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [ 0.14, 0.20, -0.04], [0.36, 0.09, 0.34], { yaw: -20, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [ 0.02, 0.00,  0.14], [0.26, 0.12, 0.24], { yaw: -20, uv: UV_SHADE, noTop: true });
+        m.add('wedge', [ 0.02, 0.12,  0.14], [0.26, 0.07, 0.24], { yaw: 160, uv: UV_SHADE, noBottom: true });
       }
       break;
     }
 
     case 'ChunkSlag': {
       if (v === 0) {
-        m.add('box', [-0.10, 0.00, -0.10], [0.42, 0.12, 0.26], { yaw: 24, uv: UV_SHADE });
-        m.add('box', [ 0.14, 0.04,  0.04], [0.34, 0.22, 0.44], { yaw: -18, roll: -12, uv: UV_SIDE });
-        m.add('box', [-0.04, 0.06,  0.02], [0.22, 0.26, 0.58], { yaw: 34, pitch: 12, uv: UV_TOP });
-        m.add('box', [-0.04, 0.24,  0.02], [0.28, 0.05, 0.52], { yaw: 34, pitch: 12, noOutline: true, uv: UV_DETAIL });
+        // metaldebrisa: 扭曲工字钢梁 + 倾斜钢肋垫板残骸 (严密闭合无破孔)
+        m.add('box',   [-0.04, 0.00,  0.00], [0.34, 0.22, 0.56], { yaw:  28, uv: UV_TOP, noTop: true });
+        m.add('wedge', [-0.04, 0.22,  0.00], [0.34, 0.10, 0.56], { yaw: 208, uv: UV_TOP, noBottom: true });
+        m.add('box',   [-0.04, 0.15,  0.00], [0.44, 0.06, 0.50], { yaw:  28, uv: UV_DETAIL, noOutline: true });
+        m.add('box',   [ 0.14, 0.00, -0.04], [0.28, 0.14, 0.40], { yaw:  28, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [ 0.14, 0.14, -0.04], [0.28, 0.07, 0.40], { yaw:  28, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [-0.18, 0.00, -0.04], [0.22, 0.11, 0.36], { yaw:  28, uv: UV_SHADE });
       } else if (v === 1) {
-        m.add('box', [0.00, 0.00, 0.00], [0.46, 0.20, 0.44], { yaw: -22, uv: UV_TOP });
-        m.add('box', [0.00, 0.14, 0.00], [0.34, 0.10, 0.32], { yaw: -22, pitch: 8, noOutline: true, uv: UV_DETAIL });
-        m.add('box', [-0.24, 0.02,  0.10], [0.18, 0.09, 0.10], { yaw: -22, uv: UV_SHADE });
-        m.add('box', [ 0.24, 0.02, -0.10], [0.18, 0.09, 0.10], { yaw: -22, uv: UV_SHADE });
-        m.add('box', [ 0.10, 0.02,  0.24], [0.10, 0.09, 0.18], { yaw: -22, uv: UV_SIDE });
-        m.add('box', [-0.10, 0.02, -0.24], [0.10, 0.09, 0.18], { yaw: -22, uv: UV_SIDE });
+        // metaldebrisb: 阶梯重装甲残盖 + 铆接撕裂翼板
+        m.add('box',   [ 0.04, 0.00,  0.00], [0.44, 0.22, 0.44], { yaw: -20, uv: UV_TOP, noTop: true });
+        m.add('wedge', [ 0.04, 0.22,  0.00], [0.44, 0.11, 0.44], { yaw: 160, uv: UV_TOP, noBottom: true });
+        m.add('box',   [-0.14, 0.00,  0.00], [0.30, 0.14, 0.44], { yaw: -20, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [-0.14, 0.14,  0.00], [0.30, 0.07, 0.44], { yaw: 160, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [ 0.20, 0.00,  0.00], [0.22, 0.12, 0.32], { yaw: -20, uv: UV_SHADE });
       } else {
-        m.add('box', [ 0.00, 0.00, -0.06], [0.32, 0.14, 0.30], { yaw: 10, uv: UV_SHADE });
-        m.add('box', [-0.11, 0.06,  0.04], [0.18, 0.26, 0.48], { yaw: -24, pitch: 16, roll: 14, uv: UV_SIDE });
-        m.add('box', [ 0.12, 0.06,  0.02], [0.20, 0.28, 0.52], { yaw: 20, pitch: 14, roll: -12, uv: UV_TOP });
-        m.add('box', [ 0.00, 0.12, -0.02], [0.34, 0.08, 0.14], { yaw: 6, noOutline: true, uv: UV_DETAIL });
+        // metaldebrisc: V 形撕裂双翼钢构残骸
+        m.add('box',   [-0.08, 0.00,  0.02], [0.34, 0.26, 0.46], { yaw: -22, uv: UV_SIDE, noTop: true });
+        m.add('wedge', [-0.08, 0.26,  0.02], [0.34, 0.11, 0.46], { yaw: 158, uv: UV_SIDE, noBottom: true });
+        m.add('box',   [ 0.12, 0.00, -0.02], [0.32, 0.16, 0.44], { yaw: -22, uv: UV_TOP, noTop: true });
+        m.add('wedge', [ 0.12, 0.16, -0.02], [0.32, 0.08, 0.44], { yaw: -22, uv: UV_TOP, noBottom: true });
+        m.add('box',   [ 0.02, 0.00,  0.14], [0.24, 0.12, 0.22], { yaw: -22, uv: UV_SHADE, noOutline: true });
       }
       break;
     }
@@ -514,13 +537,13 @@ function compileMesh(itemKey, m, outlineW) {
       quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
       quad([-hx, 0,  hz], [-hx, hy,  hz], [-hx, hy, -hz], [-hx, 0, -hz], [0,0],[0,1],[1,1],[1,0], sideW);
       quad([ hx, 0, -hz], [ hx, hy, -hz], [ hx, hy,  hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideE);
-      quad([-hx, hy, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, hy, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
-      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+      if (!p.noTop) quad([-hx, hy, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, hy, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
+      if (!p.noBottom) quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
     } else if (p.kind === 'wedge') {
       const hx = sx * 0.5, hz = sz * 0.5, hy = sy;
       quad([-hx, 0, -hz], [-hx, hy,  hz], [ hx, hy,  hz], [ hx, 0, -hz], [0,0],[0,1],[1,1],[1,0], topRect);
       quad([ hx, 0,  hz], [ hx, hy,  hz], [-hx, hy,  hz], [-hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
-      quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
+      if (!p.noBottom) quad([-hx, 0,  hz], [-hx, 0, -hz], [ hx, 0, -hz], [ hx, 0,  hz], [0,0],[0,1],[1,1],[1,0], sideS);
       tri(vtx([-hx, 0, -hz], [0,0], sideW), vtx([-hx, 0, hz], [1,0], sideW), vtx([-hx, hy, hz], [0.5,1], sideW));
       tri(vtx([ hx, 0,  hz], [0,0], sideE), vtx([ hx, 0, -hz], [1,0], sideE), vtx([ hx, hy, hz], [0.5,1], sideE));
     } else if (p.kind === 'cyl' || p.kind === 'cone') {
@@ -613,19 +636,49 @@ function compileMesh(itemKey, m, outlineW) {
     if (!p.noOutline && outlineW > 0) {
       const hBase = hPos.length / 3;
       for (let i = 0; i < pVerts.length; i++) {
-        const g = groups.get(keyOf(pVerts[i]));
-        let sxn = 0, syn = 0, szn = 0;
-        for (const gi of g) { sxn += avg[gi][0]; syn += avg[gi][1]; szn += avg[gi][2]; }
-        const len = Math.hypot(sxn, syn, szn) || 1;
-        hPos.push(
-          pVerts[i][0] + (sxn / len) * outlineW,
-          pVerts[i][1] + (syn / len) * outlineW,
-          pVerts[i][2] + (szn / len) * outlineW
-        );
+        hPos.push(pVerts[i][0], pVerts[i][1], pVerts[i][2]);
       }
       for (let i = 0; i < pTris.length; i += 3) {
-        hIdx.push(hBase + pTris[i], hBase + pTris[i + 2], hBase + pTris[i + 1]);
+        hIdx.push(hBase + pTris[i], hBase + pTris[i + 1], hBase + pTris[i + 2]);
       }
+    }
+  }
+
+  // 全局统一焊接描边外壳（与 Model3D.cs EnsureGlobalHull -> EmitHull(0) 完全同口径）
+  if (outlineW > 0 && hPos.length >= 9) {
+    const nV = hPos.length / 3;
+    const keyOfH = i => `${Math.round(hPos[i*3]*2048)},${Math.round(hPos[i*3+1]*2048)},${Math.round(hPos[i*3+2]*2048)}`;
+    const hGroups = new Map();
+    for (let i = 0; i < nV; i++) {
+      const k = keyOfH(i);
+      if (!hGroups.has(k)) hGroups.set(k, []);
+      hGroups.get(k).push(i);
+    }
+    const hAvg = Array.from({ length: nV }, () => [0, 0, 0]);
+    for (let i = 0; i < hIdx.length; i += 3) {
+      const ia = hIdx[i], ib = hIdx[i + 1], ic = hIdx[i + 2];
+      const ux = hPos[ib*3] - hPos[ia*3], uy = hPos[ib*3+1] - hPos[ia*3+1], uz = hPos[ib*3+2] - hPos[ia*3+2];
+      const vx = hPos[ic*3] - hPos[ia*3], vy = hPos[ic*3+1] - hPos[ia*3+1], vz = hPos[ic*3+2] - hPos[ia*3+2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      hAvg[ia][0] += nx; hAvg[ia][1] += ny; hAvg[ia][2] += nz;
+      hAvg[ib][0] += nx; hAvg[ib][1] += ny; hAvg[ib][2] += nz;
+      hAvg[ic][0] += nx; hAvg[ic][1] += ny; hAvg[ic][2] += nz;
+    }
+    const newHPos = new Array(hPos.length);
+    for (let i = 0; i < nV; i++) {
+      const g = hGroups.get(keyOfH(i));
+      let sxn = 0, syn = 0, szn = 0;
+      for (const gi of g) { sxn += hAvg[gi][0]; syn += hAvg[gi][1]; szn += hAvg[gi][2]; }
+      const len = Math.hypot(sxn, syn, szn) || 1;
+      newHPos[i*3]   = hPos[i*3]   + (sxn / len) * outlineW;
+      newHPos[i*3+1] = hPos[i*3+1] + (syn / len) * outlineW;
+      newHPos[i*3+2] = hPos[i*3+2] + (szn / len) * outlineW;
+    }
+    for (let i = 0; i < hPos.length; i++) hPos[i] = newHPos[i];
+    for (let i = 0; i < hIdx.length; i += 3) {
+      const tmp = hIdx[i + 1];
+      hIdx[i + 1] = hIdx[i + 2];
+      hIdx[i + 2] = tmp;
     }
   }
 
@@ -645,7 +698,7 @@ function compileMesh(itemKey, m, outlineW) {
 const ITEMS_LIST = Object.keys(KEY_TO_ARCH);
 
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(1);
 renderer.setClearColor(0x20242c, 1);
@@ -721,8 +774,10 @@ function buildOneGroup(key, variant = null) {
   const bodyMesh = new THREE.Mesh(bodyGeo, matAtlas);
   const hullMesh = new THREE.Mesh(hullGeo, matHull);
   bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
-  grp.add(hullMesh);
+  bodyMesh.renderOrder = 1;
+  hullMesh.renderOrder = 2;
   grp.add(bodyMesh);
+  grp.add(hullMesh);
   return { grp, a, partBoxes, bodyGeo };
 }
 
@@ -846,6 +901,36 @@ if (PARTS) {
   controls.target.set(midX, 0.16, 0);
   controls.update();
   renderer.render(scene, camera);
+} else if (SINGLE) {
+  hideChrome();
+  grid.visible = false;
+  const vParam = q.get('v') !== null ? +q.get('v') : null;
+  const viewKeys = ['侧视·东', '主视·南', '45°', '俯视'];
+  const CW = 340, CH = 280;
+  const totalW = CW * viewKeys.length, totalH = CH;
+  renderer.setSize(totalW, totalH);
+  renderer.setScissorTest(true);
+  camera.aspect = CW / CH;
+  camera.updateProjectionMatrix();
+
+  const { grp } = buildOneGroup(SINGLE, vParam);
+  scene.add(grp);
+  const box = new THREE.Box3().setFromObject(grp);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.y * 1.25, size.z, 0.38);
+  const dist = span * 1.48;
+  for (let c = 0; c < viewKeys.length; c++) {
+    const o = VIEWS[viewKeys[c]].off;
+    camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+    L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+    L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+    camera.lookAt(center);
+    const wx = c * CW;
+    renderer.setViewport(wx, 0, CW, CH);
+    renderer.setScissor(wx, 0, CW, CH);
+    renderer.render(scene, camera);
+  }
 } else if (SHEET !== null) {
   hideChrome();
   grid.visible = false;

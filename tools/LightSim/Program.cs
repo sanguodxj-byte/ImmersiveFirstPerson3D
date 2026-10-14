@@ -93,7 +93,7 @@ namespace RimFirstPerson3D.LightSim
         static readonly List<string> fails = new List<string>();
         static int passed;
 
-        static LightTuning Tuning()
+        internal static LightTuning Tuning()
         {
             return new LightTuning
             {
@@ -103,7 +103,7 @@ namespace RimFirstPerson3D.LightSim
             };
         }
 
-        static LightEnv Day()
+        internal static LightEnv Day()
         {
             return new LightEnv
             {
@@ -145,7 +145,7 @@ namespace RimFirstPerson3D.LightSim
                 (rev ? " （反向也成立 -> 判据无意义）" : ""));
         }
 
-        public static int Main()
+        public static int Main(string[] args)
         {
             try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { }
             var f = new SyntheticField();
@@ -154,6 +154,9 @@ namespace RimFirstPerson3D.LightSim
             var night = Night();
 
             Console.WriteLine("== LightSim：合成场景 + 真实公式（LightShade.cs）==");
+
+            // --demo：先跑完判据，再把 F014/F015 的效果按帧导出一份给离线演示台渲染
+            bool demo = args != null && args.Length > 0 && args[0] == "--demo";
 
             // 1 向阳立面 vs 背阳立面
             var east = LightShade.Shade(f, new Vector3(9.5f, 1.35f, 8.5f), Vector3.right, false, ref day, ref t);
@@ -428,8 +431,53 @@ namespace RimFirstPerson3D.LightSim
                 && ShotFxMath.PuffAlpha(ShotFxMath.FlashDur) > 0f,
                 "flash=" + ShotFxMath.FlashDur + " puff@flash=" + ShotFxMath.PuffAlpha(ShotFxMath.FlashDur).ToString("0.00"));
 
+            // ============================================================
+            // 山体高度与陡壁几何判据（MountainShape3D.cs / MountainMesh3D.cs）
+            // ============================================================
+            Console.WriteLine("-- 山体高度与陡壁几何 --");
+            int mw = 32, md = 32;
+            var fp = new bool[mw * md];
+            var cells = new byte[mw * md];
+            // 1x1 孤立岩柱 (4,4) + 12x12 主山体 (10..21, 10..21)
+            fp[4 * mw + 4] = true; cells[4 * mw + 4] = 1;
+            for (int z = 10; z <= 21; z++)
+                for (int x = 10; x <= 21; x++)
+                {
+                    fp[z * mw + x] = true;
+                    cells[z * mw + x] = 1;
+                }
+            var mShape = new MountainShape3D(mw, md, 12345);
+            mShape.Build(fp);
+            float minMtnCenterH = float.MaxValue;
+            float minMtnMaxH = float.MaxValue;
+            for (int z = 0; z < md; z++)
+                for (int x = 0; x < mw; x++)
+                {
+                    if (!fp[z * mw + x]) continue;
+                    float ch = mShape.HeightAt(x + 0.5f, z + 0.5f);
+                    float cm = mShape.CellMax(x, z);
+                    if (ch < minMtnCenterH) minMtnCenterH = ch;
+                    if (cm < minMtnMaxH) minMtnMaxH = cm;
+                }
+            Check("34 所有实际属于山体的格高度严格 > 2.0m（含 1x1 孤立岩与山脚外沿格）",
+                minMtnCenterH > 2.0f && minMtnMaxH > 2.0f,
+                "minCenterH=" + minMtnCenterH.ToString("0.00") + "m minMaxH=" + minMtnMaxH.ToString("0.00") + "m");
+            Check("34b 远离山体的平地格高度为 0",
+                mShape.HeightAt(1.5f, 1.5f) == 0f && mShape.CellMax(1, 1) == 0f,
+                "openH=" + mShape.HeightAt(1.5f, 1.5f).ToString("0.00"));
+            var mTris = new List<MountainTriangle3D>();
+            MountainMesh3D.BuildCell(mShape, 10, 15, cells, null, mTris);
+            float maxEdgeCellTop = 0f;
+            for (int i = 0; i < mTris.Count; i++)
+            {
+                maxEdgeCellTop = Mathf.Max(maxEdgeCellTop, Mathf.Max(mTris[i].a.y, Mathf.Max(mTris[i].b.y, mTris[i].c.y)));
+            }
+            Check("35 山体外沿首格直接拔升至 > 2.0m 陡峭岩壁",
+                maxEdgeCellTop > 2.0f, "edgeCellTop=" + maxEdgeCellTop.ToString("0.00") + "m");
+
             Console.WriteLine("== 结果: " + (fails.Count == 0 ? "全部通过" : "未通过 " + string.Join(", ", fails))
                               + "（通过 " + passed + " 条）==");
+            if (fails.Count == 0 && demo) return FxDemo.Run();
             return fails.Count == 0 ? 0 : 1;
         }
     }

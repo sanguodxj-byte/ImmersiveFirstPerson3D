@@ -45,6 +45,9 @@ created: 2026-10-12
 | `PulseHz` | 2.2 | 暗角脉冲频率：只改变下降形状，不允许中途回弹到峰值之上 |
 | `LowHealthFrom` | 0.40 | 血量比例低于此才开始常驻红边 |
 | `LowHealthMax` | 0.35 | 见底时的红边浓度 |
+| `VignetteMax` | 0.55 | 暗角浓度上限。原先 0.85，被离线演示台否掉：那一档受击一瞬屏幕三边全红、准星周围也糊住，反馈读不出信息，只剩"看不见" |
+| `VignetteBand` | 0.22 | 红边带厚占短边的比例（按像素到最近屏幕边算） |
+| `VignetteGamma` | 1.6 | 红边由边向内的衰减形状 |
 | `BucketN` | 8 | 红闪浓度分档（克隆材质按档缓存，键含贴图实例号） |
 
 两路暗角**取大不相加**：相加会让"残血再挨一发"直接顶满，整屏红到看不见敌人 —— 反馈读不出来就没有意义。
@@ -55,6 +58,7 @@ created: 2026-10-12
 
 - 曲线：`dotnet run --project tools/LightSim` 里的 22 条 F014 判据（窗口边界、单调不回升、峰值夹住、包络不越界、脉冲确实存在、低血起点与上限、合成取大、伤害→强度单调），每条带反向对照。
 - 贴图场与合成观感：`python scripts/hitfx_check.py` 出 `shots/hitfx_vignette.png` 与 `shots/hitfx_flash.png`，并断言红边带厚**按像素**横竖一致。反向对照用「按归一化半径」的写法（实测横 56 px / 竖 32 px，正是被禁的做法）。
+- 演示：`dotnet run --project tools/LightSim -- --demo` 把 F014+F015 的效果按 20 fps 导成帧表（`temp_light/fx_demo.json`），`python scripts/shotfx_demo.py` 只负责投影与合成，出 `shots/shotfx_demo_strip.png` 与 `shots/shotfx_demo.gif`。分工是硬的：每一帧的红闪强度、暗角浓度、火光尺寸全部由游戏里跑的同一份 `HitFxMath` / `ShotFxMath` / `LightShade` 算出，脚本里一个衰减都不许再算；暗角的带宽/形状/浓度上限也是从 `HitFxMath.cs` 正则读出来的。判据量在渲染出来的像素上，对照取「同一帧去掉这一个字段」。
 - 实机：`hitfx: toggle` 做开关反证；`hitfx: hurt` 不走伤害管线直接点亮附身者的红闪与暗角（对照不该要求先找个人打架）。`dump lighting` 的 JSON 里带 `"hitfx":{on,flashing,player,overlays}`。
 
 ## Acceptance Criteria

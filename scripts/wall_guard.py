@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 
+import normal_guard
 import _tmpsweep  # noqa: F401 — 把 TEMP/TMP 指到仓库 _tmpchrome，退出时扫空
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -82,8 +83,23 @@ def check_item(key, rec):
         return errs
 
     min_y = min(p["y0"] for p in parts)
-    if abs(min_y) > 0.015:
-        errs.append(f"未接地或穿地: min_y={min_y:.3f}")
+    arch = rec["arch"]
+    if arch in ("WallLamp", "WallTorch"):
+        if abs(min_y - 2.00) > 0.015:
+            errs.append(f"壁挂件离地高度未统一为 Y=2.00m: min_y={min_y:.3f}")
+    else:
+        if abs(min_y) > 0.015:
+            errs.append(f"未接地或穿地: min_y={min_y:.3f}")
+
+    if arch == "WallTorch":
+        bad_prims = [p["k"] for p in parts if p["k"] in ("sph", "cone")]
+        if bad_prims:
+            errs.append(f"火把实体模型包含非木柄几何体(火焰应使用Shader): {bad_prims}")
+
+    if arch in ("Vent", "Cooler"):
+        max_y = max(p["y1"] for p in parts)
+        if abs(max_y - 1.00) > 0.025:
+            errs.append(f"穿墙通风管/空调模型高度未改为 1x1x1 (1.00m): max_y={max_y:.3f}")
 
     for i, p in enumerate(parts):
         dx = p["x1"] - p["x0"]
@@ -110,6 +126,7 @@ def check_item(key, rec):
 
 
 def main():
+    normal_guard.verify_normals()
     data = dump_parts()
     bad = 0
     for key, rec in data.items():

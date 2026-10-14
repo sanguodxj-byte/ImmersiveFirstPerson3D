@@ -83,10 +83,36 @@ const ITEMS = {
   drape:   {arch:'drape', w:2, d:1},
   stelelarge: {arch:'stele', item:'stelelarge', w:2, d:2},
   stelegrand: {arch:'stele', item:'stelegrand', w:3, d:3},
+  tablebutcher: {arch:'productionbench', item:'tablebutcher', w:3, d:1},
+  tablesculpting: {arch:'productionbench', item:'tablesculpting', w:3, d:1},
+  fueledsmithy: {arch:'productionbench', item:'tablesmithingfueled', w:3, d:1},
+  tablesmithingfueled: {arch:'productionbench', item:'tablesmithingfueled', w:3, d:1},
+  electricsmithy: {arch:'productionbench', item:'tablesmithingelectric', w:3, d:1},
+  tablesmithingelectric: {arch:'productionbench', item:'tablesmithingelectric', w:3, d:1},
+  electricstove: {arch:'productionbench', item:'tablestoveelectric', w:3, d:1},
+  tablestoveelectric: {arch:'productionbench', item:'tablestoveelectric', w:3, d:1},
+  fueledstove: {arch:'productionbench', item:'tablestovefueled', w:3, d:1},
+  tablestovefueled: {arch:'productionbench', item:'tablestovefueled', w:3, d:1},
+  handtailoringbench: {arch:'productionbench', item:'tabletailorhand', w:3, d:1},
+  tabletailorhand: {arch:'productionbench', item:'tabletailorhand', w:3, d:1},
+  electrictailoringbench: {arch:'productionbench', item:'tabletailorelectric', w:3, d:1},
+  tabletailorelectric: {arch:'productionbench', item:'tabletailorelectric', w:3, d:1},
+  tablestonecutter: {arch:'productionbench', item:'tablestonecutter', w:3, d:1},
+  tablemachining: {arch:'productionbench', item:'tablemachining', w:3, d:1},
+  druglab: {arch:'productionbench', item:'tabledruglab', w:3, d:1},
+  tabledruglab: {arch:'productionbench', item:'tabledruglab', w:3, d:1},
+  brewery: {arch:'productionbench', item:'tablebrewery', w:3, d:1},
+  tablebrewery: {arch:'productionbench', item:'tablebrewery', w:3, d:1},
+  electricsmelter: {arch:'productionbench', item:'electricsmelter', w:3, d:1},
+  simpleresearchbench: {arch:'productionbench', item:'researchbenchsimple', w:3, d:2},
+  researchbenchsimple: {arch:'productionbench', item:'researchbenchsimple', w:3, d:2},
+  hitechresearchbench: {arch:'productionbench', item:'researchbenchhitech', w:5, d:2},
+  researchbenchhitech: {arch:'productionbench', item:'researchbenchhitech', w:5, d:2},
+  fabricationbench: {arch:'productionbench', item:'fabricationbench', w:5, d:2},
 };
 
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({antialias:true});
+const renderer = new THREE.WebGLRenderer({antialias:true, stencil:true});
 renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1);
 renderer.setClearColor(0x1c1e26, 1);
 app.appendChild(renderer.domElement);
@@ -105,14 +131,52 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;
 tex.generateMipmaps = false;
 tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
 tex.flipY = false;      // v 按"从图像顶部算"，所以要把 JSON 的 Unity 口径翻回来
-const mat = new THREE.MeshLambertMaterial({map:tex, side:THREE.FrontSide});
-const matHull = new THREE.MeshBasicMaterial({color:0x0a0910, side:THREE.BackSide});
+const mat = new THREE.MeshLambertMaterial({
+  map:tex, side:THREE.FrontSide,
+  stencilWrite:true, stencilRef:1,
+  stencilFunc:THREE.AlwaysStencilFunc,
+  stencilZPass:THREE.ReplaceStencilOp
+});
+const matHull = new THREE.MeshBasicMaterial({
+  color:0x0a0910, side:THREE.BackSide,
+  stencilWrite:true, stencilRef:1,
+  stencilFunc:THREE.NotEqualStencilFunc
+});
+
+function createHull(geo, width = 0.008){
+  const g = geo.clone();
+  if(!g.attributes.normal) g.computeVertexNormals();
+  const pos = g.attributes.position;
+  const norm = g.attributes.normal;
+  const groups = new Map();
+  const keyOf = i => `${Math.round(pos.getX(i)*2048)},${Math.round(pos.getY(i)*2048)},${Math.round(pos.getZ(i)*2048)}`;
+  for(let i=0; i<pos.count; i++){
+    const k = keyOf(i);
+    if(!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(i);
+  }
+  const newX = new Float32Array(pos.count);
+  const newY = new Float32Array(pos.count);
+  const newZ = new Float32Array(pos.count);
+  for(let i=0; i<pos.count; i++){
+    const grp = groups.get(keyOf(i));
+    let nx=0, ny=0, nz=0;
+    for(const gi of grp){ nx += norm.getX(gi); ny += norm.getY(gi); nz += norm.getZ(gi); }
+    const len = Math.hypot(nx, ny, nz) || 1;
+    newX[i] = pos.getX(i) + (nx/len) * width;
+    newY[i] = pos.getY(i) + (ny/len) * width;
+    newZ[i] = pos.getZ(i) + (nz/len) * width;
+  }
+  for(let i=0; i<pos.count; i++) pos.setXYZ(i, newX[i], newY[i], newZ[i]);
+  return new THREE.Mesh(g, matHull);
+}
 
 // JSON 里是 Unity 口径 [u0,v0,u1,v1]（v=1-y/H）；flipY=false 下页面要 v'=1-v
+// 返回 [u0, v'bottom(对应 y0/z0), u1, v'top(对应 y1/z1)]，与 C# Model3D 的 r.x,r.y,r.z,r.w 完全同序
 function R(key){
   const a = uvJson.uv[key];
   if(!a) return null;
-  return [a[0], 1-a[3], a[2], 1-a[1]];     // -> [u0, v'top, u1, v'bottom] 归一化自洽即可
+  return [a[0], 1-a[1], a[2], 1-a[3]];
 }
 const MISSING = new Set();      // 缺哪块区就记下来，渲染不崩（洋红面 = 看得见的问题）
 const FALLBACK = [0, 0, 0.008, 0.008];
@@ -128,16 +192,25 @@ function Region(arch, want, region){
 }
 const viewOf = r => r==='south'?'south': r==='north'?'north':'east';
 const opp = v => v==='south'?'north': v==='north'?'south':'west';
+function side4ByRot(arch, rot, sr){
+  if(rot==='south') return [Region(arch,'south',sr), Region(arch,'north',sr), Region(arch,'east',sr), Region(arch,'east',sr)];
+  if(rot==='north') return [Region(arch,'north',sr), Region(arch,'south',sr), Region(arch,'east',sr), Region(arch,'east',sr)];
+  if(rot==='east')  return [Region(arch,'east',sr),  Region(arch,'east',sr),  Region(arch,'south',sr), Region(arch,'north',sr)];
+  return                   [Region(arch,'east',sr),  Region(arch,'east',sr),  Region(arch,'north',sr), Region(arch,'south',sr)];
+}
 function faceUv(arch, rot, xz){
   const v = viewOf(rot);
-  const cross = (v==='east') ? 'south' : 'east';
   // 与 C# FaceUv 同口径：整件没有立面段时（diningchair 的腿带是纯线稿、几何也不用它）
   // 退到木面，而不是去查一个不存在的区 —— 查不到会污染"缺取样区"判据。
   const s4 = hasRegion(arch, 'front')
-    ? [Region(arch, opp(v), 'front'), Region(arch, v, 'front'),
-       Region(arch, cross, 'front'), Region(arch, cross, 'front')]
+    ? side4ByRot(arch, rot, 'front')
     : (function(){ const w = wood(arch, rot); return [w,w,w,w]; })();
-  return { top: Region(arch, v, 'top'), s4, xz };
+  let top = Region(arch, v, 'top');
+  if(top){
+    if(rot==='north' && !R(`${arch}.north.top`)) top = [top[0], top[3], top[2], top[1]];
+    else if(rot==='east') top = [top[2], top[1], top[0], top[3]];
+  }
+  return { top, s4, xz };
 }
 // 与 C# Furniture3D.WoodRegion/WoodUv/SlabUv 同口径：SPEC 里每件声明一处 wood（干净木面区），
 // 三视图没画到的面 —— 圆柱侧壁与顶盖、薄板四周一圈立边 —— 只能取它。
@@ -161,16 +234,24 @@ function uvNames(arch, rot, xz, tr, sr){
   const v = viewOf(rot), t = Region(arch, v, tr), s = Region(arch, v, sr);
   return {top:t, s4:[s,s,s,s], xz};
 }
+// Production sprites have a full 3x1 top projection plus a short apron strip
+// for each view. Keep the long side on the south/north strip and the short
+// side on the east strip instead of stretching one rectangle over all faces.
+function productionUv(arch, rot, xz, tr, sr){
+  const v=viewOf(rot);
+  const s4=side4ByRot(arch, rot, sr);
+  return {top:Region(arch,v,tr), s4, xz};
+}
 function panelUv(arch, rot, xz, face, longZ){
-  const v = viewOf(rot), t = Region(arch, v, 'top'), s = Region(arch, v, face), w = wood(arch, rot);
+  const v = viewOf(rot), s = Region(arch, v, face), w = wood(arch, rot);
   const s4 = [s, s, s, s];
   if(longZ){ s4[2] = w; s4[3] = w; } else { s4[0] = w; s4[1] = w; }
-  return {top:t, s4, xz};
+  return {top:w, s4, xz};
 }
 const backSign = r => (r==='south' ? 1 : r==='north' ? -1 : r==='east' ? -1 : 1);
 
 // ---------------------------------------------------------------- 网格拼装
-// dir: 0北(-Z) 1南(+Z) 2东(+X) 3西(-X)
+// dir: 0南(-Z) 1北(+Z) 2东(+X) 3西(-X)
 function G(){ return {pos:[],uvs:[],idx:[],parts:[]}; }   // parts = 建模守卫读的部件清单
 function quad(g,a,b,c,d,ua,ub,uc,ud){
   const P=g.pos,U=g.uvs,I=g.idx;
@@ -178,15 +259,27 @@ function quad(g,a,b,c,d,ua,ub,uc,ud){
   const i0=push(a,ua),i1=push(b,ub),i2=push(c,uc),i3=push(d,ud);
   I.push(i0,i1,i2,i0,i2,i3);
 }
+function tri(g,a,b,c,ua,ub,uc){
+  const P=g.pos,U=g.uvs,I=g.idx;
+  const push=(p,uv)=>{P.push(p[0],p[1],p[2]);U.push(uv[0],uv[1]);return P.length/3-1;};
+  I.push(push(a,ua),push(b,ub),push(c,uc));
+}
 function box(g, uv, cx,cy,cz, w,h,d, nt){
   const x0=cx-w/2,x1=cx+w/2, z0=cz-d/2,z1=cz+d/2, y0=cy,y1=cy+h;
   g.parts.push({k:'box', x0,x1,y0,y1,z0,z1, nt:!!nt});
-  const mx=Math.max(0.001,uv.xz[0]), mz=Math.max(0.001,uv.xz[1]);
-  const U=x=>tu[0]+(tu[2]-tu[0])*((x+mx/2)/mx);
-  const V=z=>tu[1]+(tu[3]-tu[1])*((z+mz/2)/mz);
+  const localUv = uv.xz[0] <= 0.001;
+  const mx=localUv ? Math.max(0.001,w) : Math.max(0.001,uv.xz[0]);
+  const mz=localUv ? Math.max(0.001,d) : Math.max(0.001,uv.xz[1]);
+  const ox=localUv ? cx : 0, oz=localUv ? cz : 0;
+  // Three.js 右手系下相机在 -Z 看向 +Z 时，+X(x1) 在画面左侧、-X(x0) 在画面右侧；
+  // 顶面 U(x1)->tu[0](贴图左)、U(x0)->tu[2](贴图右)，与下方 -Z 立面的 [x1]->r[0]、[x0]->r[2] 完全对齐
+  const U=x=>tu[2]+(tu[0]-tu[2])*Math.min(1,Math.max(0,((x-ox)+mx/2)/mx));
+  const V=z=>tu[1]+(tu[3]-tu[1])*Math.min(1,Math.max(0,((z-oz)+mz/2)/mz));
   const tu = uv.top||FALLBACK;
   if(uv.top && !nt) quad(g,[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0],   // nt = noTop：埋在别的部件下面
      [U(x0),V(z1)],[U(x1),V(z1)],[U(x1),V(z0)],[U(x0),V(z0)]);
+  if(uv.top) quad(g,[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],
+     [U(x0),V(z0)],[U(x1),V(z0)],[U(x1),V(z1)],[U(x0),V(z1)]);
   const s=i=>uv.s4[i]||uv.top||FALLBACK;
   let r=s(0); quad(g,[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
   r=s(1);      quad(g,[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]);
@@ -203,23 +296,26 @@ function cyl(g, uv, cx,cz,y0,h,dia,seg=12){
   for(let i=0;i<seg;i++){
     const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
     const p=(a,y)=>[cx+Math.cos(a)*r, y, cz+Math.sin(a)*r];
-    quad(g, p(a0,y0),p(a1,y0),p(a1,y0+h),p(a0,y0+h),
-      [s[0]+(s[2]-s[0])*i/seg, s[1]], [s[0]+(s[2]-s[0])*(i+1)/seg, s[1]],
-      [s[0]+(s[2]-s[0])*(i+1)/seg, s[3]], [s[0]+(s[2]-s[0])*i/seg, s[3]]);
+    quad(g, p(a1,y0),p(a0,y0),p(a0,y0+h),p(a1,y0+h),
+      [s[0]+(s[2]-s[0])*(i+1)/seg, s[1]], [s[0]+(s[2]-s[0])*i/seg, s[1]],
+      [s[0]+(s[2]-s[0])*i/seg, s[3]], [s[0]+(s[2]-s[0])*(i+1)/seg, s[3]]);
   }
   if(uv.top){
-    const mx=Math.max(0.001,uv.xz[0]), mz=Math.max(0.001,uv.xz[1]);
+    const localUv = uv.xz[0] <= 0.001;
+    const mx=localUv ? Math.max(0.001,dia) : Math.max(0.001,uv.xz[0]);
+    const mz=localUv ? Math.max(0.001,dia) : Math.max(0.001,uv.xz[1]);
+    const ox=localUv ? cx : 0, oz=localUv ? cz : 0;
+    const UC=[(cp[0]+cp[2])/2,(cp[1]+cp[3])/2];
     for(let i=0;i<seg;i++){
       const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
-      const P=(a)=>[cx+Math.cos(a)*r, y0+h, cz+Math.sin(a)*r];
+      const P=(a,y)=>[cx+Math.cos(a)*r, y, cz+Math.sin(a)*r];
       // 顶盖按 rim 点的 XZ 位置映射进取样区（与盒体顶面同口径），不是沿对角线铺
-    const UV=(a)=>{const p=[cx+Math.cos(a)*r, cz+Math.sin(a)*r];
+      const UV=(a)=>{const p=[(cx-ox)+Math.cos(a)*r, (cz-oz)+Math.sin(a)*r];
         const u=Math.min(1,Math.max(0,(p[0]+mx/2)/mx)), v=Math.min(1,Math.max(0,(p[1]+mz/2)/mz));
-        return [cp[0]+(cp[2]-cp[0])*u, cp[1]+(cp[3]-cp[1])*v];};
+        return [cp[2]+(cp[0]-cp[2])*u, cp[1]+(cp[3]-cp[1])*v];};
       // 圆心那两点的 UV 必须是取样区的**中心**（与 C# Model3D 的 center 顶点同口径）。
-      // 之前写成 UV(a0)：每个三角的圆心被钉在同一条 rim 上 -> 圆面被拉成 12 片扇形黑白相间。
-      const UC=[(cp[0]+cp[2])/2,(cp[1]+cp[3])/2];
-      quad(g, [cx,y0+h,cz],[cx,y0+h,cz],P(a1),P(a0), UC,UC,UV(a1),UV(a0));
+      tri(g, [cx,y0+h,cz], P(a1,y0+h), P(a0,y0+h), UC, UV(a1), UV(a0));
+      tri(g, [cx,y0,cz], P(a0,y0), P(a1,y0), UC, UV(a0), UV(a1));
     }
   }
 }
@@ -249,21 +345,21 @@ function pillows(g, uv, w, d, rot, surfY, depth, thick){
 
 function build(item, rot){
   const it = ITEMS[item], key = it.item || it.arch;   // 取样件名（一个配方可以服务多件）
-  const uv0 = faceUv(key, rot, [it.w, it.d]);
   const g = G();
   let w = it.w, d = it.d;
   if(rot==='east'||rot==='west'){ const t=w; w=d; d=t; }
+  const uv0 = faceUv(key, rot, [w, d]);
   const longZ = (rot==='north'||rot==='south');
   const len = longZ?d:w, thick = longZ?w:d;
   const headSign = backSign(rot);
   if(it.arch==='bed'){
-    box(g,woodUv(key,rot,[w,d]),0,0,0, w-0.06,M.bedFrame,d-0.06, true);   // 床架侧板=木面，顶埋进床垫
+    box(g,woodUv(key,rot,[w,d]),0,0,0, w-0.06,M.bedFrame,d-0.06);   // 床架比床垫宽一圈，保留木面顶沿防破孔露黑
     box(g,uv0,0,M.bedFrame,0, w-0.20,M.mattress,d-0.18);
     const uvb = endPanelUv(key, rot, [w,d], longZ);
     endPanel(g,uvb,longZ,thick,headSign,len,M.bedFrame,M.headboard-M.bedFrame);
     endPanel(g,uvb,longZ,thick,-headSign,len,M.bedFrame,M.footboard-M.bedFrame);
     if(hasRegion(key,'pillow'))
-      pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot,
+      pillows(g, uvNames(key,rot,[0,0],'pillow','pillow'), w, d, rot,
               M.bedFrame+M.mattress, M.pillowD, M.pillow);
     const uvq = woodUv(key, rot, [w,d]);
     const r = M.leg*1.1, bs2 = backSign(rot), ins = 0.05;   // 立柱内缩：不与床板外圆共面
@@ -284,7 +380,7 @@ function build(item, rot){
   } else if(it.arch==='bedroll'){
     box(g, faceUv(key,rot,[w,d]), 0,0,0, w-0.08,M.roll,d-0.08);
     if(hasRegion(key,'pillow'))
-      pillows(g, uvNames(key,rot,[w,d],'pillow','pillow'), w, d, rot, M.roll, M.pillowD, M.pillow);
+      pillows(g, uvNames(key,rot,[0,0],'pillow','pillow'), w, d, rot, M.roll, M.pillowD, M.pillow);
   } else if(it.arch==='chair'){
     // 与 C# Arch.Chair 同口径：座盘收小，靠背落在座盘的弦内，腿张到盘沿下
     const sh=M.seat, cush=M.cush, sd=Math.min(0.44, Math.min(w,d)*0.62);
@@ -312,43 +408,50 @@ function build(item, rot){
     const up = faceUv(key,rot,[M.potD,M.potD]);
     cyl(g, up, 0,0, 0, M.potH, M.potD);
   } else if(it.arch==='marker'){
-    box(g, uvNames(key,rot,[w,d],'front','front'), 0,0,0, 0.10,0.85,0.10);
-    box(g, uvNames(key,rot,[w,d],'top','top'), 0,0.60,0, 0.62,0.20,0.08);
-    box(g, uvNames(key,rot,[w,d],'tip','tip'), 0,0.80,0, 0.08,0.14,0.08);
+    box(g, uvNames(key,rot,[0,0],'front','front'), 0,0,0, 0.08,0.85,0.08);
+    if(longZ) box(g, uvNames(key,rot,[0,0],'top','top'), 0,0.60,0, 0.62,0.20,0.12);
+    else      box(g, uvNames(key,rot,[0,0],'top','top'), 0,0.60,0, 0.12,0.20,0.62);
+    box(g, uvNames(key,rot,[0,0],'tip','tip'), 0,0.80,0, 0.06,0.14,0.06);
   } else if(it.arch==='floodlight'){
-    cyl(g, uvNames(key,rot,[w,d],'baser','basel'), 0,0, 0, 0.14, 0.62);   // 底座：顶面/侧壁各一条实心带
-    cyl(g, uvNames(key,rot,[w,d],'pole','pole'), 0,0, 0.14, 0.62, 0.16);
-    box(g, uvNames(key,rot,[w,d],'top','top'), 0,0.76,0, 0.90,0.24,0.30);
+    cyl(g, uvNames(key,rot,[0,0],'baser','basel'), 0,0, 0, 0.14, 0.62);   // 底座：顶面/侧壁各一条实心带
+    cyl(g, uvNames(key,rot,[0,0],'pole','pole'), 0,0, 0.14, 0.62, 0.16);
+    if(longZ) box(g, uvNames(key,rot,[0,0],'wood','top'), 0,0.76,0, 0.90,0.24,0.30);
+    else      box(g, uvNames(key,rot,[0,0],'wood','top'), 0,0.76,0, 0.30,0.24,0.90);
   } else if(it.arch==='grandthrone'){
-    const ud = uvNames(key,rot,[w,d],'top','front'), bs=backSign(rot);
-    box(g, ud, 0,0,0, w*0.96,0.16,d*0.94);
-    box(g, ud, 0,0.16,-bs*d*0.22, w*0.78,0.14,d*0.50);
-    const ug = uvNames(key,rot,[w,d],'gold','gold');
-    box(g, ug, 0,0.30,0, 0.95,0.22,0.85);
-    box(g, ug, 0,0.52,bs*0.36, 0.80,0.85,0.14);
-    box(g, uvNames(key,rot,[w,d],'spire','spire'), 0,1.37,bs*0.30, 0.34,0.42,0.28);
-    for(const sd of [-1,1]) box(g, ug, sd*0.54,0.24,-0.04, 0.22,0.62,0.70);
+    const ud = uvNames(key,rot,[0,0],'top','front'), bs=backSign(rot);
+    const spanW = longZ?w:d, spanD = longZ?d:w;
+    const oBox = (u, lx,y0,lz, sx,sy,sz) => longZ ? box(g,u,lx,y0,lz,sx,sy,sz) : box(g,u,lz,y0,lx,sz,sy,sx);
+    oBox(ud, 0,0,0, spanW*0.96,0.16,spanD*0.94);
+    oBox(ud, 0,0.16,-bs*spanD*0.22, spanW*0.78,0.14,spanD*0.50);
+    const ug = uvNames(key,rot,[0,0],'gold','gold');
+    oBox(ug, 0,0.30,0, 0.95,0.22,0.85);
+    oBox(ug, 0,0.52,bs*0.36, 0.80,0.85,0.14);
+    oBox(uvNames(key,rot,[0,0],'spire','spire'), 0,1.37,bs*0.30, 0.34,0.42,0.28);
+    for(const sd of [-1,1]) oBox(ug, sd*0.54,0.24,-0.04, 0.22,0.62,0.70);
   } else if(it.arch==='drape'){
-    const bs=backSign(rot), sv=viewOf(rot);
-    const ut = uvNames(key,rot,[w,d],'tassel','tassel'), u2 = uvNames(key,rot,[w,d],'tassel2','tassel2'),
-          u3 = uvNames(key,rot,[w,d],'tassel3','tassel3');
-    box(g, ut, 0,M.rod,bs*0.02, w*0.86,0.09,0.09);
-    for(const sd of [-1,1]) box(g, ut, sd*w*0.40,0,bs*0.02, 0.07,M.rod+0.045,0.07);
-    box(g, ut, -w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
-    box(g, u3, 0,0.34,bs*0.02, 0.09,0.13,0.09);
-    box(g, u2, w*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
+    const bs=backSign(rot), sv=viewOf(rot), spanW = longZ?w:d;
+    const oBox = (u, lx,y0,lz, sx,sy,sz) => longZ ? box(g,u,lx,y0,lz,sx,sy,sz) : box(g,u,lz,y0,lx,sz,sy,sx);
+    const ut = uvNames(key,rot,[0,0],'tassel','tassel'), u2 = uvNames(key,rot,[0,0],'tassel2','tassel2'),
+          u3 = uvNames(key,rot,[0,0],'tassel3','tassel3');
+    oBox(ut, 0,M.rod,bs*0.02, spanW*0.86,0.09,0.09);
+    for(const sd of [-1,1]) oBox(ut, sd*spanW*0.40,0,bs*0.02, 0.07,M.rod+0.045,0.07);
+    oBox(ut, -spanW*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
+    oBox(u3, 0,0.34,bs*0.02, 0.09,0.13,0.09);
+    oBox(u2, spanW*0.36,0.34,bs*0.02, 0.09,0.13,0.09);
     const F=Region(key,sv,'mid'), E=Region(key,sv,'front');   // 大面=布身中段；裙摆花边给薄边
-    box(g, {top:Region(key,sv,'top'), s4:[F,F,E,E], xz:[w*0.82,M.cloth]}, 0,0.47,bs*0.02, w*0.82,M.drapeCloth,M.cloth);
+    oBox({top:Region(key,sv,'top'), s4:longZ?[F,F,E,E]:[E,E,F,F], xz:[0,0]}, 0,0.47,bs*0.02, spanW*0.82,M.drapeCloth,M.cloth);
   } else if(it.arch==='stele'){
     // 与 C# Arch.Stele 同口径：碑身三段叠块，每段的大面/薄边/顶面各取一条横带
+    const spanW = longZ?w:d, spanD = longZ?d:w;
     const h=0.55+0.50*Math.max(w,d), sv=viewOf(rot);
-    const bd=(f,e,cap,xz)=>{const F=Region(key,sv,f), E=Region(key,sv,e);
-      return {top:Region(key,sv,cap), s4:[F,F,E,E], xz};};
+    const bd=(f,e,cap)=>{const F=Region(key,sv,f), E=Region(key,sv,e);
+      return {top:Region(key,sv,cap), s4:longZ?[F,F,E,E]:[E,E,F,F], xz:[0,0]};};
+    const oBox = (u, lx,y0,lz, sx,sy,sz) => longZ ? box(g,u,lx,y0,lz,sx,sy,sz) : box(g,u,lz,y0,lx,sz,sy,sx);
     const hLow=(h-0.18)*0.40, hMid=(h-0.18)*0.32;
-    box(g, bd('face','mid','mid',[w*0.56,0.24]), 0,0.18,0, w*0.56,hLow,0.24);
-    box(g, bd('mid','shoulder','mid',[w*0.48,0.22]), 0,0.18+hLow,0, w*0.48,hMid,0.22);
-    box(g, bd('top','top','crest',[w*0.38,0.20]), 0,0.18+hLow+hMid,0, w*0.38,h-0.18-hLow-hMid,0.20);
-    box(g, uvNames(key,rot,[w,d],'front','front'), 0,0,0, w*0.72,0.18,d*0.42);
+    oBox(bd('face','mid','mid'), 0,0.18,0, spanW*0.56,hLow,0.24);
+    oBox(bd('mid','shoulder','mid'), 0,0.18+hLow,0, spanW*0.48,hMid,0.22);
+    oBox(bd('top','top','crest'), 0,0.18+hLow+hMid,0, spanW*0.38,h-0.18-hLow-hMid,0.20);
+    oBox(uvNames(key,rot,[0,0],'front','front'), 0,0,0, spanW*0.72,0.18,spanD*0.42);
   } else if(it.arch==='endtable'){
     const h = M.nightstand - M.slab;
     box(g, slabUv(key,rot,[w,d]), 0,h,0, w*0.92,M.slab,d*0.92);
@@ -358,16 +461,166 @@ function build(item, rot){
     const th=M.slab, h=M.tableH-th;
     box(g, uvNames(key,rot,[w,d],'top','edge'), 0,h,0, w-0.04,th,d-0.04);
     const ul = uvNames(key,rot,[w,d],'wood','front');   // 腿侧 = 画出来的腿条，圆盖 = 木面
-    const off = Math.min(w,d)/2-0.14;
-    for(const sx of [-1,1]) for(const sz of [-1,1]) cyl(g,ul,sx*off,sz*off,0,h,M.leg);
+    const offX = w/2-0.14, offZ = d/2-0.14;
+    for(const sx of [-1,1]) for(const sz of [-1,1]) cyl(g,ul,sx*offX,sz*offZ,0,h,M.leg);
+  } else if(it.arch==='productionbench'){
+    const bodyH=0.72, topT=0.08, topY=bodyH, surfY=topY+topT;
+    const uLocal = productionUv(key,rot,[0,0],'top','front');
+    const uShared = productionUv(key,rot,[w,d],'top','front');
+    const bBox = (uv, lx,y0,lz, sx,sy,sz, nt=false)=>{
+      if(rot==='south') box(g, uv, -lx,y0,lz, sx,sy,sz, nt);
+      else if(rot==='north') box(g, uv, lx,y0,-lz, sx,sy,sz, nt);
+      else box(g, uv, lz,y0,lx, sz,sy,sx, nt);
+    };
+    const bCyl = (uv, lx,y0,lz, dia,sy)=>{
+      if(rot==='south') cyl(g, uv, -lx,lz,y0, sy,dia);
+      else if(rot==='north') cyl(g, uv, lx,-lz,y0, sy,dia);
+      else cyl(g, uv, lz,lx,y0, sy,dia);
+    };
+    if(key==='tablesculpting'){
+      const uStone = productionUv(key,rot,[0,0],'stone','stone_s');
+      bBox(uLocal, -0.50, topY, 0, 1.96, topT, 0.96);
+      bBox(uLocal, -0.50, 0, 0, 1.84, topY, 0.84, true);
+      bCyl(uStone, 0.04, surfY, 0, 0.72, 0.05);
+      bBox(uStone, 0.68, 0, -0.10, 0.48, 0.70, 0.46);
+      bBox(uStone, 0.78, 0, 0.22, 0.40, 0.84, 0.36);
+      bBox(uStone, 1.14, 0, 0.04, 0.50, 0.78, 0.50);
+    } else if(key==='tablesmithingfueled'){
+      const uBox = productionUv(key,rot,[0,0],'box_top','box_front');
+      const uHood = productionUv(key,rot,[0,0],'hood','hood');
+      bBox(uBox, -0.98, 0, 0, 0.96, 0.92, 0.92);
+      bBox(uLocal, 0.48, topY, -0.10, 1.96, topT, 0.76);
+      bBox(uLocal, 0.48, 0, -0.10, 1.84, topY, 0.68, true);
+      bBox(uHood, -0.06, 0, 0.34, 0.38, 0.54, 0.22, true);
+      bBox(uHood, -0.06, 0.54, 0.34, 0.62, 0.22, 0.28);
+    } else if(key==='tablesmithingelectric'){
+      const uBox = productionUv(key,rot,[0,0],'box_top','box_front');
+      const uHood = productionUv(key,rot,[0,0],'hood','hood');
+      bBox(uLocal, 0, topY, -0.10, 2.96, topT, 0.76);
+      bBox(uLocal, 0, 0, -0.10, 2.84, topY, 0.68, true);
+      bBox(uBox, -0.84, surfY, -0.08, 0.56, 0.26, 0.62);
+      bBox(uHood, -0.06, 0, 0.34, 0.38, 0.54, 0.22, true);
+      bBox(uHood, -0.06, 0.54, 0.34, 0.62, 0.22, 0.28);
+    } else if(key==='tablestoveelectric'){
+      const uBox = productionUv(key,rot,[0,0],'box_top','box_front');
+      bBox(uLocal, -0.48, topY, 0, 1.96, topT, 0.96);
+      bBox(uLocal, -0.48, 0, 0, 1.84, topY, 0.84, true);
+      bBox(uBox, 0.98, 0, 0, 0.96, 0.90, 0.92);
+    } else if(key==='tablestovefueled'){
+      const uBox = productionUv(key,rot,[0,0],'box_top','box_front');
+      bBox(uBox, -0.98, 0, 0, 0.96, 0.90, 0.92);
+      bBox(uLocal, 0.48, topY, 0, 1.96, topT, 0.96);
+      bBox(uLocal, 0.48, 0, 0, 1.84, topY, 0.84, true);
+    } else if(key==='tabletailorhand' || key==='tabletailorelectric'){
+      bBox(uLocal, 0, topY, 0, 2.96, topT, 0.96);
+      bBox(uLocal, 0, 0.16, 0, 2.84, topY-0.16, 0.84, true);
+      for(const lx of [-1.34, -0.45, 0.45, 1.34])
+        for(const lz of [-0.34, 0.34])
+          bCyl(uLocal, lx, 0, lz, 0.12, 0.18);
+      if(key==='tabletailorelectric'){
+        const uMach = productionUv(key,rot,[0,0],'mach','mach_s');
+        const uMachS = productionUv(key,rot,[0,0],'mach_s','mach_s');
+        bBox(uMachS, 0.02, surfY, 0.08, 0.86, 0.06, 0.52);
+        bBox(uMachS, 0.28, surfY+0.06, 0.08, 0.24, 0.12, 0.30, true);
+        bBox(uMach, 0.04, surfY+0.18, 0.08, 0.74, 0.10, 0.30);
+        bBox(uMachS, -0.20, surfY+0.11, 0.08, 0.16, 0.07, 0.22, true);
+      }
+    } else if(key==='tablestonecutter'){
+      const uDisc = productionUv(key,rot,[0,0],'disc','front');
+      bBox(uLocal, 0, topY, -0.14, 2.96, topT, 0.62);
+      bBox(uLocal, 0, 0, -0.14, 2.84, topY, 0.56, true);
+      bCyl(uDisc, 0.02, 0, 0.08, 0.92, 0.78);
+      bCyl(uLocal, 0.02, 0.78, 0.04, 1.14, 0.06);
+      bCyl(uDisc, 0.02, 0.84, 0.04, 0.94, 0.02);
+      bBox(uDisc, -0.88, 0, 0.24, 0.40, 0.26, 0.26);
+      bBox(uDisc, 0.60, 0, 0.26, 0.24, 0.22, 0.22);
+    } else if(key==='tablemachining'){
+      const uBody = productionUv(key,rot,[0,0],'top','body');
+      const uPad = productionUv(key,rot,[0,0],'pad','front');
+      bBox(uBody, 0, topY, 0, 2.96, topT, 0.96);
+      bBox(uBody, 0, 0.16, 0, 2.84, topY-0.16, 0.84, true);
+      bBox(uLocal, 0, 0, 0, 2.88, 0.16, 0.88);
+      bBox(uPad, -0.02, surfY, 0.15, 1.12, 0.04, 0.50);
+    } else if(key==='tabledruglab'){
+      const uPad = productionUv(key,rot,[0,0],'pad','pad');
+      const uCol = productionUv(key,rot,[0,0],'col','col');
+      const uVat = productionUv(key,rot,[0,0],'vat','vat');
+      const uGrn = productionUv(key,rot,[0,0],'grn','grn');
+      const uBlu = productionUv(key,rot,[0,0],'blu','blu');
+      bBox(uLocal, 0, topY, 0, 2.96, topT, 0.96);
+      bBox(uLocal, 0, 0, 0, 2.84, topY, 0.84, true);
+      bBox(uPad, 1.08, surfY, -0.04, 0.44, 0.08, 0.42);
+      bCyl(uCol, 1.08, surfY+0.08, -0.04, 0.16, 0.54);
+      bCyl(uVat, -0.06, surfY, -0.06, 0.44, 0.24);
+      bCyl(uCol, -0.06, surfY+0.24, -0.06, 0.16, 0.12);
+      bBox(uLocal, -0.60, surfY, 0.22, 0.36, 0.06, 0.34);
+      bCyl(uGrn, -0.60, surfY+0.06, 0.22, 0.28, 0.20);
+      bCyl(uGrn, -0.60, surfY+0.26, 0.22, 0.12, 0.10);
+      bCyl(uVat, -1.20, surfY, -0.18, 0.22, 0.20);
+      bCyl(uCol, -1.20, surfY+0.20, -0.18, 0.10, 0.10);
+      bCyl(uBlu, -0.90, surfY, -0.02, 0.22, 0.20);
+      bCyl(uBlu, -0.90, surfY+0.20, -0.02, 0.10, 0.10);
+      bCyl(uGrn, -1.18, surfY, 0.18, 0.22, 0.20);
+      bCyl(uGrn, -1.18, surfY+0.20, 0.18, 0.10, 0.10);
+    } else if(key==='tablebrewery'){
+      const uVat = productionUv(key,rot,[0,0],'vat','vat_s');
+      bBox(uLocal, -0.50, topY, 0, 1.96, topT, 0.94);
+      bBox(uLocal, -0.50, 0, 0, 1.84, topY, 0.84, true);
+      bCyl(uVat, -1.16, surfY, -0.06, 0.46, 0.08);
+      bCyl(uVat, -0.66, surfY, -0.06, 0.46, 0.08);
+      bCyl(uVat, 0.74, 0, -0.14, 0.58, 0.84);
+      bCyl(uVat, 1.14, 0, 0.14, 0.58, 0.90);
+    } else if(key==='electricsmelter'){
+      const uHood = productionUv(key,rot,[0,0],'hood_s','hood_s');
+      const uGlow = productionUv(key,rot,[0,0],'hood','hood');
+      bBox(uLocal, 0, topY, 0, 2.96, topT, 0.96);
+      bBox(uLocal, 0, 0, 0, 2.84, topY, 0.84, true);
+      bBox(uHood, 0, surfY, -0.18, 1.24, 0.24, 0.36);
+      bBox(uHood, -0.58, surfY, 0.13, 0.44, 0.20, 0.26);
+      bBox(uHood, 0.58, surfY, 0.13, 0.44, 0.20, 0.26);
+      bBox(uGlow, 0, surfY, 0.13, 0.72, 0.16, 0.26);
+      bBox(uHood, 0, surfY, 0.35, 0.92, 0.10, 0.18);
+    } else if(key==='researchbenchhitech'){
+      const uTray = productionUv(key,rot,[0,0],'tray','tray');
+      const uFlask = productionUv(key,rot,[0,0],'flask','flask');
+      bBox(uLocal, 0, topY, 0, 4.96, topT, 1.96);
+      bBox(uLocal, 0, 0, 0, 4.84, topY, 1.84, true);
+      bBox(uTray, -1.80, surfY, 0, 0.64, 0.06, 1.66);
+      bBox(uTray, 1.80, surfY, 0, 0.64, 0.06, 1.66);
+      bBox(uTray, 0, surfY, -0.32, 0.92, 0.12, 0.50);
+      for(const fz of [0.26, -0.26]){
+        bCyl(uFlask, -1.80, surfY+0.06, fz, 0.34, 0.18);
+        bCyl(uFlask, -1.80, surfY+0.24, fz, 0.14, 0.10);
+      }
+    } else if(key==='fabricationbench'){
+      const uBody = productionUv(key,rot,[0,0],'top','body');
+      const uSteel = productionUv(key,rot,[0,0],'body','body');
+      const uMach = productionUv(key,rot,[0,0],'mach','mach');
+      bBox(uBody, 0, topY, 0, 4.96, topT, 1.96);
+      bBox(uBody, 0, 0.16, 0, 4.84, topY-0.16, 1.84, true);
+      bBox(uLocal, 0, 0, 0, 4.88, 0.16, 1.88);
+      bBox(uMach, -1.76, surfY, -0.22, 0.68, 0.16, 0.72);
+      bBox(uMach, -0.78, surfY, -0.18, 0.84, 0.24, 1.16);
+      bBox(uMach, 0.80, surfY, -0.18, 0.84, 0.24, 1.16);
+      bBox(uMach, 1.78, surfY, -0.22, 0.68, 0.16, 0.72);
+      bBox(uSteel, -1.31, surfY, -0.20, 0.22, 0.10, 0.24);
+      bBox(uSteel, 0.01, surfY, -0.20, 0.74, 0.10, 0.28);
+      bBox(uSteel, 1.33, surfY, -0.20, 0.22, 0.10, 0.24);
+      bBox(uSteel, -0.80, surfY, 0.66, 0.42, 0.18, 0.46);
+      bBox(uSteel, 0.86, surfY, 0.66, 0.42, 0.18, 0.46);
+    } else {
+      const longSpan=Math.max(w,d), shortSpan=Math.min(w,d);
+      bBox(uLocal, 0, topY, 0, longSpan-0.04, topT, shortSpan-0.04);
+      bBox(uLocal, 0, 0, 0, longSpan-0.16, topY, shortSpan-0.16, true);
+    }
   } else if(it.arch==='armchair'||it.arch==='throne'){
     const sh=it.seatH||M.armSeat, bk=it.backH||M.armBack, t=M.uph, bs=backSign(rot);
-    box(g, uvNames(key,rot,[w,d],'top','front'), 0,0,0, w*0.9,sh,d*0.86);
-    const ub = panelUv(key,rot,[w,d],'back', longZ);
+    box(g, faceUv(key,rot,[0,0]), 0,0,0, w*0.9,sh,d*0.86);
+    const ub = panelUv(key,rot,[0,0],'back', longZ);
     if(longZ) box(g,ub,0,sh,bs*(d/2-t/2), w*0.98,bk-sh,t);
     else      box(g,ub,bs*(w/2-t/2),sh,0, t,bk-sh,d*0.98);
     for(let i=0;i<2;i++){
-      const sgn = i? 1 : -1, ua = panelUv(key,rot,[w,d], i?'armr':'arml', longZ);
+      const sgn = i? 1 : -1, ua = panelUv(key,rot,[0,0], i?'armr':'arml', !longZ);
       if(longZ) box(g,ua,sgn*(w/2-t/2),0,0, t,M.armArm,d*0.88);
       else      box(g,ua,0,0,sgn*(d/2-t/2), w*0.88,M.armArm,t);
     }
@@ -397,6 +650,7 @@ const root = new THREE.Group(); scene.add(root);
 const grid = new THREE.GridHelper(12,24,0x4a5568,0x2e3446); grid.position.y=-0.003; scene.add(grid);
 const EMPTY = new URLSearchParams(location.search).get('empty') === '1';
 const FLAT = new URLSearchParams(location.search).get('flat') === '1';
+const UNLIT = new URLSearchParams(location.search).get('unlit') === '1';
 // still=1：审核出图用。按钮/朝向条是 DOM 叠层，与差分参考图必然不一致，
 // 留在画面里就得靠"切掉顶部 205 行"遮丑 —— 正上方机位的模型顶部会被一起切掉，
 // 于是好件被误判成剪影断裂。关掉叠层后差分只剩模型本体，不用切。
@@ -424,14 +678,15 @@ function rebuild(){
   while(root.children.length) root.remove(root.children[0]);
   if(EMPTY){ hud(); sentinel(); return; }   // 差分回路用：只画场景不画模型（?empty=1）
   const geo = build(ITEM, ROT);
-  root.add(new THREE.Mesh(geo, FLAT ? new THREE.MeshNormalMaterial() : mat));
-  // 描边：运行时用**沿平均法线外扩的反绕壳**（ModelBuilder.ToHull）。
-  // 这里不能用整组 scale —— 那会把细件（立柱）按离原点的距离整体撑歪。
-  // 检查页只需要看棱线是否落在正确的面上，故用 EdgesGeometry。
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geo, 45),
-    new THREE.LineBasicMaterial({color:0x0a0910}));
-  root.add(edges);
+  const renderMat = FLAT ? new THREE.MeshNormalMaterial()
+                        : (UNLIT ? new THREE.MeshBasicMaterial({map:tex, side:THREE.FrontSide}) : mat);
+  const bodyMesh = new THREE.Mesh(geo, renderMat);
+  const hullMesh = createHull(geo);
+  bodyMesh.renderOrder = 1;
+  hullMesh.renderOrder = 2;
+  root.add(bodyMesh);
+  // 描边仅限于最外边缘：采用平滑法线外扩反相背面外壳，几何体内部接缝不出现黑线
+  root.add(hullMesh);
   hud();
   sentinel();
 }
@@ -516,13 +771,13 @@ if(PRETTY){
   ground.rotation.x = -Math.PI/2; ground.position.y = -0.003;
   ground.receiveShadow = true; scene.add(ground);
   scene.children.filter(o=>o.isDirectionalLight).forEach(l=>l.intensity*=0.3);
-  scene.children.filter(o=>o.isAmbientLight).forEach(l=>l.intensity=0.3);
-  const key = new THREE.DirectionalLight(0xfff1dd, 1.15);
-  key.position.set(4.5,7.5,5.5); key.castShadow = !STILL;
+  scene.children.filter(o=>o.isAmbientLight).forEach(l=>l.intensity=0.55);
+  const key = new THREE.DirectionalLight(0xfff6e8, 1.15);
+  key.position.set(4.5,7.5,-5.5); key.castShadow = !STILL;
   key.shadow.mapSize.set(2048,2048);
   const sc = key.shadow.camera; sc.left=-14; sc.right=14; sc.top=14; sc.bottom=-14; sc.far=42;
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x9fc4ff, 0.5); rim.position.set(-5,3.5,-6); scene.add(rim);
+  const rim = new THREE.DirectionalLight(0x9fc4ff, 0.55); rim.position.set(-5,4.5,6); scene.add(rim);
 }
 if(q.get('parts')==='1'){
   // 全部件清单：每件 × 四个朝向，逐条给出包围盒。守卫脚本用 --dump-dom 取这一段。
@@ -554,10 +809,10 @@ if(q.get('parts')==='1'){
       const dp = geo.boundingBox.max.z - geo.boundingBox.min.z;
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x+w/2, 0, z); m.castShadow = true; m.receiveShadow = true;
+      m.renderOrder = 1;
       scene.add(m);
-      const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo,45),
-                                       new THREE.LineBasicMaterial({color:0x14161c}));
-      e.position.copy(m.position); scene.add(e);
+      const e = createHull(geo);
+      e.position.copy(m.position); e.renderOrder = 2; scene.add(e);
       x += w + gap; deep = Math.max(deep, dp);
     }
     widest = Math.max(widest, x - gap);
@@ -574,11 +829,46 @@ if(q.get('parts')==='1'){
     camera.position.set(total/2, EYE, -3.4);
     camera.lookAt(total/2, 0.9, 0);
   }
+} else if(q.get('triptych')==='1'){
+  ['hud','items','views','rots'].forEach(id=>{const e=document.getElementById(id); if(e) e.style.display='none';});
 } else {
   rebuild();
   if(PRETTY) root.traverse(o=>{ o.castShadow = true; o.receiveShadow = true; });
 }
-function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); }
+function renderTriptych(){
+  const shots = [
+    {rot:'south', view:'45°'},
+    {rot:'south', view:'主视·南'},
+    {rot:'east',  view:'45°'},
+    {rot:'north', view:'45°'},
+  ];
+  const W = innerWidth, H = innerHeight, cw = Math.floor(W / shots.length);
+  renderer.setScissorTest(true);
+  camera.aspect = cw / H; camera.updateProjectionMatrix();
+  const it = ITEMS[ITEM], R = it ? 0.5*Math.hypot(it.w, it.d) : 0.707;
+  const sc = Math.max(1, R/1.15);
+  shots.forEach((s, i)=>{
+    while(root.children.length) root.remove(root.children[0]);
+    const geo = build(ITEM, s.rot);
+    const bodyMesh = new THREE.Mesh(geo, mat);
+    const hullMesh = createHull(geo);
+    bodyMesh.renderOrder = 1;
+    hullMesh.renderOrder = 2;
+    root.add(bodyMesh);
+    root.add(hullMesh);
+    const v = VIEWS[s.view];
+    camera.position.set(v.p[0]*sc, v.p[1]*sc, v.p[2]*sc);
+    camera.lookAt(v.t[0], v.t[1], v.t[2]);
+    renderer.setViewport(i*cw, 0, cw, H);
+    renderer.setScissor(i*cw, 0, cw, H);
+    renderer.render(scene, camera);
+  });
+}
+function loop(){
+  requestAnimationFrame(loop);
+  if(q.get('triptych')==='1'){ renderTriptych(); return; }
+  controls.update(); renderer.render(scene,camera);
+}
 loop();
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();

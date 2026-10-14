@@ -128,7 +128,7 @@ namespace RimFirstPerson3D
             return max;
         }
 
-        public void Build(bool[] footprint)
+        public void Build(bool[] footprint, bool[] enclosedRoofs = null)
         {
             if (Heights.Length != SampleWidth * SampleDepth)
             {
@@ -142,9 +142,8 @@ namespace RimFirstPerson3D
             if (footprint == null || footprint.Length != Width * Depth || Width == 0 || Depth == 0)
                 return;
 
+            float mountainMinHeight = 2.12f;
             float mountainMaxHeight = Metrics3D.MountainMaxHeight;
-            float footSlopeDeg = Metrics3D.MountainFootSlopeDegrees;
-            float mainSlopeDeg = Metrics3D.MountainMainSlopeDegrees;
             float maxSlopeDeg = Metrics3D.MountainMaxSlopeDegrees;
             float footDist = Metrics3D.MountainFootDistance;
             float shoulderDist = Metrics3D.MountainShoulderDistance;
@@ -152,8 +151,6 @@ namespace RimFirstPerson3D
             float noiseAmp = Metrics3D.MountainNoiseAmplitude;
             int smoothingPasses = Metrics3D.MountainSmoothingPasses;
 
-            float tanFoot = (float)Math.Tan(footSlopeDeg * Math.PI / 180.0);
-            float tanMain = (float)Math.Tan(mainSlopeDeg * Math.PI / 180.0);
             float tanMax = (float)Math.Tan(maxSlopeDeg * Math.PI / 180.0);
 
             int totalSamples = SampleWidth * SampleDepth;
@@ -169,38 +166,32 @@ namespace RimFirstPerson3D
 
                 for (int sx = 0; sx < SampleWidth; sx++)
                 {
-                    float d = dist[row + sx];
+                    int idx = row + sx;
+                    float d = dist[idx];
                     if (d <= 0f)
                     {
-                        Heights[row + sx] = 0f;
+                        Heights[idx] = 0f;
                         continue;
                     }
 
-                    // Profile from foot -> main slope -> summit plateau
-                    // Note: Natural rock / mountain roof in RimWorld has cave ceiling at 2.70m,
-                    // so slopes rise briskly at the foot (tanMain) and transition into the shoulder and plateau.
+                    // 连续无折角的陡峭山脉包络曲线：
+                    // d=0.5m（首格格心）即达 ~2.18m (> 2.0m)，d=1.0m 达 ~3.60m，d=1.5m 达 ~4.85m，d=2.0m 达 ~6.00m，
+                    // 全程斜率从 76° 平滑过渡至 71° -> 67° -> 58°，彻底消除 2.68m 处的生硬水平平台折线。
                     float baseH;
-                    if (d <= footDist)
+                    float hAtShoulder = 3.18f * (float)Math.Pow(shoulderDist, 0.70) + 0.38f * shoulderDist;
+                    if (d <= shoulderDist)
                     {
-                        float t = d / footDist;
-                        float slope = tanFoot + (tanMain - tanFoot) * (0.35f + 0.65f * t);
-                        baseH = d * slope;
-                    }
-                    else if (d <= shoulderDist)
-                    {
-                        float hFoot = footDist * (tanFoot + (tanMain - tanFoot) * 1.0f);
-                        baseH = hFoot + (d - footDist) * tanMain;
+                        baseH = 3.18f * (float)Math.Pow(d, 0.70) + 0.38f * d;
                     }
                     else
                     {
-                        float hFoot = footDist * (tanFoot + (tanMain - tanFoot) * 1.0f);
-                        float hShoulder = hFoot + (shoulderDist - footDist) * tanMain;
                         float extra = d - shoulderDist;
-                        float remaining = mountainMaxHeight - hShoulder;
+                        float remaining = mountainMaxHeight - hAtShoulder;
                         if (remaining > 0f)
                         {
-                            float tanhArg = (tanMain * extra) / remaining;
-                            baseH = hShoulder + remaining * (float)Math.Tanh(tanhArg);
+                            float slopeAtShoulder = 2.226f * (float)Math.Pow(shoulderDist, -0.30) + 0.38f;
+                            float tanhArg = (slopeAtShoulder * extra) / remaining;
+                            baseH = hAtShoulder + remaining * (float)Math.Tanh(tanhArg);
                         }
                         else
                         {
@@ -212,30 +203,29 @@ namespace RimFirstPerson3D
 
                     float worldX = sx * 0.5f;
                     float nBroad = DeterministicNoise(worldX / noiseScale, worldZ / noiseScale, Seed);
-                    float crag = nBroad;
-                    if (d > footDist)
-                    {
-                        float interiorBlend = Math.Min(1f, (d - footDist) * 0.25f);
-                        float nDetail = DeterministicNoise(worldX / (noiseScale * 0.45f) + 17.3f, worldZ / (noiseScale * 0.45f) + 31.7f, Seed ^ 0x5A391B);
-                        float nRidge = 1f - Math.Abs(DeterministicNoise(worldX / (noiseScale * 0.65f) + 53.1f, worldZ / (noiseScale * 0.65f) + 11.9f, Seed ^ 0x2C7E91));
-                        crag += (nDetail * 0.25f + (nRidge - 0.30f) * 0.45f) * interiorBlend;
-                    }
+                    float nDetail = DeterministicNoise(worldX / (noiseScale * 0.42f) + 17.3f, worldZ / (noiseScale * 0.42f) + 31.7f, Seed ^ 0x5A391B);
+                    float nRidge = 1f - Math.Abs(DeterministicNoise(worldX / (noiseScale * 0.58f) + 53.1f, worldZ / (noiseScale * 0.58f) + 11.9f, Seed ^ 0x2C7E91));
+                    float nGully = DeterministicNoise((worldX + worldZ * 0.6f) / 3.2f + 9.4f, (worldZ - worldX * 0.6f) / 3.2f + 21.8f, Seed ^ 0x4E81C3);
+                    float nMicro = DeterministicNoise(worldX / 1.6f + 7.1f, worldZ / 1.6f + 19.4f, Seed ^ 0x71E23A);
 
-                    float fade = d < footDist ? (d / footDist) : 1f;
+                    float interiorBlend = Math.Min(1f, (d - 0.35f) * 0.45f);
+                    float crag = nBroad * 0.50f
+                               + ((nRidge * nRidge - 0.35f) * 0.95f + nDetail * 0.42f + nGully * 0.32f + nMicro * 0.20f) * interiorBlend;
+                    float fade = d < footDist ? (0.18f + 0.82f * (d / footDist)) : 1f;
                     float h = baseH + crag * noiseAmp * fade;
 
-                    if (h < 0.05f) h = 0.05f;
+                    if (h < mountainMinHeight) h = mountainMinHeight;
                     if (h > mountainMaxHeight) h = mountainMaxHeight;
-                    Heights[row + sx] = h;
+                    Heights[idx] = h;
                 }
             }
 
             for (int p = 0; p < smoothingPasses; p++)
             {
-                SmoothPass(dist, mountainMaxHeight);
+                SmoothPass(dist, mountainMinHeight, mountainMaxHeight);
             }
 
-            LimitGradients(dist, tanMax, mountainMaxHeight);
+            LimitGradients(dist, tanMax, mountainMinHeight, mountainMaxHeight);
 
             for (int i = 0; i < totalSamples; i++)
             {
@@ -243,10 +233,31 @@ namespace RimFirstPerson3D
                 {
                     Heights[i] = 0f;
                 }
+                else if (Heights[i] < mountainMinHeight)
+                {
+                    Heights[i] = mountainMinHeight;
+                }
                 else if (Heights[i] > mountainMaxHeight)
                 {
                     Heights[i] = mountainMaxHeight;
                 }
+            }
+
+            if (enclosedRoofs != null && enclosedRoofs.Length == footprint.Length)
+            {
+                // Room roofs constrain the shared lattice, so ceiling, surface and neighboring sides agree.
+                for (int z = 0; z < Depth; z++)
+                    for (int x = 0; x < Width; x++)
+                    {
+                        int cell = z * Width + x;
+                        if (!enclosedRoofs[cell] || !footprint[cell]) continue;
+                        for (int dz = 0; dz <= SamplesPerCell; dz++)
+                            for (int dx = 0; dx <= SamplesPerCell; dx++)
+                            {
+                                int sample = (z * SamplesPerCell + dz) * SampleWidth + x * SamplesPerCell + dx;
+                                Heights[sample] = Math.Max(Heights[sample], Metrics3D.RockHeight);
+                            }
+                    }
             }
         }
 
@@ -416,6 +427,26 @@ namespace RimFirstPerson3D
             return dx * dx + dz * dz;
         }
 
+        private bool TouchesFootprint(int sx, int sz, bool[] footprint)
+        {
+            int minCx = sx > 0 ? (sx - 1) / 2 : 0;
+            int maxCx = sx / 2;
+            int minCz = sz > 0 ? (sz - 1) / 2 : 0;
+            int maxCz = sz / 2;
+
+            for (int cz = minCz; cz <= maxCz; cz++)
+            {
+                if (cz < 0 || cz >= Depth) continue;
+                int row = cz * Width;
+                for (int cx = minCx; cx <= maxCx; cx++)
+                {
+                    if (cx < 0 || cx >= Width) continue;
+                    if (footprint[row + cx]) return true;
+                }
+            }
+            return false;
+        }
+
         private bool IsInteriorSample(int sx, int sz, bool[] footprint)
         {
             if (sx <= 0 || sz <= 0 || sx >= SampleWidth - 1 || sz >= SampleDepth - 1)
@@ -438,14 +469,14 @@ namespace RimFirstPerson3D
             return true;
         }
 
-        private void SmoothPass(float[] dist, float maxH)
+        private void SmoothPass(float[] dist, float minH, float maxH)
         {
             float[] temp = new float[Heights.Length];
             Array.Copy(Heights, temp, Heights.Length);
 
             int[] dx = { -1, 1, 0, 0, -1, -1, 1, 1 };
             int[] dz = { 0, 0, -1, 1, -1, 1, -1, 1 };
-            float[] w = { 2f, 2f, 2f, 2f, 1f, 1f, 1f, 1f };
+            float[] w = { 1.5f, 1.5f, 1.5f, 1.5f, 0.75f, 0.75f, 0.75f, 0.75f };
 
             for (int sz = 0; sz < SampleDepth; sz++)
             {
@@ -455,8 +486,8 @@ namespace RimFirstPerson3D
                     int idx = row + sx;
                     if (dist[idx] <= 0f) continue;
 
-                    float sum = temp[idx] * 4f;
-                    float weight = 4f;
+                    float sum = temp[idx] * 6f;
+                    float weight = 6f;
 
                     for (int k = 0; k < 8; k++)
                     {
@@ -474,13 +505,14 @@ namespace RimFirstPerson3D
                     }
 
                     float smoothed = sum / weight;
+                    if (smoothed < minH) smoothed = minH;
                     if (smoothed > maxH) smoothed = maxH;
                     Heights[idx] = smoothed;
                 }
             }
         }
 
-        private void LimitGradients(float[] dist, float tanMax, float maxH)
+        private void LimitGradients(float[] dist, float tanMax, float minH, float maxH)
         {
             float maxDeltaStraight = 0.5f * tanMax;
             float maxDeltaDiag = 0.5f * 1.41421356f * tanMax;
@@ -510,10 +542,12 @@ namespace RimFirstPerson3D
                             if (nx >= 0 && nx < SampleWidth && nz >= 0 && nz < SampleDepth)
                             {
                                 int nidx = nz * SampleWidth + nx;
+                                if (dist[nidx] <= 0f) continue;
                                 float limit = Heights[nidx] + maxDelta[k];
                                 if (h > limit) h = limit;
                             }
                         }
+                        if (h < minH) h = minH;
                         if (h > maxH) h = maxH;
                         Heights[idx] = h;
                     }
@@ -535,10 +569,12 @@ namespace RimFirstPerson3D
                             if (nx >= 0 && nx < SampleWidth && nz >= 0 && nz < SampleDepth)
                             {
                                 int nidx = nz * SampleWidth + nx;
+                                if (dist[nidx] <= 0f) continue;
                                 float limit = Heights[nidx] + maxDelta[k];
                                 if (h > limit) h = limit;
                             }
                         }
+                        if (h < minH) h = minH;
                         if (h > maxH) h = maxH;
                         Heights[idx] = h;
                     }

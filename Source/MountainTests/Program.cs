@@ -31,6 +31,9 @@ namespace MountainTests
             TestShallowRoofNeighborNoOverlapAndSplitWallArea();
             TestUpperCapClipping();
             TestRepeatedBuilds();
+            TestArtificialRoofBoundaryTopology();
+            TestEnclosedNaturalRoofAtMountainEdge();
+            TestEnclosedNaturalRoofRingAndUpperCap();
 
             Microbench250x250();
 
@@ -572,6 +575,124 @@ namespace MountainTests
             float h3 = shape.SampleHeight(11, 11);
 
             Assert(h1 == h3 && h1 != h2, "Repeated builds reset state correctly and deterministically");
+        }
+
+        static void TestEnclosedNaturalRoofAtMountainEdge()
+        {
+            const int w = 5, d = 5, x = 1, z = 1;
+            var footprint = new bool[w * d];
+            footprint[z * w + x] = true;
+            footprint[z * w + x + 1] = true;
+            var enclosed = new bool[w * d];
+            enclosed[z * w + x] = true;
+            var shape = new MountainShape3D(w, d, 333);
+            var original = new MountainShape3D(w, d, 333);
+            original.Build(footprint);
+            shape.Build(footprint, enclosed);
+            Assert(shape.CellMin(x, z) >= Metrics3D.RockHeight,
+                "Enclosed natural roof has solid mountain thickness across the entire cell");
+
+            var cells = new byte[w * d];
+            cells[z * w + x] = 2;
+            cells[z * w + x + 1] = 1;
+            var triangles = new List<MountainTriangle3D>();
+            MountainMesh3D.BuildCell(shape, x, z, cells, null, triangles);
+            double ceilingArea = 0, topArea = 0;
+            bool noGeometryBelowCeiling = true;
+            foreach (var t in triangles)
+            {
+                double area = Math.Abs((t.b.x - t.a.x) * (t.c.z - t.a.z)
+                    - (t.b.z - t.a.z) * (t.c.x - t.a.x)) * 0.5;
+                if (t.na.y < -0.9f) ceilingArea += area;
+                if (t.surface) topArea += area;
+                if (t.a.y < Metrics3D.MountainCaveCeiling - 1e-4f
+                    || t.b.y < Metrics3D.MountainCaveCeiling - 1e-4f
+                    || t.c.y < Metrics3D.MountainCaveCeiling - 1e-4f)
+                    noGeometryBelowCeiling = false;
+            }
+            Assert(Math.Abs(ceilingArea - 1.0) < 1e-5,
+                "Enclosed natural roof ceiling covers full cell at mountain boundary", $"area={ceilingArea}");
+            Assert(Math.Abs(topArea - 1.0) < 1e-5 && noGeometryBelowCeiling,
+                "Enclosed natural roof retains top and leaves room clear below ceiling");
+
+            bool sharedEdge = true;
+            for (int sz = z * 2; sz <= (z + 1) * 2; sz++)
+                sharedEdge &= shape.SampleHeight((x + 1) * 2, sz) >= Metrics3D.RockHeight;
+            Assert(sharedEdge, "Room roof constraint uses shared samples with adjacent mountain");
+
+            triangles.Clear();
+            MountainMesh3D.BuildCell(shape, x, z + 1, cells, null, triangles);
+            Assert(triangles.Count == 0, "Room roof constraint does not add roof to an unroofed cell");
+            enclosed[z * w + x] = false;
+            shape.Build(footprint, enclosed);
+            bool restored = true;
+            for (int i = 0; i < shape.Heights.Length; i++)
+                restored &= shape.Heights[i] == original.Heights[i];
+            Assert(restored, "Room roof constraint removal restores original outdoor mountain shape");
+        }
+
+        static void TestEnclosedNaturalRoofRingAndUpperCap()
+        {
+            const int w = 7, d = 7;
+            var footprint = new bool[w * d];
+            var enclosed = new bool[w * d];
+            var cells = new byte[w * d];
+            var caps = new float[w * d];
+            for (int i = 0; i < caps.Length; i++) caps[i] = float.PositiveInfinity;
+            for (int z = 1; z <= 5; z++)
+                for (int x = 1; x <= 5; x++)
+                {
+                    if (x == 3 && z == 3) continue;
+                    int i = z * w + x;
+                    footprint[i] = enclosed[i] = true;
+                    cells[i] = 2;
+                    caps[i] = Metrics3D.RockHeight;
+                }
+            var shape = new MountainShape3D(w, d, 121);
+            shape.Build(footprint, enclosed);
+            var triangles = new List<MountainTriangle3D>();
+            for (int z = 0; z < d; z++)
+                for (int x = 0; x < w; x++)
+                    MountainMesh3D.BuildCell(shape, x, z, cells, caps, triangles);
+            double area = 0;
+            bool capped = true, holeClear = true, winding = true;
+            foreach (var t in triangles)
+            {
+                if (t.a.y > Metrics3D.RockHeight + 1e-4f
+                    || t.b.y > Metrics3D.RockHeight + 1e-4f
+                    || t.c.y > Metrics3D.RockHeight + 1e-4f) capped = false;
+                if (t.na.y >= -0.9f) continue;
+                double crossY = (t.b.z - t.a.z) * (t.c.x - t.a.x)
+                    - (t.b.x - t.a.x) * (t.c.z - t.a.z);
+                area += Math.Abs(crossY) * 0.5;
+                winding &= crossY < 0;
+                float cx = (t.a.x + t.b.x + t.c.x) / 3f;
+                float cz = (t.a.z + t.b.z + t.c.z) / 3f;
+                if (cx > 3 && cx < 4 && cz > 3 && cz < 4) holeClear = false;
+            }
+            Assert(Math.Abs(area - 24) < 1e-5 && winding,
+                "Enclosed natural roof ring covers every roof cell with downward winding", $"area={area}");
+            Assert(holeClear, "Enclosed room preserves unroofed skylight in roof ring");
+            Assert(capped, "Enclosed room roof respects upper-level height cap");
+        }
+
+        static void TestArtificialRoofBoundaryTopology()
+        {
+            bool[] cells =
+            {
+                true, true, false,
+                true, true, false,
+                false, false, false
+            };
+            int count = RoofMeshTopology3D.BoundaryEdgeCount(cells, 3, 3);
+            bool corner = RoofMeshTopology3D.IsBoundaryEdge(cells, 3, 3, 0, 0, 0);
+            bool isInternal = RoofMeshTopology3D.IsBoundaryEdge(cells, 3, 3, 0, 0, 3);
+            bool outside = !RoofMeshTopology3D.IsCovered(cells, 3, 3, 2, 0);
+            cells[1] = false;
+            int changedCount = RoofMeshTopology3D.BoundaryEdgeCount(cells, 3, 3);
+            Assert(count == 8, "Artificial roof boundary emits only outer edges", $"count={count}");
+            Assert(corner && !isInternal && outside, "Artificial roof boundary distinguishes covered and exposed neighbors");
+            Assert(changedCount == 8, "Artificial roof boundary updates after coverage changes", $"count={changedCount}");
         }
 
         static void TestDegeneracyWindingAndManifoldForSolidAndExcavated()

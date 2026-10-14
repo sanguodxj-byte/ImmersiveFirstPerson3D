@@ -125,6 +125,62 @@ namespace RimFirstPerson3D
             return t;
         }
 
+        /// <summary>
+        /// 预乘 alpha 的程序化火舌贴图（供火把/壁炬/篝火 Shader 渲染火焰）：
+        /// 底部圆润饱满、向上收尖并带 FBM 扰动；内焰亮黄白、中焰金橙、外焰赤红。
+        /// </summary>
+        public static Texture2D FlameTongue(int w = 64, int h = 96)
+        {
+            try
+            {
+                var t = new Texture2D(w, h, TextureFormat.RGBA32, false)
+                {
+                    name = "Fps3D_FlameTongue",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear
+                };
+                var px = new Color32[w * h];
+                for (int y = 0; y < h; y++)
+                {
+                    float v = (y + 0.5f) / h; // 0=底部火根, 1=顶部火尖
+                    // 火舌随高度收窄：底部快速展开，向上渐收为尖舌
+                    float baseGrow = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(v / 0.18f));
+                    float tipTaper = Mathf.Pow(Mathf.Clamp01(1f - v), 0.72f);
+                    float maxHalfW = 0.44f * baseGrow * tipTaper;
+
+                    for (int x = 0; x < w; x++)
+                    {
+                        float u = (x + 0.5f) / w;
+                        float n1 = Fbm(u * 4.2f + 1.7f, v * 5.6f + 2.3f) - 0.5f;
+                        float sway = n1 * 0.14f * v;
+                        float dx = Mathf.Abs(u - 0.5f - sway);
+                        float d = maxHalfW > 0.001f ? dx / maxHalfW : 2f;
+                        float a = Mathf.Clamp01(1f - d * d);
+                        a = a * a * (3f - 2f * a);
+                        // 顶底两端柔和收边
+                        a *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(v / 0.07f));
+                        a *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((1f - v) / 0.08f));
+
+                        // 内焰热度：靠近底部中心最高，向上与向外衰减
+                        float core = a * Mathf.Clamp01(1f - d * 1.35f) * Mathf.Clamp01(1.15f - v * 0.85f);
+                        float r = Mathf.Clamp01(a * 1.15f);
+                        float g = Mathf.Clamp01(a * Mathf.Lerp(0.28f, 0.82f, Mathf.Pow(a, 0.65f)) + core * 0.45f);
+                        float b = Mathf.Clamp01(core * core * 0.85f);
+
+                        byte br = (byte)Mathf.RoundToInt(255f * r * a);
+                        byte bg = (byte)Mathf.RoundToInt(255f * g * a);
+                        byte bb = (byte)Mathf.RoundToInt(255f * b * a);
+                        byte ba = (byte)Mathf.RoundToInt(255f * a);
+                        px[y * w + x] = new Color32(br, bg, bb, ba);
+                    }
+                }
+                t.SetPixels32(px);
+                t.Apply(false, false);
+                return t;
+            }
+            catch { return null; }
+        }
+
         private static float Fbm(float x, float y)
         {
             float v = 0f, amp = 0.5f, f = 1f;
@@ -163,6 +219,15 @@ namespace RimFirstPerson3D
 
         private enum Cls { None = 0, Shore, Shallow, Chest, Deep, Marsh }
 
+        private class WaterSurf
+        {
+            public Mesh mesh;
+            public Vector3[] verts;
+            public Vector3[] normals;
+            public Color32[] colors;
+            public bool whiteFallback;
+        }
+
         private class Chunk
         {
             public readonly List<Mesh> surf = new List<Mesh>();
@@ -173,7 +238,11 @@ namespace RimFirstPerson3D
             // 朝陆地的岸壁，按邻格地面材质分网格
             public readonly List<Mesh> shore = new List<Mesh>();
             public readonly List<Material> shoreMat = new List<Material>();
+            public readonly List<WaterSurf> allSurfs = new List<WaterSurf>();
+            public Bounds bounds;
+            public bool boundsValid;
             public bool dirty = true;
+            public bool colorDirty;
             public bool hasWater;
         }
 
@@ -217,6 +286,13 @@ namespace RimFirstPerson3D
 
         public void MarkAllDirty() => allDirty = true;
 
+        public void MarkAllColorDirty()
+        {
+            foreach (var kv in chunks)
+                if (!kv.Value.dirty && kv.Value.hasWater)
+                    kv.Value.colorDirty = true;
+        }
+
         public void MarkCellDirty(IntVec3 c)
         {
             // 岸线分类依赖邻格：边界格要把相邻块一并标脏。
@@ -229,6 +305,14 @@ namespace RimFirstPerson3D
                     if (!chunks.TryGetValue(key, out var ch)) { ch = new Chunk(); chunks[key] = ch; }
                     ch.dirty = true;
                 }
+        }
+
+        public void MarkCellColorDirty(IntVec3 c)
+        {
+            if (!c.InBounds(map)) return;
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch) && !ch.dirty && ch.hasWater)
+                ch.colorDirty = true;
         }
 
         public void Update()
@@ -251,12 +335,23 @@ namespace RimFirstPerson3D
                 allDirty = false;
             }
             int budget = Fps3DState.ChunkRebuildBudget;
+            int colorBudget = budget * 6 + 6;
             foreach (var kv in chunks)
             {
-                if (!kv.Value.dirty) continue;
-                if (budget <= 0) break;
-                RebuildChunk(kv.Key / 10000, kv.Key % 10000, kv.Value);
-                budget--;
+                var ch = kv.Value;
+                if (ch.dirty)
+                {
+                    if (budget > 0)
+                    {
+                        RebuildChunk(kv.Key / 10000, kv.Key % 10000, ch);
+                        budget--;
+                    }
+                }
+                else if (ch.colorDirty && colorBudget > 0)
+                {
+                    RecolorChunk(ch);
+                    colorBudget--;
+                }
             }
         }
 
@@ -414,28 +509,67 @@ namespace RimFirstPerson3D
             }
 
             chunk.hasWater = any;
+            chunk.colorDirty = false;
             if (!any) return;
             var lf = Lighting3D.Enabled ? light : null;
+            bool hasBounds = false;
+            var acc = new Bounds();
             foreach (var kv in surfBuilders)
             {
-                var m = kv.Value.ToMesh(lf);
-                if (m == null) continue;
-                chunk.surf.Add(m);
+                var ws = kv.Value.ToWaterSurf(lf, whiteColors: false);
+                if (ws == null) continue;
+                chunk.surf.Add(ws.mesh);
                 chunk.surfMat.Add(SurfMaterial(kv.Key, (kv.Key & 1) == 1));
+                chunk.allSurfs.Add(ws);
+                if (!hasBounds) { acc = ws.mesh.bounds; hasBounds = true; }
+                else acc.Encapsulate(ws.mesh.bounds);
             }
             foreach (var bkv in bedBuilders)
             {
-                var bm = bkv.Value.ToMesh(lf);
-                if (bm == null) continue;
-                chunk.bed.Add(bm);
+                var ws = bkv.Value.ToWaterSurf(lf, whiteColors: false);
+                if (ws == null) continue;
+                chunk.bed.Add(ws.mesh);
                 chunk.bedMat.Add(BedMaterial(bkv.Key));
+                chunk.allSurfs.Add(ws);
+                if (!hasBounds) { acc = ws.mesh.bounds; hasBounds = true; }
+                else acc.Encapsulate(ws.mesh.bounds);
             }
             foreach (var skv in shoreBuilders)
             {
-                var sm = skv.Value.ToMesh(lf, whiteColors: true);
-                if (sm == null) continue;
-                chunk.shore.Add(sm);
+                var ws = skv.Value.ToWaterSurf(lf, whiteColors: true);
+                if (ws == null) continue;
+                chunk.shore.Add(ws.mesh);
                 chunk.shoreMat.Add(skv.Key);
+                chunk.allSurfs.Add(ws);
+                if (!hasBounds) { acc = ws.mesh.bounds; hasBounds = true; }
+                else acc.Encapsulate(ws.mesh.bounds);
+            }
+            chunk.bounds = acc;
+            chunk.boundsValid = hasBounds;
+        }
+
+        private void RecolorChunk(Chunk chunk)
+        {
+            chunk.colorDirty = false;
+            var lf = Lighting3D.Enabled ? light : null;
+            for (int s = 0; s < chunk.allSurfs.Count; s++)
+            {
+                var ws = chunk.allSurfs[s];
+                var v = ws.verts;
+                var n = ws.normals;
+                var c = ws.colors;
+                if (lf != null)
+                {
+                    for (int i = 0; i < v.Length; i++)
+                        c[i] = Lighting3D.To32(lf.Shade(v[i], n[i], true));
+                    ws.mesh.colors32 = c;
+                }
+                else if (ws.whiteFallback)
+                {
+                    var w = new Color32(255, 255, 255, 255);
+                    for (int i = 0; i < v.Length; i++) c[i] = w;
+                    ws.mesh.colors32 = c;
+                }
             }
         }
 
@@ -482,8 +616,9 @@ namespace RimFirstPerson3D
             bool marsh = key >= 900;
             int bucket = marsh ? 0 : key / 2;
             float t = DepthBuckets > 1 ? bucket / (float)(DepthBuckets - 1) : 0f;
-            m = new Material(ShaderDatabase.Transparent)
-            { name = "Fps3D_Water_" + key + (moving ? "_mv" : ""), mainTexture = rippleTex };
+            Shader sh = ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent;
+            m = new Material(sh)
+            { name = "Fps3D_Water_" + key + (moving ? "_mv" : ""), mainTexture = rippleTex, renderQueue = 2912 };
             m.color = marsh ? MarshTint() : SurfaceTint(t);
             surfMats[key] = m;
             return m;
@@ -520,7 +655,8 @@ namespace RimFirstPerson3D
             if (bedMats.TryGetValue(bucket, out var m) && m != null) return m;
             Texture tex = null;
             try { tex = TerrainDefOf.Sand.DrawMatSingle?.mainTexture; } catch { }
-            if (tex == null) { try { tex = TerrainDefOf.Gravel.DrawMatSingle?.mainTexture; } catch { } }
+            if (tex == null || (tex is Texture2D tSand && tSand.NullOrBad())) { try { tex = TerrainDefOf.Gravel.DrawMatSingle?.mainTexture; } catch { } }
+            if (tex is Texture2D tTex && tTex.NullOrBad()) tex = null;
             if (tex is Texture2D t2 && t2.wrapMode != TextureWrapMode.Repeat) t2.wrapMode = TextureWrapMode.Repeat;
             m = new Material(ShaderDatabase.Cutout) { name = "Fps3D_WaterBed_" + bucket };
             m.mainTexture = tex != null ? tex : Util3D.WhiteTex;
@@ -545,11 +681,12 @@ namespace RimFirstPerson3D
             Material src = null;
             try { src = td.DrawMatSingle; } catch { }
             Texture tex = null;
-            if (src != null) tex = src.mainTexture;
+            if (src != null && !src.NullOrBad()) tex = src.mainTexture;
+            if (tex is Texture2D tBad && tBad.NullOrBad()) tex = null;
             if (tex == null)
             {
                 var t2 = ContentFinder<Texture2D>.Get(td.texturePath, reportFailure: false);
-                tex = t2;
+                if (t2 != null && !t2.NullOrBad()) tex = t2;
             }
             if (tex == null) return null;
             if (tex is Texture2D tw && tw.wrapMode != TextureWrapMode.Repeat)
@@ -572,19 +709,46 @@ namespace RimFirstPerson3D
             if (Mathf.Abs(t - scrollT) > 0.0001f)
             {
                 scrollT = t;
+                var env = Lighting3D.Current;
+                float g = Mathf.Clamp01(env.glow);
+                float tw = Mathf.Clamp01(env.twilight);
                 foreach (var kv in surfMats)
                 {
-                    if (kv.Value == null) continue;
+                    var mat = kv.Value;
+                    if (mat == null) continue;
                     bool moving = (kv.Key & 1) == 1;
-                    kv.Value.mainTextureOffset = moving
+                    mat.mainTextureOffset = moving
                         ? new Vector2(t * 0.045f, t * 0.012f)
                         : new Vector2(Mathf.Sin(t * 0.25f) * 0.03f, t * 0.006f);
+                    bool marsh = kv.Key >= 900;
+                    int bucket = marsh ? 0 : kv.Key / 2;
+                    float depthFrac = DepthBuckets > 1 ? bucket / (float)(DepthBuckets - 1) : 0f;
+                    Color baseCol = marsh ? MarshTint() : SurfaceTint(depthFrac);
+                    if (!marsh && Lighting3D.Enabled)
+                    {
+                        // 水面随天穹地平线与晚霞流光柔和反射染色，入夜收敛为幽蓝月华
+                        Color skyReflect = Color.Lerp(baseCol, new Color(env.horizon.r, env.horizon.g, env.horizon.b, baseCol.a), 0.22f * g);
+                        if (tw > 0.02f)
+                        {
+                            Color duskSheen = new Color(env.sunGlowHorizon.r, env.sunGlowHorizon.g, env.sunGlowHorizon.b, baseCol.a);
+                            skyReflect = Color.Lerp(skyReflect, duskSheen, tw * (0.28f - 0.10f * depthFrac));
+                        }
+                        float nightMul = Mathf.Lerp(0.55f, 1.0f, Mathf.Pow(g, 0.55f));
+                        baseCol = new Color(skyReflect.r * nightMul, skyReflect.g * nightMul, skyReflect.b * Mathf.Lerp(0.68f, 1.0f, g), baseCol.a);
+                    }
+                    mat.color = baseCol;
                 }
             }
             foreach (var kv in chunks)
             {
                 var c = kv.Value;
                 if (!c.hasWater) continue;
+                if (c.boundsValid)
+                {
+                    var wb = c.bounds;
+                    wb.center += worldOffset;
+                    if (!Frustum3D.Visible(wb)) continue;
+                }
                 for (int i = 0; i < c.bed.Count; i++)
                 {
                     if (c.bed[i] == null || c.bedMat[i] == null) continue;
@@ -617,6 +781,8 @@ namespace RimFirstPerson3D
             for (int i = 0; i < c.shore.Count; i++) Util3D.SafeDestroy(c.shore[i]);
             c.shore.Clear();
             c.shoreMat.Clear();
+            c.allSurfs.Clear();
+            c.boundsValid = false;
             c.hasWater = false;
         }
 
@@ -646,35 +812,38 @@ namespace RimFirstPerson3D
                 tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
             }
 
-            /// <summary>
-            /// field 非空时逐顶点烘光照进顶点色 RGB（F013）。
-            /// Map/Transparent 是否吃顶点色尚未证实：吃了算赚到，不吃也只是水面维持原样，
-            /// 不会像深度分档那样依赖它。whiteColors 是光照关闭时岸壁的原有中性填充。
-            /// </summary>
-            public Mesh ToMesh(LightField3D field = null, bool whiteColors = false)
+            public WaterSurf ToWaterSurf(LightField3D field = null, bool whiteColors = false)
             {
                 if (verts.Count == 0) return null;
+                var vArr = verts.ToArray();
+                var nArr = normals.ToArray();
+                var cols = new Color32[vArr.Length];
                 var mesh = new Mesh { name = "Fps3D_Water" };
-                mesh.SetVertices(verts);
-                mesh.SetNormals(normals);
+                mesh.vertices = vArr;
+                mesh.normals = nArr;
                 mesh.SetUVs(0, uvs);
                 if (field != null)
                 {
-                    var cols = new Color32[verts.Count];
-                    for (int i = 0; i < verts.Count; i++)
-                        cols[i] = Lighting3D.To32(field.Shade(verts[i], normals[i], true));
-                    mesh.SetColors(cols);
+                    for (int i = 0; i < vArr.Length; i++)
+                        cols[i] = Lighting3D.To32(field.Shade(vArr[i], nArr[i], true));
+                    mesh.colors32 = cols;
                 }
                 else if (whiteColors)
                 {
-                    var cols = new Color32[verts.Count];
                     var w = new Color32(255, 255, 255, 255);
                     for (int i = 0; i < cols.Length; i++) cols[i] = w;
-                    mesh.SetColors(cols);
+                    mesh.colors32 = cols;
                 }
                 mesh.SetTriangles(tris, 0);
                 mesh.RecalculateBounds();
-                return mesh;
+                return new WaterSurf
+                {
+                    mesh = mesh,
+                    verts = vArr,
+                    normals = nArr,
+                    colors = cols,
+                    whiteFallback = whiteColors
+                };
             }
         }
     }

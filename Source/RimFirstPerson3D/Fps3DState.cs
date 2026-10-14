@@ -28,6 +28,12 @@ namespace RimFirstPerson3D
         private const float FloorThickness = 0.30f;
 
         public static int ChunkRebuildBudget = 3;
+        /// <summary>
+        /// 每帧重刷顶点色的时间预算（毫秒）。按时间而不是块数：块与块的顶点数差几十倍，
+        /// 按块数给预算在密草地里等于没有闸门（实机单块 1.6 万顶点，8 块/帧 = 帧时间 100 ms、fps 6）。
+        /// 没刷到的块保持 colorDirty，下一帧接着刷；屏幕外的直接跳过。
+        /// </summary>
+        public static float ChunkColorBudgetMs = 2.5f;
 
         private static ViewMode modeInt = ViewMode.Off;
 

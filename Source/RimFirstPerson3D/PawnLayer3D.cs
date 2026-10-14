@@ -94,15 +94,16 @@ namespace RimFirstPerson3D
             var pos = new Vector3(px, LyingYFor(pawn, baseY) - sink, pz);
             if (!Frustum3D.VisiblePoint(pos, 2.5f)) return;
 
-            var tree = pawn.Drawer.renderer.renderTree;
-            if (tree == null) return;
-            try
+            var tree = pawn.Drawer != null && pawn.Drawer.renderer != null ? pawn.Drawer.renderer.renderTree : null;
+            if (tree != null)
             {
-                if (!tree.Resolved) tree.SetDirty();
-                tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                try
+                {
+                    if (!tree.Resolved) tree.SetDirty();
+                    tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                }
+                catch { }
             }
-            catch { }
-            if (tree.rootNode == null) return;
 
             // 放置亮度按 pawn 脚下格中心取（图内局部坐标，与光照场同一系），
             // 不受附身者连续位移与流式偏移影响。
@@ -125,12 +126,18 @@ namespace RimFirstPerson3D
             float headS = H * (st != null ? st.headScale : 0.34f);
             int depth = 0;
 
+            // 手持武器 / 身前搬运物：原版 blit 与分层立牌都只烘服装+头，不含装备与携带物，
+            // 这里按 pawn 当前 equipment / carryTracker 状态在世界侧补画（所有 pawn，不止玩家）。
+            // 第一人称附身者改由视图模型在屏幕空间画（Viewmodel3D.DrawWeapon / DrawCarried），
+            // 世界侧跳过，免得糊在相机上。深度由朝相机的前移量决定，绘制顺序无关。
+            bool fpSelf = pawn == CameraRig3D.Possessed && Fps3DState.Mode == ViewMode.FirstPerson;
+            if (!fpSelf)
+                DrawHeld(pawn, pos, H, yaw, quad, lit);
+
             if (pawn.RaceProps.Humanlike)
             {
                 // 首选：原版远缩放 blit 路线——整只 pawn（含服装头部）烘进图集页，
-                // mesh 自带图集 UV，材质用图集贴图。1.6 把 pawn 图形贴图重映射进
-                // 全局图集后，自建 0-1 UV 面片配任何节点材质都会采样错位被 cutout
-                // 裁没（r19-r21 实证：动物不进图集故可见，人形全隐）。
+                // mesh 自带图集 UV，材质用图集贴图。
                 PawnTextureAtlasFrameSet fs;
                 if (GlobalTextureAtlasManager.TryGetPawnFrameSet(pawn, out fs, out _) && fs != null && fs.atlas != null)
                 {
@@ -141,9 +148,6 @@ namespace RimFirstPerson3D
                     {
                         Material mat = Lighting3D.MatFor(
                             MaterialPool.MatFrom(new MaterialRequest(fs.atlas, ShaderDatabase.Cutout)), lit);
-                        // blit mesh 是躺地平面 quad（原版俯视用、v 朝北、中心未必在锚点）：
-                        // 绕 X -90° 竖起后 mesh z 轴映射为世界 y，按 bounds 精确贴地；
-                        // 横纵解耦：高=pawnHeight，宽=pawnHeight*pawnWidthScale（原生帧偏宽扁）。
                         var b = blit.bounds;
                         float sy = H / Mathf.Max(0.05f, b.size.z);
                         float sx = W / Mathf.Max(0.05f, b.size.x);
@@ -157,19 +161,37 @@ namespace RimFirstPerson3D
                         return;
                     }
                 }
-                // 兜底：分层走树（图集不可用时）
-                WalkNode(tree.rootNode, pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, 0, lit, hurt);
+                // 兜底：分层走树（图集不可用时，如特殊异种人/外星种族）
+                if (tree != null && tree.rootNode != null)
+                    WalkNode(tree.rootNode, pawn, pos, yaw, viewRot, H, W, headY, headS, quad, ref depth, 0, lit, hurt);
+
+                if (depth == 0)
+                {
+                    Graphic fallback = ResolveGraphic(pawn, viewRot);
+                    if (fallback != null)
+                    {
+                        Material m = null;
+                        try { m = fallback.MatAt(viewRot, pawn) ?? fallback.MatSingle; } catch { }
+                        if (m != null && !m.NullOrBad())
+                            DrawQuad(pos, yaw, W, H, m, quad, 0f, lit, hurt);
+                    }
+                }
             }
             else
             {
-                var body = tree.BodyGraphic;
+                // 机械族、未进 3D 图集的昆虫/实体/变异体/特殊生物等非人形 Pawn：
+                Graphic body = ResolveGraphic(pawn, viewRot);
                 if (body == null) return;
                 Material mat = null;
                 try { mat = body.MatAt(viewRot, pawn); } catch { }
-                if (mat == null) return;
+                if (mat == null || mat.mainTexture == null || mat.NullOrBad())
+                {
+                    try { mat = body.MatSingle; } catch { }
+                }
+                if (mat == null || mat.NullOrBad()) return;
                 var ds = body.drawSize;
-                float aH = Mathf.Max(0.3f, ds.y);
-                float aW = Mathf.Max(0.3f, ds.x);
+                float aH = Mathf.Clamp(ds.y, 0.3f, 6.0f);
+                float aW = Mathf.Clamp(ds.x, 0.3f, 6.0f);
                 DrawQuad(pos, yaw, aW, aH, mat, quad, 0f, lit, hurt);
             }
         }
@@ -196,6 +218,78 @@ namespace RimFirstPerson3D
                 DumpTree(node.children[i], sb, depth + 1);
         }
 
+        public static Graphic ResolveGraphic(Pawn pawn, Rot4 viewRot)
+        {
+            if (pawn == null) return null;
+            // 1. 尝试从 PawnRenderTree 获取 BodyGraphic
+            try
+            {
+                if (pawn.Drawer != null && pawn.Drawer.renderer != null && pawn.Drawer.renderer.renderTree != null)
+                {
+                    var bg = pawn.Drawer.renderer.renderTree.BodyGraphic;
+                    if (bg != null) return bg;
+                }
+            }
+            catch { }
+
+            // 2. 尝试从 ageTracker.CurKindLifeStage 获取
+            try
+            {
+                var curKind = pawn.ageTracker != null ? pawn.ageTracker.CurKindLifeStage : null;
+                if (curKind != null)
+                {
+                    if (pawn.gender == Gender.Female && curKind.femaleGraphicData != null && curKind.femaleGraphicData.Graphic != null)
+                        return curKind.femaleGraphicData.Graphic;
+                    if (curKind.bodyGraphicData != null && curKind.bodyGraphicData.Graphic != null)
+                        return curKind.bodyGraphicData.Graphic;
+                }
+            }
+            catch { }
+
+            // 3. 尝试从 kindDef.lifeStages 获取
+            try
+            {
+                var kindStages = pawn.kindDef != null ? pawn.kindDef.lifeStages : null;
+                if (kindStages != null && pawn.ageTracker != null)
+                {
+                    int idx = pawn.ageTracker.CurLifeStageIndex;
+                    if (idx >= 0 && idx < kindStages.Count)
+                    {
+                        var stage = kindStages[idx];
+                        if (pawn.gender == Gender.Female && stage.femaleGraphicData != null && stage.femaleGraphicData.Graphic != null)
+                            return stage.femaleGraphicData.Graphic;
+                        if (stage.bodyGraphicData != null && stage.bodyGraphicData.Graphic != null)
+                            return stage.bodyGraphicData.Graphic;
+                    }
+                }
+            }
+            catch { }
+
+            // 4. 尝试从 def.graphic / graphicData 获取
+            try
+            {
+                if (pawn.def != null)
+                {
+                    if (pawn.def.graphic != null) return pawn.def.graphic;
+                    if (pawn.def.graphicData != null && pawn.def.graphicData.Graphic != null)
+                        return pawn.def.graphicData.Graphic;
+                }
+            }
+            catch { }
+
+            // 5. 尝试从 renderTree.rootNode 获取
+            try
+            {
+                var root = pawn.Drawer != null && pawn.Drawer.renderer != null && pawn.Drawer.renderer.renderTree != null
+                    ? pawn.Drawer.renderer.renderTree.rootNode : null;
+                if (root != null && root.PrimaryGraphic != null)
+                    return root.PrimaryGraphic;
+            }
+            catch { }
+
+            return null;
+        }
+
         private void WalkNode(PawnRenderNode node, Pawn pawn, Vector3 pos, float yaw, Rot4 viewRot,
             float H, float W, float headY, float headS, Mesh quad, ref int depth, int guard, Color lit, float hurt)
         {
@@ -216,22 +310,23 @@ namespace RimFirstPerson3D
                 catch { }
             }
 
-            if (isBody || isHead || isHair || isApparel)
+            Graphic g = null;
+            try { g = node.GraphicFor(pawn) ?? node.PrimaryGraphic; } catch { }
+            if (g != null)
             {
-                var g = node.PrimaryGraphic;
-                if (g != null)
+                Material mat = null;
+                try { mat = g.MatAt(viewRot, pawn) ?? g.MatSingle; } catch { }
+                if (mat != null && mat.mainTexture != null && !mat.NullOrBad())
                 {
-                    Material mat = null;
-                    try { mat = g.MatAt(viewRot, pawn); } catch { }
-                    if (mat != null && mat.mainTexture != null)
-                    {
-                        bool headZone = isHead || isHair || onHead;
-                        float qw = headZone ? headS : W;
-                        float qh = headZone ? headS * 1.05f : H;
-                        var qpos = headZone ? pos + new Vector3(0f, headY - headS * 0.5f + 0.02f, 0f) : pos;
-                        DrawQuad(qpos, yaw, qw, qh, mat, quad, 0.012f * depth, lit, hurt);
-                        depth++;
-                    }
+                    bool headZone = isHead || isHair || onHead
+                        || typeName.Contains("Head") || typeName.Contains("Hair") || typeName.Contains("Beard")
+                        || typeName.Contains("Eye") || typeName.Contains("Ear") || typeName.Contains("Horn")
+                        || typeName.Contains("Face") || typeName.Contains("TattooHead");
+                    float qw = headZone ? headS : W;
+                    float qh = headZone ? headS * 1.05f : H;
+                    var qpos = headZone ? pos + new Vector3(0f, headY - headS * 0.5f + 0.02f, 0f) : pos;
+                    DrawQuad(qpos, yaw, qw, qh, mat, quad, 0.012f * depth, lit, hurt);
+                    depth++;
                 }
             }
 
@@ -263,6 +358,66 @@ namespace RimFirstPerson3D
             Graphics.DrawMesh(quad, matrix, Lighting3D.MatFor(mat, lit), 0);
             HitFx3D.DrawOverlay(quad, matrix, mat, hurt);
             PerfCounters.PawnQuads++;
+        }
+
+        // 世界侧补画：右手持武器 + 身前搬运物，均为面向相机的小面片（与立牌同一绘制路径）。
+        private void DrawHeld(Pawn pawn, Vector3 pos, float H, float yaw, Mesh quad, Color lit)
+        {
+            var rot = Quaternion.AngleAxis(yaw, Vector3.up);
+            var fwd = rot * Vector3.forward;    // pawn -> 相机
+            var right = rot * Vector3.right;
+
+            Thing weapon = null;
+            try { weapon = pawn.equipment != null ? pawn.equipment.Primary : null; } catch { }
+            if (weapon != null && !weapon.Destroyed)
+            {
+                var wm = HeldMat(weapon);
+                if (wm != null)
+                {
+                    float ws = Mathf.Clamp(H * 0.42f, 0.25f, 0.9f);
+                    var wc = pos + fwd * 0.12f + right * (H * 0.17f) + new Vector3(0f, H * 0.52f, 0f);
+                    DrawHeldQuad(wc, ws, ws, yaw, wm, quad, lit);
+                }
+            }
+
+            Thing carried = null;
+            try { carried = pawn.carryTracker != null ? pawn.carryTracker.CarriedThing : null; } catch { }
+            if (carried != null && !carried.Destroyed)
+            {
+                var cm = HeldMat(carried);
+                if (cm != null)
+                {
+                    // 端正端在身前（相机侧），肚腹高度、低于头部——见 F004 搬运口径。
+                    float cs = Mathf.Clamp(H * 0.34f, 0.22f, 0.7f);
+                    var cc = pos + fwd * 0.20f + new Vector3(0f, H * 0.50f, 0f);
+                    DrawHeldQuad(cc, cs, cs, yaw, cm, quad, lit);
+                }
+            }
+        }
+
+        // 面向相机的物品面片，中心锚在 center（BillboardQuad 底边锚定，故下移半个高使其居中）。
+        private void DrawHeldQuad(Vector3 center, float w, float h, float yaw, Material mat, Mesh quad, Color lit)
+        {
+            var rot = Quaternion.AngleAxis(yaw, Vector3.up);
+            var matrix = Matrix4x4.TRS(center + new Vector3(0f, -h * 0.5f, 0f), rot, new Vector3(w, h, 1f));
+            Graphics.DrawMesh(quad, matrix, Lighting3D.MatFor(mat, lit), 0);
+            PerfCounters.PawnQuads++;
+        }
+
+        // 物品的原版贴图材质：优先当前朝向的 MatAt，退回 MatSingle；无有效贴图返回 null。
+        private static Material HeldMat(Thing t)
+        {
+            if (t == null || t.def == null) return null;
+            try
+            {
+                var g = t.Graphic;
+                if (g == null) return null;
+                Material m = null;
+                try { m = g.MatAt(t.Rotation, t); } catch { }
+                if (m == null || m.mainTexture == null || m.NullOrBad()) { try { m = g.MatSingle; } catch { } }
+                return (m != null && m.mainTexture != null && !m.NullOrBad()) ? m : null;
+            }
+            catch { return null; }
         }
 
         public static Rot4 SnapRot4(float angle)

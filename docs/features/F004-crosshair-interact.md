@@ -8,7 +8,9 @@ created: 2026-10-10
 
 # F004: 准星交互
 
-> Status: coded | Owner: 实现见 `docs/tasks/T-P2-crosshair.md`（已收，待实机验收）。落地键位：左键只攻击（按住以 0.30 s 连击），门 / 拾取与装备 / 挖掘等快速情境动作在 E 键（`CameraRig3D.Interact`），右键对准目标弹**原版浮动菜单**（`CameraRig3D.OpenAimedFloatMenu` → `Thing.GetFloatMenuOptions`，一次覆盖工作台配方 / 翻找储物 / 装卸 / 使用 / 治疗 / 逮捕 / 收割等全部原版动作）。空格纯为跳跃（F003）；接管期暂停与倍速改走玩家自己的原版键位（`KeyBindingDefOf.TogglePause` 等），不再占用空格。
+> Status: coded | Owner: 实现见 `docs/tasks/T-P2-crosshair.md`（已收，待实机验收）。落地键位：左键只攻击（按住以 0.30 s 连击），门 / 拾取与装备 / 挖掘等快速情境动作在 E 键（`CameraRig3D.Interact`），右键对准目标弹**原版浮动菜单**（`CameraRig3D.OpenAimedFloatMenu` → `Thing.GetFloatMenuOptions`，一次覆盖工作台配方 / 翻找储物 / 装卸 / 使用 / 治疗 / 逮捕 / 收割等全部原版动作）。**F 键 = 搬运**（`CameraRig3D.CarryAimed`）：准星处原版可搬运（`EverHaulable`/`Minifiable`）的地面物走 `CarryTracker.TryStartCarry` 端在身前，再按 F 就地放下。空格纯为跳跃（F003）；接管期暂停与倍速改走玩家自己的原版键位（`KeyBindingDefOf.TogglePause` 等），不再占用空格。
+>
+> 携带物 / 手持武器的可视：世界侧 `PawnLayer3D.DrawHeld` 给**所有 pawn**（含正在 hauling 的其他殖民者）补画右手武器与身前搬运物（肚腹高度、低于头部，面向相机的小面片）；第一人称附身者的搬运物由 `Viewmodel3D.DrawCarried` 画在屏幕下半部，武器仍走 `Viewmodel3D.DrawWeapon`。原版 blit/立牌只烘服装+头，不含装备与携带物，故必须补画。
 
 ## Why
 

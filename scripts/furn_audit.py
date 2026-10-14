@@ -81,7 +81,7 @@ def cell(item, rot, view, empty=False):
 INPUTS = [os.path.join(MOD, "viewer", "furn_uv.json"),
           os.path.join(MOD, "viewer", "furniture.html"),
           os.path.join(MOD, "Source", "RimFirstPerson3D", "Furniture3D.cs"),
-          os.path.join(MOD, "1.6", "Textures", "FPS3D", "FurnitureAtlas.png"),
+          os.path.join(MOD, "Textures", "FPS3D", "FurnitureAtlas.png"),
           os.path.join(MOD, "scripts", "furn_audit.py")]
 FPH = os.path.join(RAW, ".inputs")
 

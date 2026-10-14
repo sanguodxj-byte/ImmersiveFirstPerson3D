@@ -174,7 +174,6 @@ namespace RimFirstPerson3D
             HitFx3D.Clear();
             ShotFx3D.Clear();
             VanillaSuppressor.RestoreCameras();
-            RenderSettings.fog = false;
             SkyScenery.Restore();
             if (forceOff)
                 Fps3DState.ResetInMemory();
@@ -187,6 +186,9 @@ namespace RimFirstPerson3D
         private void OnGUI()
         {
             if (!Fps3DState.Active || Current.ProgramState != ProgramState.Playing) return;
+            bool isRepaint = Event.current != null && Event.current.type == EventType.Repaint;
+            if (!isRepaint && !FpsHud3D.HasInteractiveUI) return;
+
             var prevColor = GUI.color;
             var prevMatrix = GUI.matrix;
             var prevAnchor = Text.Anchor;
@@ -197,16 +199,20 @@ namespace RimFirstPerson3D
                 // 屏幕左上：准星离开正中、名牌错位飘移。与 RimWorld 原生 UI 同一套缩放。
                 GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity,
                     new Vector3(Prefs.UIScale, Prefs.UIScale, 1f));
-                if (Fps3DState.ShowPerfHud) PerfMon3D.DrawHud();
+                if (isRepaint && Fps3DState.ShowPerfHud) PerfMon3D.DrawHud();
                 // 终端占据视野时准星、名牌、手和背包让位。性能条留下，方便对照开关前后的帧时间。
                 if (!MapScreen3D.Animating && !MapScreen3D.Viewing)
                 {
-                    // 受击红雾压在场景之上、准星之下：准星和 HUD 必须一直读得出来
-                    HitFx3D.DrawVignette();
-                    Crosshair3D.Draw();
-                    NameLabels3D.Draw();
-                    Hand3D.Draw();
-                    Viewmodel3D.DrawWeapon();
+                    if (isRepaint)
+                    {
+                        // 受击红雾压在场景之上、准星之下：准星和 HUD 必须一直读得出来
+                        HitFx3D.DrawVignette();
+                        Crosshair3D.Draw();
+                        NameLabels3D.Draw();
+                        Hand3D.Draw();
+                        Viewmodel3D.DrawWeapon();
+                        Viewmodel3D.DrawCarried();
+                    }
                     FpsHud3D.Draw();
                 }
             }
@@ -279,6 +285,11 @@ namespace RimFirstPerson3D
                     // 光照导出（F013）：结果落进 settings.lightSnapshot，GABS 直接回读
                     DebugActions3D.DumpLighting();
                 }
+                else if (a.StartsWith("testScenario"))
+                {
+                    string scName = a.Length > 12 ? a.Substring(12).Trim() : "";
+                    DebugActions3D.RunTestScenario(scName);
+                }
                 else Log.Warning(ModEntry.LogPrefix + "unknown cmdAction '" + a + "'");
             }
             if (!Application.isFocused || !MouseLookDelta.IsGameWindowActive()) return;
@@ -320,39 +331,11 @@ namespace RimFirstPerson3D
             {
                 // M：指挥面板。终端抬起，地图和原版操作界面都在屏幕上，主画面保持第一人称。
                 if (Input.GetKeyDown(KeyCode.M)) MapScreen3D.Toggle();
-                // B / Tab：第一人称背包面板（屏幕活动期不开）
-                if (!MapScreen3D.BlocksGameplay
-                    && (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.Tab)))
-                    FpsHud3D.ToggleInventory();
-                // E：直接交互（门开关 / 拾取 / 装备 / 挖掘 / 收割 / 使用 / 救援）；背包开着时先收背包
-                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.E))
+
+                // 原版暂停与时间控制热键放行：空格键（暂停）与时间速度按键
+                if (Find.TickManager != null)
                 {
-                    if (FpsHud3D.inventoryOpen) FpsHud3D.CloseInventory();
-                    else CameraRig3D.Interact();
-                }
-                // F：打开准星处的完整原版地图浮动菜单。
-                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.F))
-                    CameraRig3D.OpenAimedFloatMenu();
-                // G：拆解准星处建筑（危险动作单列，避免与 E 混用误拆）
-                if (!MapScreen3D.BlocksGameplay && Input.GetKeyDown(KeyCode.G))
-                    CameraRig3D.DemolishAimed();
-                // 数字键 1..6：使用背包第 n 件物品（装备 / 穿戴 / 食用）
-                if (!MapScreen3D.BlocksGameplay && !FpsHud3D.inventoryOpen)
-                {
-                    for (int i = 1; i <= Backpack3D.HotbarSlots; i++)
-                    {
-                        if (Input.GetKeyDown(KeyCode.Alpha0 + i))
-                        {
-                            Backpack3D.UseSlot(i);
-                            break;
-                        }
-                    }
-                }
-                // 接管期原版 UI 被跳过，原版时间控制热键随之失效；这里用玩家自己的原版键位补回。
-                // 绝不占用空格：空格是第一人称跳跃（CameraRig3D.IntegrateVertical / F003 AC-3）。
-                if (CameraRig3D.VanillaInputTakenOver && Find.TickManager != null)
-                {
-                    if (KeyBindingDefOf.TogglePause.KeyDownEvent)
+                    if (KeyBindingDefOf.TogglePause.KeyDownEvent || Input.GetKeyDown(KeyCode.Space))
                         Find.TickManager.TogglePaused();
                     else if (KeyBindingDefOf.TimeSpeed_Normal.KeyDownEvent)
                         Find.TickManager.CurTimeSpeed = TimeSpeed.Normal;
@@ -360,16 +343,6 @@ namespace RimFirstPerson3D
                         Find.TickManager.CurTimeSpeed = TimeSpeed.Fast;
                     else if (KeyBindingDefOf.TimeSpeed_Superfast.KeyDownEvent)
                         Find.TickManager.CurTimeSpeed = TimeSpeed.Superfast;
-                }
-                if (Input.GetKeyDown(KeyCode.PageUp))
-                {
-                    if (LevelStack3D.SwitchLevel(1))
-                        Log.Message(ModEntry.LogPrefix + "level up -> " + Find.CurrentMap.uniqueID);
-                }
-                if (Input.GetKeyDown(KeyCode.PageDown))
-                {
-                    if (LevelStack3D.SwitchLevel(-1))
-                        Log.Message(ModEntry.LogPrefix + "level down -> " + Find.CurrentMap.uniqueID);
                 }
             }
         }

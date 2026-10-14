@@ -8,7 +8,7 @@ created: 2026-10-10
 
 # F007: 家具与生产建筑目录
 
-> Status: spec | Owner: TBD
+> Status: in-progress (production phase 1 complete) | Owner: TBD
 
 ## Why
 
@@ -32,6 +32,16 @@ created: 2026-10-10
 - [ ] AC-2: 餐椅、落地灯在第一人称下不再是一张竖着的原版精灵。
 - [ ] AC-3: 至少三台不同的生产建筑使用台体原型，侧面材质取样自各自原版贴图。
 - [ ] AC-4: `scripts/furn_uv_check.py` 通过。未登记的建筑仍显示立板，不出现空气。
+
+### 实际完成范围（2026-10-12）
+
+- [x] 第一批严格限定为四个原版 Def：`TableButcher`、`TableSculpting`、`FueledSmithy`、`ElectricSmithy`。
+- [x] `Furniture3D` 增加可复用 `ProductionBench` 原型（台面、台体/支撑、设备特征）；尺寸来自工作台专用集中常量，不从 `drawSize` 反推。
+- [x] 四个 Def 使用精确匹配；未登记建筑继续走既有立板回退路径。
+- [x] `scripts/furn_atlas.py` 登记四件各自的 south/east/north 原版贴图取样区；`FurnitureUVGen.cs` 与 `FurnitureAtlas.png` 仍只由脚本生成。
+- [x] `scripts/furn_uv_selftest.py` 配置自检与 `dotnet build --no-restore` 已通过。
+- [x] 生成图集与 UV 常量：已用 Pillow/numpy 重生成；四个工作台的 top 取样保持原版 3:1 / 1:3 纵横比，front 仅取原版底部立面带。
+- [x] 修复初版拉伸：移除未经标定的 device/wood 局部贴图方块；C# 与 viewer 统一为 3×1（南北）/ 1×3（东西）模型合同。
 
 ## Dependencies
 

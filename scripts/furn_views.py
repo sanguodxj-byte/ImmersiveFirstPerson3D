@@ -56,6 +56,38 @@ ITEMS = {
                     for d in ("south", "east", "north")],
     "drape":      [(d, f"Royalty/textures/things/building/furniture/drape_{d}.png")
                    for d in ("south", "east")],
+    "tablebutcher": [(d, f"Core/textures/things/building/production/tablebutcher_{d}.png")
+                     for d in ("south", "east", "north")],
+    "tablesculpting": [(d, f"Core/textures/things/building/production/tablesculpting_{d}.png")
+                       for d in ("south", "east", "north")],
+    "tablesmithingfueled": [(d, f"Core/textures/things/building/production/tablesmithingfueled_{d}.png")
+                            for d in ("south", "east", "north")],
+    "tablesmithingelectric": [(d, f"Core/textures/things/building/production/tablesmithingelectric_{d}.png")
+                              for d in ("south", "east", "north")],
+    "tablestoveelectric": [(d, f"Core/textures/things/building/production/tablestoveelectric_{d}.png")
+                           for d in ("south", "east", "north")],
+    "tablestovefueled": [(d, f"Core/textures/things/building/production/tablestovefueled_{d}.png")
+                         for d in ("south", "east", "north")],
+    "tabletailorhand": [(d, f"Core/textures/things/building/production/tabletailorhand_{d}.png")
+                        for d in ("south", "east", "north")],
+    "tabletailorelectric": [(d, f"Core/textures/things/building/production/tabletailorelectric_{d}.png")
+                            for d in ("south", "east", "north")],
+    "tablestonecutter": [(d, f"Core/textures/things/building/production/tablestonecutter_{d}.png")
+                         for d in ("south", "east", "north")],
+    "tablemachining": [(d, f"Core/textures/things/building/production/tablemachining_{d}.png")
+                       for d in ("south", "east", "north")],
+    "tabledruglab": [(d, f"Core/textures/things/building/production/tabledruglab_{d}.png")
+                     for d in ("south", "east", "north")],
+    "tablebrewery": [(d, f"Core/textures/things/building/production/tablebrewery_{d}.png")
+                     for d in ("south", "east", "north")],
+    "electricsmelter": [(d, f"Core/textures/things/building/production/electricsmelter_{d}.png")
+                        for d in ("south", "east", "north")],
+    "researchbenchsimple": [(d, f"Core/textures/things/building/production/researchbenchsimple_{d}.png")
+                            for d in ("south", "east", "north")],
+    "researchbenchhitech": [(d, f"Core/textures/things/building/production/researchbenchhitech_{d}.png")
+                            for d in ("south", "east", "north")],
+    "fabricationbench": [(d, f"Core/textures/things/building/production/fabricationbench_{d}.png")
+                         for d in ("south", "east", "north")],
 }
 
 BG = (255, 0, 255, 255)       # 透明区铺成品红，一眼区分"无像素"与"深色像素"

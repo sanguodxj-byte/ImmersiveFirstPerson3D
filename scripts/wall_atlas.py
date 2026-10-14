@@ -10,7 +10,7 @@
 每块取样的黑像素占比超过 STROKE_MAX 就非零退出，不为了通过检查去改矩形。
 
 产物：
-    1.6/Textures/FPS3D/WallAtlas.png            图集（只含原版像素，黑描边已剥离）
+    Textures/FPS3D/WallAtlas.png            图集（只含原版像素，黑描边已剥离）
     Source/RimFirstPerson3D/WallUVGen.cs        图集 UV 常量表（生成，勿手改）
     docs/walls/uv/<键名>.png                    放大图上画出该键的取样框
 """
@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 TEX = r"D:\rim mod\RimWorld_Vanilla_Textures_1.6"
 MOD = r"D:\rim mod\FirstPerson3D"
-ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "WallAtlas.png")
+ATLAS_OUT = os.path.join(MOD, "Textures", "FPS3D", "WallAtlas.png")
 VIEWER_ATLAS_OUT = os.path.join(MOD, "viewer", "wall_atlas.png")
 VIEWER_JSON_OUT = os.path.join(MOD, "viewer", "wall_uv.json")
 CS_OUT = os.path.join(MOD, "Source", "RimFirstPerson3D", "WallUVGen.cs")
@@ -65,10 +65,10 @@ EXT_SPEC = [
     ("gravshiphull.side",   "Odyssey/textures/things/building/linked/gravshiphull/gravshiphull_atlas.png", (272, 200, 368, 230)),
     ("gravshiphull.detail", "Odyssey/textures/things/building/linked/gravshiphull/gravshiphull_atlas.png", (272, 191, 368, 201)),
 
-    # 虫穴分泌物岩土墙 (BurrowWall)
-    ("burrow.top",    "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (272, 154, 368, 184)),
-    ("burrow.side",   "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (272, 188, 368, 226)),
-    ("burrow.detail", "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (272, 194, 368, 206)),
+    # 虫穴分泌物岩土墙 (BurrowWall：取原版从深黑褐泥冠到暗橄榄夯土基底的完整纵向断面 y=160..228)
+    ("burrow.top",    "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (276, 160, 364, 186)),
+    ("burrow.side",   "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (276, 160, 364, 228)),
+    ("burrow.detail", "Odyssey/textures/things/building/linked/burrowwall_atlas.png", (276, 160, 364, 186)),
 
     # 平滑冰墙 (SmoothedSolidIce)
     ("smoothedice.top",    "Odyssey/textures/things/building/linked/smoothedice_atlas.png", (170, 96, 230, 120)),
@@ -76,9 +76,9 @@ EXT_SPEC = [
     ("smoothedice.detail", "Odyssey/textures/things/building/linked/smoothedice_atlas.png", (170, 121, 230, 129)),
 
     # 天然冰墙 (SolidIce)
-    ("solidice.top",    "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (138, 79, 182, 95)),
-    ("solidice.side",   "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (138, 97, 182, 111)),
-    ("solidice.detail", "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (138, 94, 182, 102)),
+    ("solidice.top",    "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (140, 80, 180, 93)),
+    ("solidice.side",   "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (140, 96, 180, 110)),
+    ("solidice.detail", "Odyssey/textures/things/building/linked/solidicewall_atlas.png", (140, 92, 180, 100)),
 
     # 异象迷宫灰墙 (GrayWall)
     ("graywall.top",    "Anomaly/textures/things/building/linked/graywall_atlas.png", (170, 96, 230, 120)),
@@ -100,20 +100,20 @@ EXT_SPEC = [
     ("barricade.side",   "Core/textures/things/building/linked/barricade_atlas.png", (168, 118, 190, 134)),
     ("barricade.detail", "Core/textures/things/building/linked/barricade_atlas.png", (192, 96, 208, 134)),
 
-    # 沙袋掩体 (Sandbags)
-    ("sandbags.top",    "Core/textures/things/building/linked/sandbags_atlas.png", (272, 154, 368, 176)),
-    ("sandbags.side",   "Core/textures/things/building/linked/sandbags_atlas.png", (272, 154, 368, 224)),
-    ("sandbags.detail", "Core/textures/things/building/linked/sandbags_atlas.png", (272, 180, 368, 204)),
+    # 沙袋掩体 (Sandbags：单层袋体取样，避免 3 层模型叠加 3 层贴图变成 9 层)
+    ("sandbags.top",    "Core/textures/things/building/linked/sandbags_atlas.png", (272, 156, 368, 176)),
+    ("sandbags.side",   "Core/textures/things/building/linked/sandbags_atlas.png", (272, 181, 368, 203)),
+    ("sandbags.detail", "Core/textures/things/building/linked/sandbags_atlas.png", (272, 210, 368, 224)),
 
-    # 木/石栅栏 (Fence smooth)
-    ("fence_smooth.top",    "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (170, 110, 208, 119)),
-    ("fence_smooth.side",   "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (170, 130, 208, 139)),
-    ("fence_smooth.detail", "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (196, 80, 204, 86)),
+    # 木/石栅栏 (Fence smooth：双柱之间 x=182..218 的纯横档像素)
+    ("fence_smooth.top",    "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (182, 110, 218, 120)),
+    ("fence_smooth.side",   "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (182, 130, 218, 140)),
+    ("fence_smooth.detail", "Core/textures/things/building/linked/fence/fence_atlas_smooth.png", (168, 104, 176, 112)),
 
-    # 金属栅栏 (Fence metal)
-    ("fence_metal.top",    "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (340, 214, 416, 226)),
-    ("fence_metal.side",   "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (340, 268, 416, 280)),
-    ("fence_metal.detail", "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (392, 160, 408, 172)),
+    # 金属栅栏 (Fence metal：双柱之间 x=364..436 的纯金属横档像素)
+    ("fence_metal.top",    "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (364, 216, 436, 227)),
+    ("fence_metal.side",   "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (364, 242, 436, 255)),
+    ("fence_metal.detail", "Core/textures/things/building/linked/fence/fence_atlas_metal.png", (334, 202, 348, 214)),
 
     # 远古混凝土围栏 (AncientFence)
     ("ancientfence.top",    "Core/textures/things/building/linked/ancientfence_atlas.png", (184, 115, 216, 122)),
@@ -136,10 +136,10 @@ EXT_SPEC = [
     ("walllamp.side",   "Core/textures/things/building/furniture/walllamp/walllamp_menuicon.png", (16, 29, 48, 36)),
     ("walllamp.detail", "Core/textures/things/building/furniture/walllamp/walllamp_menuicon.png", (18, 31, 46, 35)),
 
-    # 壁炬 (TorchWallLamp)
-    ("walltorch.top",    "Core/textures/things/building/misc/walltorch/walltorch_menuicon.png", (25, 19, 39, 33)),
-    ("walltorch.side",   "Core/textures/things/building/misc/walltorch/walltorch_north.png", (27, 34, 37, 50)),
-    ("walltorch.detail", "Core/textures/things/building/misc/walltorch/walltorch_menuicon.png", (25, 20, 39, 34)),
+    # 壁炬 (TorchWallLamp：仅取 walltorch_north.png 的木柄顶杯、木杆与底座托架，火焰走 Shader)
+    ("walltorch.top",    "Core/textures/things/building/misc/walltorch/walltorch_north.png", (27, 34, 37, 42)),
+    ("walltorch.side",   "Core/textures/things/building/misc/walltorch/walltorch_north.png", (28, 36, 36, 52)),
+    ("walltorch.detail", "Core/textures/things/building/misc/walltorch/walltorch_north.png", (28, 44, 36, 54)),
 ]
 
 
@@ -244,6 +244,17 @@ def expand_side(key, core):
         c16 = core[:16, :]
         c32 = np.vstack([c16, c16[::-1]])
         return np.tile(c32, (3, 1, 1))
+    if key == "burrow.side":
+        # 虫穴墙立面：全高 68px 原版纵向断面（深黑褐泥冠->浅黄钙化波浪->橄榄褐基底），
+        # 对左右两端执行 2 像素均值羽化，确保东/南/西/北转角竖棱 100% 无缝对接，绝无错位切痕
+        b = core.copy().astype(float)
+        for y in range(b.shape[0]):
+            mid = (b[y, 0] + b[y, -1]) * 0.5
+            b[y, 0] = mid
+            b[y, -1] = mid
+            b[y, 1] = b[y, 1] * 0.5 + mid * 0.5
+            b[y, -2] = b[y, -2] * 0.5 + mid * 0.5
+        return np.clip(b, 0, 255).astype(np.uint8)
     return core
 
 

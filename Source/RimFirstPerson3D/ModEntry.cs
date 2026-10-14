@@ -17,7 +17,7 @@ namespace RimFirstPerson3D
             var harmony = new Harmony(HarmonyId);
             VanillaSuppressor.Patch(harmony);
             CommandPanel3D.Patch(harmony);
-            PanelUi3D.Patch(harmony);
+            MapScreen3D.Patch(harmony);
             GodView3D.Patch(harmony);
             ChangeNotify.Patch(harmony);
             HitFx3D.Patch(harmony);
@@ -27,7 +27,7 @@ namespace RimFirstPerson3D
             Object.DontDestroyOnLoad(go);
             go.AddComponent<Fps3DRoot>();
 
-            Log.Message(LogPrefix + "initialized (r58)");
+            Log.Message(LogPrefix + "initialized (r59)");
         }
     }
 }

@@ -60,8 +60,17 @@ if (tex) {
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.flipY = false;
 }
-const matAtlas = new THREE.MeshLambertMaterial({ map: tex, side: THREE.FrontSide });
-const matHull  = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+const matAtlas = new THREE.MeshLambertMaterial({
+  map: tex, side: THREE.FrontSide,
+  stencilWrite: true, stencilRef: 1,
+  stencilFunc: THREE.AlwaysStencilFunc,
+  stencilZPass: THREE.ReplaceStencilOp
+});
+const matHull  = new THREE.MeshBasicMaterial({
+  color: 0x12131a, side: THREE.FrontSide,
+  stencilWrite: true, stencilRef: 1,
+  stencilFunc: THREE.NotEqualStencilFunc
+});
 
 const MISSING = new Set();
 function getUvRect(spKey, regIdx) {
@@ -157,6 +166,8 @@ function createModel() {
         taper: opt.taper || 0,
         uv: opt.uv !== undefined ? opt.uv : UV_COAT,
         noOutline: !!opt.noOutline,
+        noTop: !!opt.noTop,
+        noBottom: !!opt.noBottom,
       });
     }
   };
@@ -172,7 +183,7 @@ function addSymX(m, kind, x, y, z, size, opt = {}) {
 
 function addSeg(m, p0, len, d0, d1, pitch, yaw = 0, roll = 0, uv = UV_COAT, joint = true, noOutline = false) {
   if (joint) {
-    m.add('sph', [p0[0], p0[1] - d0 * 0.46, p0[2]], [d0 * 0.98, d0 * 0.90, d0 * 0.98], { uv, noOutline: true });
+    m.add('sph', [p0[0], p0[1] - d0 * 0.44, p0[2]], [d0 * 0.88, d0 * 0.82, d0 * 0.88], { uv, noOutline: true });
   }
   const taper = d0 > 0.0001 ? Math.min(1.8, Math.max(0.04, d1 / d0)) : 1.0;
   m.add('cyl', p0, [d0, len, d0], { yaw, pitch, roll, taper, uv, noOutline });
@@ -184,24 +195,32 @@ function addSymSeg(m, pair, len, d0, d1, pitch, splay, yaw = 0, uv = UV_DETAIL, 
   pair.R = addSeg(m, pair.R, len, d0, d1, pitch,  yaw, -splay, uv, joint, noOutline);
 }
 
-function buildQuadBody(m, L, bl, bh, bw, legH, legD, chestLift, rumpScale, frontLegUv = UV_LIMB, rearLegUv = UV_LIMB, bellyUv = UV_BELLY) {
-  const fz = bl * 0.20, rz = -bl * 0.21, sx = bw * 0.14;
-
+function buildQuadBody(m, L, bl, bh, bw, legH, legD, chestLift, rumpScale, frontLegUv = UV_LIMB, rearLegUv = UV_LIMB, bellyUv = UV_BELLY, opt = {}) {
+  const waistDip = opt.waistDip || 0;
+  const tuckUp = opt.tuckUp || 0;
+  const fz = bl * 0.18, rz = -bl * 0.20;
   const chestUv = (frontLegUv === UV_BELLY || bellyUv === UV_COAT) ? frontLegUv : UV_COAT;
+  const midZ = (fz + rz) * 0.5;
 
-  // 1. 三个外轮廓主球：前胸垂瓣(y=0) + 中段腰桥(腹底微收) + 后臀垂瓣(y=0)
-  m.add('sph', [0, bh * 0.07, 0], [bw * 0.96, bh * 0.90, bl * 0.78], { uv: UV_COAT });
-  m.add('sph', [0, 0, fz], [bw * 1.02, bh + chestLift, bl * 0.54], { uv: chestUv });
-  m.add('sph', [0, 0, rz], [bw * 0.98 * rumpScale, bh * 0.95 * rumpScale, bl * 0.54], { uv: UV_COAT });
+  const frontH = bh + chestLift, rearH = bh * 0.95 * rumpScale;
 
-  // 2. 两侧肩廓与臀廓平滑过渡（noOutline=true，不产生内部割裂黑线）
-  addSymX(m, 'sph', sx, bh * 0.05, fz * 0.9, [bw * 0.76, bh * 0.86, bl * 0.46], { uv: chestUv, noOutline: true });
-  addSymX(m, 'sph', sx, bh * 0.05, rz * 0.9, [bw * 0.74 * rumpScale, bh * 0.84 * rumpScale, bl * 0.46], { uv: UV_COAT, noOutline: true });
+  // 1. 唯一流线型主躯干（全身唯一的带外轮廓椭球，从颈根到臀尖全线圆顺包裹，彻底消除多节块状拼接与分段感）
+  const bodyH = Math.max(frontH, rearH) * 0.98 - waistDip * 0.30;
+  const bodyY = Math.max(0, tuckUp * 0.20);
+  m.add('sph', [0, bodyY, midZ], [bw * 0.98, bodyH, bl * 0.96], { uv: UV_COAT });
 
-  // 3. 腹底对比色片（noOutline=true，贴合中腹下表面展现腹底分色而不侵占前胸正视底部）
-  if (bellyUv !== UV_COAT) {
-    m.add('sph', [0, 0.005 * L, -0.01 * L], [bw * 0.94, bh * 0.44, bl * 0.62], { uv: bellyUv, noOutline: true });
-  }
+  // 2. 内部深胸与后臀体块（全部 noOutline: true，只充填肌肉体积，绝不在外表产生阶梯隆起与分节黑环）
+  m.add('sph', [0, 0, fz], [bw * 0.92, frontH * 0.92, bl * 0.46], { uv: chestUv, noOutline: true });
+  m.add('sph', [0, Math.max(0, tuckUp * 0.25), rz], [bw * 0.90 * rumpScale, rearH * 0.92, bl * 0.46], { uv: UV_COAT, noOutline: true });
+
+  // 3. 内部背腹平滑顺延层（高度严格收敛在主躯干内部，消除侧视中段突兀隆起）
+  const bridgeH = Math.min(bodyH * 0.95, (frontH + rearH) * 0.48 - waistDip);
+  m.add('sph', [0, Math.max(0, tuckUp * 0.25), midZ], [bw * 0.88, bridgeH, bl * 0.82], { uv: UV_COAT, noOutline: true });
+
+  // 4. 侧身肋部贴合
+  const sx = bw * 0.14;
+  addSymX(m, 'sph', sx, 0, fz * 0.85, [bw * 0.46, frontH * 0.85, bl * 0.48], { uv: chestUv, noOutline: true });
+  addSymX(m, 'sph', sx, Math.max(0, tuckUp * 0.35), rz * 0.85, [bw * 0.44 * rumpScale, rearH * 0.83, bl * 0.48], { uv: UV_COAT, noOutline: true });
 
   return {
     chestTop: [0, chestLift + bh * 0.64, bl * 0.32],
@@ -256,38 +275,37 @@ function buildHead(m, headCenter, hr, snoutLen, snoutW, snoutH, headUv = UV_HEAD
 
 function buildUngulateHead(m, headCenter, hr, muzzleLen, muzzleW, muzzleH, headUv = UV_HEAD, muzzleUv = UV_HEAD, jawUv = UV_BELLY, pitch = 118) {
   const tilt = pitch - 90;
-  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.24, headCenter[2] - hr * 0.02], [hr * 0.82, hr * 0.66, hr * 0.88], { uv: headUv });
-  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.43, headCenter[2]], [hr * 0.88, hr * 0.86, hr * 0.94], { noOutline: true, uv: headUv });
+  // 贯穿整个头脸的长楔形主轮廓（头部全线仅此一个外轮廓描边，从脑后到吻端自然一体，彻底消除面颊与吻部的任何断层折角）
+  const cFullHead = add3(headCenter, stepVec(muzzleLen * 0.16, pitch));
+  const fullLen = hr * 0.95 + muzzleLen * 1.35;
+  const fullW = Math.max(muzzleW * 1.35, hr * 0.82);
+  const fullH = Math.max(muzzleH * 1.25, hr * 0.68);
+  const offFull = stepVec(fullH * 0.45, tilt);
+  m.add('sph', [cFullHead[0] - offFull[0], cFullHead[1] - offFull[1], cFullHead[2] - offFull[2]],
+    [fullW, fullH, fullLen], { pitch: tilt, uv: headUv });
 
-  const cMuzzle = add3([headCenter[0], headCenter[1] - hr * 0.08, headCenter[2] + hr * 0.12], stepVec(muzzleLen * 0.28, pitch));
-  const sx = Math.max(muzzleW * 1.28, hr * 0.72);
-  const sy = Math.max(muzzleH * 1.18, hr * 0.60);
-  const sz = muzzleLen * 1.52;
-  const sxCore = Math.max(0.02, sx - 0.022);
-  const syCore = Math.max(0.02, sy - 0.022);
-  const szCore = Math.max(0.02, sz - 0.022);
-  const offCore = stepVec(syCore * 0.5, tilt);
+  // 内部饱满后颅（noOutline: true）
+  m.add('sph', [headCenter[0], headCenter[1] - hr * 0.42, headCenter[2]], [hr * 0.88, hr * 0.86, hr * 0.94], { noOutline: true, uv: headUv });
+
+  // 内部顺滑口吻与鼻端（noOutline: true）
+  const cMuzzle = add3([headCenter[0], headCenter[1] - hr * 0.08, headCenter[2] + hr * 0.12], stepVec(muzzleLen * 0.32, pitch));
+  const sx = Math.max(muzzleW * 1.22, hr * 0.70);
+  const sy = Math.max(muzzleH * 1.15, hr * 0.58);
+  const sz = muzzleLen * 1.45;
   const offSkin = stepVec(sy * 0.5, tilt);
-  m.add('sph', [cMuzzle[0] - offCore[0], cMuzzle[1] - offCore[1], cMuzzle[2] - offCore[2]],
-    [sxCore, syCore, szCore], { pitch: tilt, uv: headUv });
   m.add('sph', [cMuzzle[0] - offSkin[0], cMuzzle[1] - offSkin[1], cMuzzle[2] - offSkin[2]],
     [sx, sy, sz], { pitch: tilt, noOutline: true, uv: headUv });
 
   if (muzzleUv !== headUv) {
-    const cTip = add3(cMuzzle, stepVec(sz * 0.16, pitch));
-    const hTip = sy * 0.92;
+    const cTip = add3(cMuzzle, stepVec(sz * 0.20, pitch));
+    const hTip = sy * 0.90;
     const offTip = stepVec(hTip * 0.5, tilt);
     m.add('sph', [cTip[0] - offTip[0], cTip[1] - offTip[1], cTip[2] - offTip[2]],
-      [sx * 0.94, hTip, sz * 0.70], { pitch: tilt, noOutline: true, uv: muzzleUv });
+      [sx * 0.92, hTip, sz * 0.65], { pitch: tilt, noOutline: true, uv: muzzleUv });
   }
 
-  const cBridge = [headCenter[0], headCenter[1] - hr * 0.04, headCenter[2] + hr * 0.18];
-  const hBridge = hr * 0.72;
-  const offBridge = stepVec(hBridge * 0.5, tilt * 0.6);
-  m.add('sph', [cBridge[0] - offBridge[0], cBridge[1] - offBridge[1], cBridge[2] - offBridge[2]],
-    [hr * 0.84, hBridge, hr * 0.78], { pitch: tilt * 0.6, noOutline: true, uv: headUv });
-
-  addSymX(m, 'sph', hr * 0.36, headCenter[1] + hr * 0.02, headCenter[2] + hr * 0.28, [hr * 0.20, hr * 0.20, hr * 0.22], { uv: UV_EYE, noOutline: true });
+  // 眼睛位于额骨两侧，耳朵前方
+  addSymX(m, 'sph', hr * 0.36, headCenter[1] + hr * 0.04, headCenter[2] + hr * 0.04, [hr * 0.16, hr * 0.16, hr * 0.18], { uv: UV_EYE, noOutline: true });
 }
 
 function buildEars(m, headCenter, hr, earW, earH, opt = {}) {
@@ -295,10 +313,10 @@ function buildEars(m, headCenter, hr, earW, earH, opt = {}) {
   const earUv = opt.earUv !== undefined ? opt.earUv : UV_LIMB;
   if (floppy) {
     addSymX(m, 'sph', hr * 0.46, headCenter[1] - hr * 0.40, headCenter[2] - hr * 0.04,
-      [earW * 0.9, earH * 1.15, earW * 1.35], { yaw: 12, splay: 18, uv: earUv });
+      [earW * 0.9, earH * 1.15, earW * 0.65], { yaw: 12, splay: 18, uv: earUv });
   } else if (roundEar) {
-    addSymX(m, 'sph', hr * 0.35, headCenter[1] + hr * 0.34, headCenter[2] - hr * 0.10,
-      [earW * 1.15, earH * 0.92, earW * 0.82], { yaw: 12, splay: 22, uv: earUv });
+    addSymX(m, 'sph', hr * 0.35, headCenter[1] + hr * 0.34, headCenter[2] - hr * 0.08,
+      [earW * 1.05, earH * 0.88, earW * 0.42], { yaw: 12, splay: 22, uv: earUv, noOutline: true });
   } else {
     const longEar = earH > 0.20 * (hr / 0.22);
     const sp = longEar ? 18 : 24;
@@ -319,38 +337,49 @@ export function buildAnimalModel(n, a, L) {
     case 'Thrumbo': {
       const alpha = Has(n, 'alpha');
       const bl = 0.72 * L, bh = 0.46 * L, bw = calibrateWidth(n, bl, 0.36 * L);
-      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.10 * L, 0.08 * L, 0.86, UV_LIMB, UV_LIMB, UV_LIMB);
-      m.add('sph', [0, 0, 0.02 * L], [bw * 1.03, bh * 0.52, bl * 0.94], { uv: UV_LIMB, noOutline: true });
-      addSymX(m, 'sph', bw * 0.24, bh * 0.20, 0.02 * L, [bw * 0.62, bh * 0.76, bl * 0.72], { uv: UV_COAT, noOutline: true });
-      m.add('sph', [0, 0.01 * L, bl * 0.26], [bw * 0.56, bh * 0.82, bl * 0.42], { uv: UV_LIMB, noOutline: true });
-      addSymX(m, 'sph', bw * 0.30, bh * 0.14, bl * 0.24, [bw * 0.44, bh * 0.76, bl * 0.40], { uv: UV_COAT, noOutline: true });
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.10 * L, 0.08 * L, 0.86, UV_COAT, UV_COAT, UV_COAT);
+      // 雪白通体神兽躯干，顺滑覆盖肩背与双胁的雪白厚毛披肩
+      addSymX(m, 'sph', bw * 0.20, bh * 0.18, 0.02 * L, [bw * 0.54, bh * 0.74, bl * 0.72], { uv: UV_COAT, noOutline: true });
+      // 原版胸前标志性锯齿白披肩与前胸毛绺（带独立清晰轮廓）
+      m.add('sph', [0, bh * 0.12, bl * 0.24], [bw * 0.58, bh * 0.76, bl * 0.38], { uv: UV_COAT });
+      addSymX(m, 'cone', bw * 0.22, bh * 0.12, bl * 0.22, [0.065 * L, 0.16 * L, 0.075 * L], { pitch: 18, splay: 28, taper: 0.18, uv: UV_COAT });
 
-      let np = add3(chestTop, [0, -0.05 * L, -0.03 * L]);
-      np = addSeg(m, np, 0.19 * L, 0.23 * L, 0.19 * L, 10, 0, 0, UV_COAT, true, true);
-      np = addSeg(m, np, 0.17 * L, 0.19 * L, 0.16 * L, 0, 0, 0, UV_COAT, true, true);
-      const hp = addSeg(m, np, 0.13 * L, 0.16 * L, 0.14 * L, -4, 0, 0, UV_COAT, true, true);
-      m.add('cyl', add3(chestTop, [0, -0.04 * L, 0.04 * L]), [0.10 * L, 0.36 * L, 0.08 * L], { pitch: 6, taper: 0.68, uv: UV_LIMB, noOutline: true });
+      // 腹底标志性白毛锯齿毛帘（4簇沿腹底边缘排布的下垂毛锥）
+      for (let i = 0; i < 4; i++) {
+        const fz = (0.16 - i * 0.11) * L;
+        m.add('cone', [0, 0.065 * L, fz], [0.055 * L, 0.046 * L, 0.065 * L], { pitch: -168, taper: 0.18, uv: UV_COAT, noOutline: true });
+      }
 
-      m.add('cone', add3(hp, [0, 0.04 * L, -0.04 * L]), [0.09 * L, 0.21 * L, 0.10 * L], { pitch: -24, uv: UV_COAT, noOutline: true });
-      addSymX(m, 'cone', 0.04 * L, hp[1] + 0.02 * L, hp[2] - 0.04 * L, [0.08 * L, 0.20 * L, 0.09 * L], { pitch: -28, splay: 24, uv: UV_COAT, noOutline: true });
-      addSymX(m, 'cone', 0.06 * L, hp[1] - 0.05 * L, hp[2] - 0.05 * L, [0.08 * L, 0.18 * L, 0.09 * L], { pitch: -38, splay: 38, uv: UV_COAT, noOutline: true });
-      m.add('cone', add3(hp, [0, -0.10 * L, -0.06 * L]), [0.09 * L, 0.17 * L, 0.09 * L], { pitch: -48, uv: UV_COAT, noOutline: true });
+      // 自然平顺的微 S 形长颈（前倾角从36°渐变至18°，神兽姿态自然昂首前倾）
+      let np = add3(chestTop, [0, -0.08 * L, 0.02 * L]);
+      np = addSeg(m, np, 0.18 * L, 0.23 * L, 0.19 * L, 36, 0, 0, UV_COAT, true, true);
+      np = addSeg(m, np, 0.16 * L, 0.19 * L, 0.16 * L, 26, 0, 0, UV_COAT, true, true);
+      const hp = addSeg(m, np, 0.14 * L, 0.16 * L, 0.14 * L, 16, 0, 0, UV_COAT, true, true);
+      m.add('cyl', add3(chestTop, [0, -0.06 * L, 0.04 * L]), [0.12 * L, 0.32 * L, 0.10 * L], { pitch: 30, taper: 0.68, uv: UV_COAT, noOutline: true });
+
+      // 贴颈流线雪白披肩毛冠（平贴颈背，消除乱刺穿模）
+      m.add('cone', add3(hp, [0, 0.03 * L, -0.05 * L]), [0.075 * L, 0.18 * L, 0.080 * L], { pitch: -18, uv: UV_COAT, noOutline: true });
+      addSymX(m, 'cone', 0.04 * L, hp[1] + 0.01 * L, hp[2] - 0.04 * L, [0.065 * L, 0.16 * L, 0.070 * L], { pitch: -22, splay: 18, uv: UV_COAT, noOutline: true });
 
       const hr = 0.20 * L, headC = add3(hp, [0, 0.01 * L, 0.03 * L]);
-      buildUngulateHead(m, headC, hr, 0.15 * L, 0.105 * L, 0.105 * L, UV_COAT, UV_LIMB, UV_LIMB, 122);
+      buildUngulateHead(m, headC, hr, 0.15 * L, 0.105 * L, 0.105 * L, UV_COAT, UV_COAT, UV_COAT, 122);
       buildEars(m, headC, hr, 0.048 * L, 0.13 * L, { earUv: UV_COAT });
-      const hd0 = (alpha ? 0.125 : 0.105) * L;
-      let hornP = add3(headC, [0, hr * 0.26, hr * 0.20]);
-      hornP = addSeg(m, hornP, 0.15 * L, hd0, hd0 * 0.80, 26, 0, 0, UV_DETAIL);
-      hornP = addSeg(m, hornP, 0.15 * L, hd0 * 0.80, hd0 * 0.50, -8, 0, 0, UV_DETAIL);
-      addSeg(m, hornP, 0.15 * L, hd0 * 0.50, hd0 * 0.08, -42, 0, 0, UV_DETAIL);
-      if (alpha) addSymX(m, 'cone', hr * 0.30, headC[1] + hr * 0.16, headC[2] + hr * 0.08, [0.055 * L, 0.13 * L, 0.055 * L], { pitch: 22, splay: 26, uv: UV_DETAIL });
+
+      // 原版标志性向前上方挺拔耸立、尖端微反勾的白玉弯刀大角
+      const hd0 = (alpha ? 0.142 : 0.128) * L;
+      let hornP = add3(headC, [0, hr * 0.24, hr * 0.12]);
+      hornP = addSeg(m, hornP, 0.18 * L, hd0, hd0 * 0.86, 22, 0, 0, UV_DETAIL, true);
+      hornP = addSeg(m, hornP, 0.17 * L, hd0 * 0.86, hd0 * 0.60, 10, 0, 0, UV_DETAIL, true);
+      hornP = addSeg(m, hornP, 0.16 * L, hd0 * 0.60, hd0 * 0.32, -6, 0, 0, UV_DETAIL, true);
+      addSeg(m, hornP, 0.15 * L, hd0 * 0.32, hd0 * 0.06, -26, 0, 0, UV_DETAIL, false);
+      if (alpha) addSymX(m, 'cone', hr * 0.30, headC[1] + hr * 0.16, headC[2] + hr * 0.08, [0.055 * L, 0.13 * L, 0.055 * L], { pitch: -20, splay: 26, uv: UV_DETAIL });
       m.add('cone', add3(tailBase, [0, 0.04 * L, 0.02 * L]), [0.085 * L, 0.16 * L, 0.085 * L], { pitch: -68, uv: UV_COAT });
       break;
     }
 
     case 'WoollyUngulate': {
       const sheep = Has(n, 'sheep'), bison = Has(n, 'bison'), muskox = Has(n, 'muskox'), yak = Has(n, 'yak');
+      const muffalo = !sheep && !yak && !bison && !muskox;
       const bl = (sheep ? 0.68 : 0.80) * L, bh = (sheep ? 0.48 : 0.56) * L;
       const bw = calibrateWidth(n, bl, (sheep ? 0.46 : 0.54) * L);
       const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.10 * L, (sheep ? 0.02 : 0.08) * L, bison ? 0.84 : 0.90,
@@ -358,18 +387,27 @@ export function buildAnimalModel(n, a, L) {
       if (bison) {
         m.add('sph', [0, bh * 0.18, bl * 0.14], [bw * 1.02, bh * 0.90, bl * 0.56], { uv: UV_COAT, noOutline: true });
         m.add('sph', [0, 0, -0.01 * L], [bw * 1.03, bh * 0.40, bl * 0.94], { uv: UV_BELLY, noOutline: true });
-      } else if (!sheep) {
+      } else if (!sheep && !muffalo) {
         m.add('sph', [0, bh * 0.12, bl * 0.10], [bw * 1.04, bh * 0.92, bl * 0.62], { uv: UV_COAT, noOutline: true });
         m.add('sph', [0, 0, -0.01 * L], [bw * 1.04, bh * 0.42, bl * 0.94], { uv: UV_BELLY, noOutline: true });
-      } else {
+      } else if (sheep) {
         addSymX(m, 'sph', bw * 0.20, bh * 0.12, 0.03 * L, [bw * 0.68, bh * 0.78, bl * 0.58], { uv: UV_COAT, noOutline: true });
       }
       const hr = (sheep ? 0.24 : 0.29) * L;
       const headC = [0, bh * (sheep ? 0.48 : bison ? 0.36 : 0.42), bl * 0.44];
-      if (!sheep && !yak && !bison && !muskox) {
-        m.add('sph', [0, bh * 0.24, bl * 0.22], [bw * 1.00, bh * 0.86, bl * 0.50], { uv: UV_COAT, noOutline: true });
-        m.add('sph', [0, bh * 0.04, bl * 0.44], [hr * 0.88, bh * 0.68, hr * 0.78], { pitch: 12, uv: UV_HEAD });
-        addSymX(m, 'sph', hr * 0.25, bh * 0.35, bl * 0.585, [0.068 * L, 0.020 * L, 0.055 * L], { yaw: 26, uv: UV_EYE, noOutline: true });
+      if (muffalo) {
+        // Muffalo 浑然天成的羊毛巨丘：厚重前倾毛肩峰 + 前胸一体化厚毛斗篷领（通体雪青毛色，绝无杂色穿插）
+        m.add('sph', [0, bh * 0.16, bl * 0.14], [bw * 0.96, bh * 0.82, bl * 0.56], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, bh * 0.10, bl * 0.34], [bw * 0.86, bh * 0.76, bl * 0.34], { uv: UV_COAT, noOutline: true });
+        // 正面居中经典宽阔水滴形灰蓝面盘（面盘边缘平顺嵌于毛领中，额宽颊圆）
+        m.add('sph', [0, bh * 0.10, bl * 0.40], [hr * 0.88, bh * 0.74, hr * 0.68], { pitch: 12, uv: UV_HEAD });
+        // 居中横缝双眼
+        addSymX(m, 'sph', hr * 0.24, bh * 0.38, bl * 0.515, [0.055 * L, 0.016 * L, 0.045 * L], { yaw: 18, uv: UV_EYE, noOutline: true });
+        // 额顶厚实羊毛发冠与两侧下垂微翘小毛耳
+        m.add('sph', [0, bh * 0.26, bl * 0.36], [hr * 0.76, 0.09 * L, hr * 0.52], { uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', hr * 0.44, bh * 0.32, bl * 0.38, [0.040 * L, 0.085 * L, 0.045 * L], { pitch: -22, splay: 45, uv: UV_HEAD, noOutline: true });
+        // 臀部下垂毛尾
+        m.add('cone', add3(tailBase, [0, 0.02 * L, 0.01 * L]), [0.065 * L, 0.14 * L, 0.065 * L], { pitch: -72, uv: UV_COAT });
       } else if (bison) {
         m.add('sph', [0, bh * 0.05, bl * 0.43], [hr * 0.88, bh * 0.66, hr * 0.84], { pitch: 18, uv: UV_HEAD });
         m.add('sph', [0, bh * 0.02, bl * 0.49], [hr * 0.46, bh * 0.34, hr * 0.52], { pitch: 18, noOutline: true, uv: UV_BELLY });
@@ -447,23 +485,27 @@ export function buildAnimalModel(n, a, L) {
       const ele = Has(n, 'elephant', 'mastodon'), mastodon = Has(n, 'mastodon'), rhino = Has(n, 'rhino');
       const bl = 0.78 * L, bh = 0.52 * L, bw = calibrateWidth(n, bl, (rhino ? 0.56 : 0.50) * L);
       const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.14 * L, (rhino ? 0.03 : 0.01) * L, 0.94, UV_LIMB, UV_LIMB, UV_BELLY);
-      const hr = (rhino ? 0.25 : 0.30) * L, headC = [0, bh * (rhino ? 0.50 : 0.52), bl * (ele ? 0.48 : 0.43)];
+      const hr = (rhino ? 0.25 : 0.30) * L, headC = [0, bh * (rhino ? 0.50 : 0.62), bl * (ele ? 0.46 : 0.43)];
       if (ele) {
-        m.add('sph', [headC[0], headC[1] - hr * 0.48, headC[2]], [hr * 0.94, hr * 1.02, hr * 0.98], { pitch: 12, uv: UV_HEAD });
+        m.add('sph', [headC[0], headC[1] - hr * 0.44, headC[2]], [hr * 0.96, hr * 1.05, hr * 0.98], { pitch: 8, uv: UV_HEAD });
         if (mastodon) m.add('sph', add3(headC, [0, hr * 0.14, 0]), [hr * 1.04, hr * 0.64, hr * 0.94], { uv: UV_COAT, noOutline: true });
-        addSymX(m, 'sph', bw * 0.54, headC[1] - hr * 0.44, headC[2] - hr * 0.24, [0.24 * L, 0.32 * L, 0.16 * L], { yaw: 18, splay: 22, uv: UV_HEAD });
-        addSymX(m, 'sph', hr * 0.31, headC[1] - hr * 0.04, headC[2] + hr * 0.32, [0.05 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
-        let trk = add3(headC, [0, -hr * 0.08, hr * 0.36]);
-        trk = addSeg(m, trk, 0.14 * L, 0.125 * L, 0.095 * L, 134, 0, 0, UV_HEAD);
-        trk = addSeg(m, trk, 0.12 * L, 0.095 * L, 0.075 * L, 162, 0, 0, UV_HEAD);
-        addSeg(m, trk, 0.08 * L, 0.075 * L, 0.052 * L, 126, 0, 0, UV_HEAD);
+        // 原版特征性的下垂贴颊宽薄大扇耳 (薄如扇叶，向下垂挂贴颊，上沿紧贴头顶，彻底消除朝天竖起兔耳翅膀感)
+        addSymX(m, 'sph', bw * 0.42, headC[1] - hr * 0.28, headC[2] - hr * 0.04, [0.026 * L, 0.22 * L, 0.22 * L], { yaw: 14, pitch: -4, splay: -2, uv: UV_HEAD });
+        addSymX(m, 'sph', hr * 0.31, headC[1] - hr * 0.02, headC[2] + hr * 0.32, [0.05 * L, 0.055 * L, 0.055 * L], { uv: UV_EYE, noOutline: true });
+        // 自然向下垂挂并在末端向前向上强烈回卷勾起的长象鼻 (Curled Hook)
+        let trk = add3(headC, [0, -hr * 0.06, hr * 0.38]);
+        trk = addSeg(m, trk, 0.14 * L, 0.120 * L, 0.098 * L, 130, 0, 0, UV_HEAD);
+        trk = addSeg(m, trk, 0.13 * L, 0.098 * L, 0.076 * L, 165, 0, 0, UV_HEAD);
+        trk = addSeg(m, trk, 0.11 * L, 0.076 * L, 0.056 * L, 82, 0, 0, UV_HEAD);
+        addSeg(m, trk, 0.09 * L, 0.056 * L, 0.036 * L, 18, 0, 0, UV_HEAD);
+        // 两根位于象鼻两侧外缘、向前外侧自然探出微翘的洁白巨型象牙（完全避开象鼻，0穿模）
         const pair = {
-          L: [headC[0] - hr * 0.28, headC[1] - hr * 0.26, headC[2] + hr * 0.30],
-          R: [headC[0] + hr * 0.28, headC[1] - hr * 0.26, headC[2] + hr * 0.30],
+          L: [headC[0] - hr * 0.38, headC[1] - hr * 0.22, headC[2] + hr * 0.26],
+          R: [headC[0] + hr * 0.38, headC[1] - hr * 0.22, headC[2] + hr * 0.26],
         };
-        const tl = (mastodon ? 0.18 : 0.13) * L;
-        addSymSeg(m, pair, tl, 0.058 * L, 0.042 * L, 124, 10, 0, UV_DETAIL);
-        addSymSeg(m, pair, tl * 0.85, 0.042 * L, 0.014 * L, 92, 4, 0, UV_DETAIL);
+        const tl = (mastodon ? 0.22 : 0.17) * L;
+        addSymSeg(m, pair, tl, 0.052 * L, 0.034 * L, 96, 24, 8, UV_DETAIL);
+        addSymSeg(m, pair, tl * 0.85, 0.034 * L, 0.012 * L, 64, 14, 4, UV_DETAIL);
       } else if (rhino) {
         addSymX(m, 'sph', bw * 0.24, bh * 0.04, 0.02 * L, [bw * 0.68, bh * 0.86, bl * 0.78], { uv: UV_COAT, noOutline: true });
         buildUngulateHead(m, headC, hr, 0.13 * L, 0.14 * L, 0.13 * L, UV_HEAD, UV_HEAD, UV_LIMB, 112);
@@ -483,26 +525,121 @@ export function buildAnimalModel(n, a, L) {
       const equine = Has(n, 'horse', 'donkey'), donkey = Has(n, 'donkey'), moose = Has(n, 'moose');
       const antler = Has(n, 'deer', 'elk', 'caribou', 'moose'), ibex = Has(n, 'ibex');
       const gazelle = Has(n, 'gazelle', 'antelope'), goat = Has(n, 'goat'), bovine = Has(n, 'cow', 'bull');
+
+      if (equine) {
+        // 马 (Horse) 专属高保真解剖建模：1:1 严格对照原版 2D 贴图像素工程蓝图 (东侧视/南正视/北后视)
+        // 彻底根除全部历史审查硬伤：
+        // 1. 基准鞍背躯干：前驱深胸(顶0.48L,底0.00L)与后驱圆臀(顶0.41L,底0.01L)由鞍腹顺延层平滑衔接，鞍背自然下凹至0.36L，腹底收腰至0.05L，0肉瘤0平壁
+        // 2. 强壮挺拔厚实马颈：深厚椭圆柱颈部(深0.28L, 宽0.15L)，向前上方42°挺拔舒展直贯颅顶(0.34L, 0.49L)，长颈前探舒展，彻底消除畏缩感
+        // 3. 高还原原版Q版马首：头长0.18L，长吻顺滑前倾(116°)，方圆吻端与分色下巴平齐马鞍0.36L，黑眼与挺拔俏耳(高0.10L)，彻底根除反折偏转
+        // 4. 沿颈脊高耸连贯深色马鬃：采用 UV_DETAIL 深栗色，自鬐甲直达后脑枕骨与额前刘海，零悬空零脱节
+        // 5. 贴臀自然垂直下垂长马尾：采用 UV_DETAIL+黑尖，自后臀外缘外弧顺势下垂至离地0.02L，北后视居中立体悬垂
+
+        // 马 (Horse) 专属高保真解剖建模：1:1 严格对照原版 2D 贴图像素工程蓝图 (东侧视/南正视/北后视)
+        const bw = 0.32 * L;
+
+        // 1. 修长马体流线主躯干 (深胸接地0.00L / 急剧收腰0.066L / 马鞍凹背0.355L / 臀峰0.413L / 宽肩细腰)
+        // 鞍腹主连接平顺圆柱：长0.42L，贯通后臀与深胸，圆柱顶0.355L锚定马鞍最低点，底0.066L呈现完美收腰，彻底消除双球肉瘤
+        m.add('cyl', [0, 0.21 * L, -0.30 * L], [0.25 * L, 0.42 * L, 0.29 * L], { pitch: 90, taper: 1.15, uv: UV_COAT, noOutline: false });
+
+        // 前驱深胸与鬐甲：顶高0.50L 鬐甲挺拔，胸底0.00L 接地，宽0.32L，长0.36L
+        m.add('sph', [0, 0.00 * L, 0.10 * L], [bw, 0.50 * L, 0.36 * L], { pitch: 10, uv: UV_COAT, noOutline: false });
+
+        // 后驱丰满圆臀：顶高0.415L 臀峰，底高0.02L，宽0.29L，长0.34L，后弧顶达-0.43L
+        m.add('sph', [0, 0.02 * L, -0.27 * L], [0.29 * L, 0.395 * L, 0.34 * L], { pitch: -8, uv: UV_COAT, noOutline: false });
+
+        // 前胸与肩部肌肉 (南正视经典宽肩梯形结构)
+        addSymX(m, 'sph', 0.08 * L, 0.04 * L, 0.08 * L, [0.15 * L, 0.38 * L, 0.26 * L], { pitch: 10, uv: UV_COAT, noOutline: true });
+        // 后腿外侧肌肉
+        addSymX(m, 'sph', 0.07 * L, 0.03 * L, -0.26 * L, [0.14 * L, 0.36 * L, 0.26 * L], { pitch: -8, uv: UV_COAT, noOutline: true });
+
+        // 2. 粗壮斜长厚实马颈 (自胸前向上前方 50° 挺拔直贯颅顶，长0.24L，背颈单调递增，无断层驼峰)
+        const neckBase = [0, 0.22 * L, 0.12 * L];
+        const neckLen = 0.22 * L;
+        const neckPitch = 50;
+        m.add('cyl', neckBase, [0.17 * L, neckLen, 0.24 * L], { pitch: neckPitch, taper: 0.72, uv: UV_COAT, noOutline: false });
+        m.add('sph', [0, 0.16 * L, 0.14 * L], [0.24 * L, 0.26 * L, 0.24 * L], { pitch: 26, uv: UV_COAT, noOutline: false });
+
+        // 3. 高保真原版Q版马首 (比例严格控制在头长0.18L，后脑高0.35L+腮骨+斜垂长吻116°，吻端高0.36L平齐马鞍)
+        const headBaseY = 0.285 * L;
+        const headBaseZ = 0.31 * L;
+
+        // 饱满后脑与颅骨 (Braincase & Poll，高0.31L，底0.285L，顶0.60L，宽0.125L)
+        m.add('sph', [0, headBaseY, headBaseZ], [0.125 * L, 0.315 * L, 0.16 * L], { pitch: 12, uv: UV_HEAD, noOutline: false });
+
+        // 宽阔外展下颌腮骨 (Mandible Cheek Flares)
+        addSymX(m, 'sph', 0.045 * L, 0.29 * L, 0.30 * L, [0.036 * L, 0.14 * L, 0.10 * L], { pitch: 12, uv: UV_HEAD, noOutline: true });
+
+        // 顺滑斜垂长吻桥 (Nasal Bridge: 前倾斜垂 116°，长0.16L)
+        const bridgeBase = [0, 0.40 * L, 0.31 * L];
+        m.add('cyl', bridgeBase, [0.085 * L, 0.16 * L, 0.115 * L], { pitch: 116, taper: 0.70, uv: UV_HEAD, noOutline: false });
+
+        // 圆钝方圆吻端与鼻孔区 (Muzzle Tip: 吻端高 0.35L 平齐马鞍)
+        const noseC = add3(bridgeBase, stepVec(0.14 * L, 116));
+        m.add('sph', [noseC[0], noseC[1] - 0.02 * L, noseC[2]], [0.078 * L, 0.075 * L, 0.078 * L], { pitch: 16, uv: UV_HEAD, noOutline: false });
+        // 下唇/分色下巴 (Chin，高 0.285L)
+        m.add('sph', [noseC[0], noseC[1] - 0.04 * L, noseC[2] - 0.01 * L], [0.070 * L, 0.045 * L, 0.070 * L], { pitch: 16, uv: UV_BELLY, noOutline: true });
+
+        // 灵动黑眼睛 (侧面外凸，位于额骨与腮骨上方)
+        addSymX(m, 'sph', 0.052 * L, 0.46 * L, 0.34 * L, [0.026 * L, 0.026 * L, 0.026 * L], { uv: UV_EYE, noOutline: false });
+
+        // 显著挺拔秀美马耳 (高0.098L，向后上方挺立俏立)
+        addSymX(m, 'cone', 0.036 * L, 0.58 * L, 0.30 * L, [0.028 * L, (donkey ? 0.15 : 0.098) * L, 0.026 * L], { pitch: -14, splay: donkey ? 22 : 12, taper: 0.18, uv: UV_HEAD, noOutline: false });
+
+        // 4. 沿颈背高耸连贯深色马鬃 (紧贴颈脊，自鬐甲直达后脑与额前刘海，显著深色鬃毛脊)
+        const mane0 = [0, 0.48 * L, 0.10 * L];
+        const maneTop = [0, 0.61 * L, 0.29 * L];
+        const my = maneTop[1] - mane0[1], mz = maneTop[2] - mane0[2];
+        const mlen = Math.hypot(my, mz);
+        const mpitch = Math.atan2(mz, my) * 180 / Math.PI;
+
+        m.add('cyl', mane0, [0.056 * L, mlen, 0.078 * L], { pitch: mpitch, taper: 0.88, uv: UV_DETAIL, noOutline: false });
+        m.add('sph', mane0, [0.056 * L, 0.056 * L, 0.078 * L], { uv: UV_DETAIL, noOutline: false });
+        m.add('sph', maneTop, [0.048 * L, 0.048 * L, 0.065 * L], { uv: UV_DETAIL, noOutline: false });
+
+        // 额顶刘海 (Forelock)
+        m.add('sph', [0, 0.60 * L, 0.33 * L], [0.042 * L, 0.038 * L, 0.046 * L], { pitch: 14, uv: UV_DETAIL, noOutline: false });
+
+        // 5. 贴臀自然垂直下垂大水滴长马尾 (饱满水滴状羽毛造型，北后视呈现显著居中宽大垂羽，长0.24L，宽0.17L)
+        const tailRoot = [0, 0.32 * L, -0.41 * L];
+        m.add('cyl', tailRoot, [0.09 * L, 0.08 * L, 0.07 * L], { pitch: -165, taper: 1.4, uv: UV_DETAIL, noOutline: false });
+        const tMid = add3(tailRoot, stepVec(0.08 * L, -165));
+        m.add('sph', [tMid[0], tMid[1] - 0.06 * L, tMid[2] - 0.02 * L], [0.17 * L, 0.16 * L, 0.09 * L], { pitch: -10, uv: UV_DETAIL, noOutline: false });
+        const tTip = add3(tMid, stepVec(0.09 * L, -175));
+        m.add('cone', [tTip[0], tTip[1] + 0.02 * L, tTip[2]], [0.11 * L, 0.08 * L, 0.06 * L], { pitch: -180, taper: 0.15, uv: UV_EYE, noOutline: false });
+        break;
+      }
+
       const bl = (bovine ? 0.76 : 0.70) * L, bh = (bovine ? 0.42 : moose ? 0.38 : 0.38) * L;
       const bw = calibrateWidth(n, bl, (bovine ? 0.42 : 0.31) * L);
-      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (bovine ? 0.09 : 0.07) * L, (bovine ? 0.01 : 0.03) * L, bovine ? 0.96 : moose ? 0.93 : 0.95, UV_LIMB, bovine ? UV_COAT : UV_LIMB, ibex ? UV_LIMB : UV_BELLY);
-      const neckPitch = bovine ? 46 : moose ? 52 : equine ? 26 : 36;
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0,
+        (bovine ? 0.09 : 0.07) * L,
+        (bovine ? 0.01 : 0.03) * L,
+        bovine ? 0.96 : moose ? 0.93 : 0.95,
+        UV_LIMB, bovine ? UV_COAT : UV_LIMB, ibex ? UV_LIMB : UV_BELLY);
+
+      // 颈部前倾角与挺拔昂首
+      const neckPitch = bovine ? 46 : moose ? 52 : 36;
       const nd0 = (bovine ? 0.19 : 0.155) * L, nd1 = (bovine ? 0.165 : 0.135) * L;
-      let np = add3(chestTop, [0, -0.05 * L, 0.01 * L]);
-      np = addSeg(m, np, (bovine ? 0.13 : equine ? 0.18 : 0.16) * L, nd0, nd1, neckPitch, 0, 0, UV_COAT, true, true);
-      const hp = addSeg(m, np, (bovine ? 0.10 : equine ? 0.16 : 0.14) * L, nd1, nd1 * 0.86, neckPitch - 8, 0, 0, UV_COAT, true, true);
-      const hr = (bovine ? 0.22 : 0.195) * L, headC = add3(hp, [0, 0.01 * L, 0.02 * L]);
+      let np = add3(chestTop, [0, -0.02 * L, 0.01 * L]);
+      np = addSeg(m, np, (bovine ? 0.13 : 0.16) * L, nd0, nd1, neckPitch, 0, 0, UV_COAT, true, true);
+      const hp = addSeg(m, np, (bovine ? 0.10 : 0.14) * L, nd1, nd1 * 0.85, neckPitch - 6, 0, 0, UV_COAT, true, true);
+      const hr = (bovine ? 0.22 : 0.195) * L;
+      const headC = add3(hp, [0, 0.01 * L, 0.02 * L]);
+
       buildUngulateHead(m, headC, hr,
         (moose ? 0.18 : bovine ? 0.16 : 0.16) * L,
         (bovine ? 0.115 : moose ? 0.115 : 0.095) * L,
         (moose ? 0.12 : bovine ? 0.11 : 0.10) * L,
-        UV_HEAD, bovine ? UV_LIMB : UV_HEAD, UV_BELLY, moose ? 116 : equine ? 128 : bovine ? 122 : 118);
+        UV_HEAD, bovine ? UV_LIMB : UV_HEAD, UV_BELLY, moose ? 116 : bovine ? 122 : 118);
+
       if (equine) {
-        const maneStart = add3(headC, [0, hr * 0.34, -hr * 0.16]);
-        const maneMid = addSeg(m, maneStart, 0.19 * L, 0.058 * L, 0.068 * L, -158, 0, 0, UV_DETAIL, true);
-        addSeg(m, maneMid, 0.18 * L, 0.068 * L, 0.048 * L, -152, 0, 0, UV_DETAIL, true, true);
-        m.add('sph', add3(headC, [0, hr * 0.20, hr * 0.12]), [0.062 * L, 0.058 * L, 0.075 * L], { pitch: 24, uv: UV_DETAIL });
-        addSymX(m, 'cone', hr * 0.30, headC[1] + hr * 0.24, headC[2] - hr * 0.04, [0.042 * L, (donkey ? 0.16 : 0.082) * L, 0.038 * L], { pitch: -8, splay: donkey ? 28 : 14, taper: 0.22, uv: UV_HEAD });
+        // 马颈背深棕平顺鬃毛脊 + 额前短鬃毛 + 直立小马耳
+        const maneStart = add3(headC, [0, hr * 0.26, -hr * 0.18]);
+        const maneMid = addSeg(m, maneStart, 0.18 * L, 0.055 * L, 0.065 * L, -134, 0, 0, UV_DETAIL, true);
+        addSeg(m, maneMid, 0.16 * L, 0.065 * L, 0.050 * L, -126, 0, 0, UV_DETAIL, true, true);
+        m.add('sph', add3(headC, [0, hr * 0.18, hr * 0.04]), [0.060 * L, 0.052 * L, 0.070 * L], { pitch: 18, uv: UV_DETAIL });
+        addSymX(m, 'cone', hr * 0.28, headC[1] + hr * 0.26, headC[2] - hr * 0.04, [0.034 * L, (donkey ? 0.15 : 0.088) * L, 0.030 * L], { pitch: -8, splay: donkey ? 24 : 12, taper: 0.20, uv: UV_HEAD });
       } else if (bovine) {
         addSymX(m, 'cone', hr * 0.40, headC[1] + hr * 0.04, headC[2] - hr * 0.10, [0.046 * L, 0.105 * L, 0.040 * L], { pitch: -28, splay: 74, taper: 0.25, uv: UV_HEAD });
       } else if (antler && !moose) {
@@ -560,10 +697,7 @@ export function buildAnimalModel(n, a, L) {
         }
       }
 
-      if (equine) {
-        const tp = addSeg(m, add3(tailBase, [0, 0.04 * L, 0.02 * L]), 0.13 * L, 0.072 * L, 0.088 * L, -152, 0, 0, UV_DETAIL, true, true);
-        addSeg(m, tp, 0.14 * L, 0.088 * L, 0.032 * L, -162, 0, 0, UV_DETAIL, true);
-      } else if (bovine) {
+      if (bovine) {
         addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.17 * L, 0.044 * L, 0.020 * L, -160, 0, 0, UV_COAT, false);
       } else if (moose) {
         addSeg(m, add3(tailBase, [0, -0.02 * L, 0.04 * L]), 0.11 * L, 0.048 * L, 0.026 * L, -172, 0, 0, UV_COAT, false);
@@ -575,12 +709,14 @@ export function buildAnimalModel(n, a, L) {
 
     case 'UrsineSloth': {
       const panda = Has(n, 'panda'), sloth = Has(n, 'megasloth', 'sloth'), badger = Has(n, 'badger', 'wolverine');
-      const bl = (badger ? 0.68 : 0.76) * L, bh = (badger ? 0.36 : sloth ? 0.50 : 0.42) * L;
+      const bear = !panda && !sloth && !badger;
+      const bl = (badger ? 0.68 : 0.76) * L, bh = (badger ? 0.36 : sloth ? 0.50 : 0.44) * L;
       const bw = calibrateWidth(n, bl, (badger ? 0.38 : 0.48) * L);
       const frontRegion = panda ? UV_LIMB : sloth ? UV_BELLY : UV_LIMB;
       const rearRegion = panda ? UV_COAT : UV_LIMB;
       const bellyRegion = panda ? UV_COAT : sloth ? UV_LIMB : UV_BELLY;
-      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (badger ? 0.09 : 0.12) * L, (sloth ? 0.04 : 0.01) * L, sloth ? 0.90 : 1.00, frontRegion, rearRegion, bellyRegion);
+      // 灰熊：浑厚强健滚木体魄，前肩耸起顺滑融入背脊，后臀低收 (rumpScale: 0.82)
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (badger ? 0.09 : 0.12) * L, (sloth ? 0.04 : bear ? 0.08 : 0.03) * L, sloth ? 0.90 : bear ? 0.82 : 0.98, frontRegion, rearRegion, bellyRegion);
       if (panda) {
         m.add('sph', [0, 0.02 * L, -bl * 0.14], [bw * 1.00, bh * 1.06, bl * 0.62], { uv: UV_COAT, noOutline: true });
         m.add('sph', [0, 0, -bl * 0.25], [bw * 1.06, bh * 0.46, bl * 0.46], { uv: UV_LIMB, noOutline: true });
@@ -590,40 +726,59 @@ export function buildAnimalModel(n, a, L) {
         addSymX(m, 'sph', bw * 0.16, bh * 0.34, bl * 0.16, [bw * 0.82, bh * 0.64, bl * 0.44], { uv: UV_BELLY, noOutline: true });
         m.add('sph', [0, 0, bl * 0.20], [bw * 1.06, bh * 0.36, bl * 0.50], { uv: UV_LIMB, noOutline: true });
         m.add('cone', [0, bh * 0.86, bl * 0.12], [0.14 * L, 0.15 * L, 0.14 * L], { pitch: -48, taper: 0.22, noOutline: true, uv: UV_BELLY });
+      } else if (bear) {
+        // 沉甸甸的低垂厚腹 (Sagging Belly)，自然融入圆润滚木体躯
+        m.add('sph', [0, 0.005 * L, -0.02 * L], [bw * 0.96, bh * 0.55, bl * 0.72], { uv: UV_BELLY, noOutline: true });
       }
-      const hr = (badger ? 0.21 : sloth ? 0.23 : 0.25) * L, headC = [0, bh * (sloth ? 0.48 : 0.66), bl * (sloth ? 0.46 : 0.44)];
-      buildHead(m, headC, hr, hr * 0.68, hr * 0.58, hr * 0.50, panda ? UV_HEAD : sloth ? UV_BELLY : UV_COAT, badger ? UV_DETAIL : sloth ? UV_LIMB : UV_HEAD, panda ? UV_HEAD : UV_BELLY);
+      const hr = (badger ? 0.21 : sloth ? 0.23 : bear ? 0.21 : 0.25) * L;
+      const headC = [0, bh * (sloth ? 0.48 : bear ? 0.46 : 0.62), bl * (sloth ? 0.46 : bear ? 0.38 : 0.42)];
+      // 灰熊宽厚四方短吻与平视雄姿（吻部平视前探，宽阔大脸盘）
+      buildHead(m, headC, hr, (badger ? 0.14 : bear ? 0.12 : 0.15) * L, (bear ? 0.13 : 0.10) * L, (bear ? 0.12 : 0.10) * L, panda ? UV_HEAD : sloth ? UV_BELLY : UV_COAT, badger ? UV_DETAIL : sloth ? UV_LIMB : UV_HEAD, panda ? UV_HEAD : UV_BELLY);
       if (panda || sloth)
         addSymX(m, 'sph', hr * 0.26, headC[1] - hr * 0.08, headC[2] + hr * 0.24, [hr * 0.32, hr * 0.28, hr * 0.28], { yaw: 18, splay: -14, uv: UV_LIMB, noOutline: true });
       if (!sloth)
-        buildEars(m, headC, hr, 0.058 * L, 0.082 * L, { roundEar: true, earUv: UV_LIMB });
+        buildEars(m, headC, hr, bear ? 0.046 * L : 0.054 * L, bear ? 0.052 * L : 0.076 * L, { roundEar: true, earUv: UV_LIMB });
       if (sloth) {
         addSeg(m, add3(tailBase, [0, 0.01 * L, 0.04 * L]), 0.25 * L, 0.15 * L, 0.042 * L, -126, 0, 0, UV_COAT, true);
       } else if (badger) addSeg(m, tailBase, 0.17 * L, 0.12 * L, 0.055 * L, -115, 0, 0, UV_COAT);
-      else addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.10 * L, 0.062 * L, 0.030 * L, -142, 0, 0, panda ? UV_COAT : UV_LIMB, false);
+      else addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), bear ? 0.06 * L : 0.10 * L, 0.055 * L, 0.030 * L, -165, 0, 0, panda ? UV_COAT : UV_LIMB, false);
       break;
     }
 
     case 'Canid': {
       const warg = Has(n, 'warg'), fox = Has(n, 'fox'), fennec = Has(n, 'fennec');
       const husky = Has(n, 'husky'), floppy = Has(n, 'labrador', 'boghound'), terrier = Has(n, 'terrier', 'yorkshire');
-      const bl = (fox ? 0.66 : 0.70) * L, bh = (warg ? 0.40 : fox ? 0.32 : 0.37) * L;
-      const bw = calibrateWidth(n, bl, (warg ? 0.36 : fox ? 0.29 : 0.32) * L);
+      const bl = (fox ? 0.66 : 0.70) * L, bh = (warg ? 0.40 : fox ? 0.32 : 0.34) * L;
+      const bw = calibrateWidth(n, bl, (warg ? 0.36 : fox ? 0.29 : 0.29) * L);
       const bellyUv = fox ? UV_DETAIL : UV_BELLY;
-      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, (warg ? 0.10 : 0.07) * L, (warg ? 0.04 : 0.02) * L, warg ? 0.78 : 0.94, UV_LIMB, UV_LIMB, bellyUv);
+      // 犬科极具辨识度的深胸与急剧收腰流线（前胸深沉贴地，腹部高高收起，背线平顺微弓消除驼峰）
+      const tuckUp = (warg ? 0.058 : fox ? 0.044 : 0.062) * L;
+      const waistDip = 0.015 * L;
+      const { chestTop, tailBase } = buildQuadBody(m, L, bl, bh, bw, 0,
+        (warg ? 0.10 : 0.06) * L,
+        (warg ? 0.05 : 0.03) * L,
+        warg ? 0.76 : 0.78,
+        UV_LIMB, UV_LIMB, bellyUv, { tuckUp, waistDip });
       if (terrier) m.add('sph', [0, 0, 0], [bw * 1.06, bh * 0.52, bl * 0.94], { uv: UV_BELLY, noOutline: true });
-      const canidNeckPitch = warg ? 48 : 50;
-      const np = addSeg(m, add3(chestTop, [0, -0.06 * L, 0.01 * L]), 0.13 * L, 0.15 * L, 0.13 * L, canidNeckPitch, 0, 0, UV_COAT, true, true);
+
+      // 颈部挺立前探：狼颈有力挺起（pitch=42°），狼头平视前方，头顶高昂警惕
+      const canidNeckPitch = warg ? 44 : 42;
+      const np = addSeg(m, add3(chestTop, [0, -0.04 * L, 0.02 * L]), 0.15 * L, 0.18 * L, 0.14 * L, canidNeckPitch, 0, 0, UV_COAT, true, true);
+      m.add('sph', add3(chestTop, [0, -0.02 * L, 0.06 * L]), [bw * 0.72, bh * 0.65, bl * 0.32], { pitch: 24, noOutline: true, uv: UV_COAT });
       if (husky)
-        m.add('cyl', add3(chestTop, [0, -0.08 * L, 0.04 * L]), [0.11 * L, 0.14 * L, 0.09 * L], { pitch: canidNeckPitch, taper: 0.82, uv: UV_BELLY, noOutline: true });
-      const hr = (warg ? 0.24 : fox ? 0.21 : 0.22) * L, headC = add3(np, [0, 0.01 * L, 0.02 * L]);
-      buildHead(m, headC, hr, hr * (fox ? 0.96 : 0.84), hr * (fox ? 0.46 : 0.52), hr * 0.45, terrier ? UV_HEAD : UV_COAT, husky ? UV_BELLY : fox ? UV_COAT : UV_HEAD, bellyUv);
-      if (husky)
-        addSymX(m, 'sph', hr * 0.365, headC[1] - hr * 0.02, headC[2] + hr * 0.285, [hr * 0.20, hr * 0.22, hr * 0.22], { uv: UV_DETAIL, noOutline: true });
-      buildEars(m, headC, hr, (fennec ? 0.085 : 0.052) * L, (fennec ? 0.22 : 0.11) * L, { floppy, earUv: (fox || fennec) ? UV_LIMB : UV_HEAD });
-      if (!warg && !floppy && !terrier) {
-        m.add('sph', [0, 0.01 * L, bl * 0.22], [bw * 0.96, bh * 0.46, bl * 0.46], { noOutline: true, uv: bellyUv });
-      }
+        m.add('cyl', add3(chestTop, [0, -0.04 * L, 0.04 * L]), [0.11 * L, 0.14 * L, 0.09 * L], { pitch: canidNeckPitch, taper: 0.82, uv: UV_BELLY, noOutline: true });
+      const hr = (fox ? 0.155 : 0.165) * L, headC = add3(np, [0, 0.02 * L, 0.03 * L]);
+      buildHead(m, headC, hr, (warg ? 0.20 : fox ? 0.14 : 0.135) * L, 0.076 * L, (warg ? 0.11 : 0.082) * L, UV_HEAD, UV_HEAD, bellyUv);
+
+      // 正视与背视极具辨识度的外展倒三角形颊毛 (Cheek Ruff，形成经典的六角/倒三角狼脸剪影)
+      addSymX(m, 'cone', hr * 0.44, headC[1] - hr * 0.10, headC[2] - hr * 0.02,
+        [0.052 * L, 0.110 * L, 0.072 * L],
+        { pitch: -14, splay: 48, yaw: -18, taper: 0.24, uv: UV_HEAD, noOutline: true });
+      addSymX(m, 'cone', hr * 0.42, headC[1] - hr * 0.16, headC[2] + hr * 0.04,
+        [0.042 * L, 0.090 * L, 0.062 * L],
+        { pitch: -10, splay: 54, yaw: -12, taper: 0.20, uv: UV_HEAD, noOutline: true });
+      // 适中挺立的 V 形尖狼耳（直立坚毅，朝前上方）
+      buildEars(m, headC, hr, (fennec ? 0.09 : 0.044) * L, (fennec ? 0.22 : warg ? 0.15 : fox ? 0.16 : 0.10) * L, { floppy, tufted: false, earUv: UV_HEAD });
       if (warg) {
         for (let i = 0; i < 4; i++) {
           const t = i / 3;
@@ -634,11 +789,11 @@ export function buildAnimalModel(n, a, L) {
       }
       if (fox) {
         const tStart = add3(tailBase, [0, 0.02 * L, 0.02 * L]);
-        addSeg(m, tStart, 0.38 * L, 0.15 * L, 0.036 * L, -116, 0, 0, UV_COAT, true);
-        const tMid = add3(tStart, stepVec(0.11 * L, -116, 0, 0));
-        m.add('sph', add3(tMid, [0, -0.085 * L, 0]), [0.175 * L, 0.17 * L, 0.22 * L], { pitch: -26, noOutline: true, uv: UV_COAT });
-        const tWhite = add3(tStart, stepVec(0.19 * L, -116, 0, 0));
-        addSeg(m, tWhite, 0.20 * L, 0.135 * L, 0.038 * L, -116, 0, 0, UV_DETAIL, true, true);
+        addSeg(m, tStart, 0.36 * L, 0.14 * L, 0.036 * L, -114, 0, 0, UV_COAT, true);
+        const tMid = add3(tStart, stepVec(0.11 * L, -114, 0, 0));
+        m.add('sph', add3(tMid, [0, -0.040 * L, 0]), [0.165 * L, 0.13 * L, 0.20 * L], { pitch: -22, noOutline: true, uv: UV_COAT });
+        const tWhite = add3(tStart, stepVec(0.18 * L, -114, 0, 0));
+        addSeg(m, tWhite, 0.18 * L, 0.125 * L, 0.036 * L, -114, 0, 0, UV_DETAIL, true, true);
       } else if (husky || terrier) {
         let tp = addSeg(m, add3(tailBase, [0, 0.02 * L, 0.02 * L]), 0.13 * L, 0.10 * L, 0.125 * L, -42, 0, 0, UV_COAT, true);
         tp = addSeg(m, tp, 0.13 * L, 0.125 * L, 0.115 * L, 18, 0, 0, UV_BELLY, true);
@@ -647,7 +802,10 @@ export function buildAnimalModel(n, a, L) {
         const tp = addSeg(m, add3(tailBase, [0, 0.03 * L, 0.02 * L]), 0.14 * L, 0.058 * L, 0.038 * L, -118, 0, 0, UV_LIMB, true);
         addSeg(m, tp, 0.13 * L, 0.038 * L, 0.014 * L, -142, 0, 0, UV_EYE, false);
       } else {
-        addSeg(m, add3(tailBase, [0, 0.02 * L, 0.02 * L]), 0.25 * L, 0.12 * L, 0.038 * L, -128, 0, 0, UV_COAT, true);
+        // 饱满粗壮下垂的大扫帚狼尾（尾根斜向后下垂，尾梢贴近脚跟，还原原版平顺低垂姿态）
+        const tailP = add3(tailBase, [0, 0.01 * L, 0.01 * L]);
+        const tp = addSeg(m, tailP, 0.095 * L, 0.082 * L, 0.086 * L, -140, 0, 0, UV_COAT, true, true);
+        addSeg(m, tp, 0.090 * L, 0.086 * L, 0.036 * L, -155, 0, 0, UV_COAT, true);
       }
       break;
     }
@@ -686,28 +844,36 @@ export function buildAnimalModel(n, a, L) {
     case 'Porcine': {
       const boar = Has(n, 'boar');
       const bl = 0.66 * L, bh = 0.36 * L, bw = calibrateWidth(n, bl, 0.38 * L);
-      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.08 * L, 0, 0.92, UV_COAT, UV_COAT, UV_BELLY);
-      const hr = 0.24 * L, headC = [0, bh * 0.58, bl * 0.38];
-      buildHead(m, headC, hr, hr * 0.58, hr * 0.62, hr * 0.52, boar ? UV_COAT : UV_HEAD, boar ? UV_COAT : UV_HEAD, UV_BELLY, false);
-      const snoutTip = add3(headC, [0, -hr * 0.22, hr * 0.52]);
-      m.add('sph', add3(snoutTip, [0, -0.042 * L, 0]), [0.096 * L, 0.084 * L, 0.068 * L], { uv: UV_HEAD, noOutline: true });
-      addSymX(m, 'cone', hr * 0.28, headC[1] + hr * 0.04, headC[2] - hr * 0.06, [0.058 * L, 0.14 * L, 0.048 * L], { pitch: -14, splay: 44, taper: 0.24, uv: boar ? UV_COAT : UV_HEAD });
+      // 野猪前高后低敦实楔形体魄（前肩强壮高耸，后臀收拢）
+      const { tailBase } = buildQuadBody(m, L, bl, bh, bw, 0, 0.08 * L, boar ? 0.04 * L : 0, boar ? 0.80 : 0.92, UV_COAT, UV_COAT, UV_BELLY);
+      const hr = (boar ? 0.18 : 0.22) * L, headC = [0, bh * (boar ? 0.38 : 0.54), bl * (boar ? 0.38 : 0.38)];
+      buildHead(m, headC, hr, hr * (boar ? 0.68 : 0.58), hr * (boar ? 0.56 : 0.62), hr * (boar ? 0.46 : 0.52), boar ? UV_COAT : UV_HEAD, boar ? UV_COAT : UV_HEAD, UV_BELLY, false);
+      // 猪鼻盘：前下方平截圆盘鼻吻
+      const snoutTip = add3(headC, [0, -hr * 0.18, hr * 0.56]);
+      m.add('sph', add3(snoutTip, [0, -0.034 * L, 0]), [0.082 * L, 0.068 * L, 0.058 * L], { uv: UV_HEAD, noOutline: true });
+      // 耳朵：向斜后上方倾斜的小尖猪耳
+      addSymX(m, 'cone', hr * 0.28, headC[1] + hr * 0.10, headC[2] - hr * 0.06, [0.036 * L, 0.070 * L, 0.030 * L], { pitch: -22, splay: 26, taper: 0.24, uv: boar ? UV_COAT : UV_HEAD });
       if (boar) {
-        m.add('sph', add3(headC, [0, -hr * 0.06, hr * 0.12]), [0.068 * L, hr * 0.56, hr * 0.72], { pitch: 22, noOutline: true, uv: UV_LIMB });
-        for (let i = 0; i < 6; i++) {
-          const t = i / 5;
-          const spPos = lerp3([0, headC[1] + hr * 0.22, headC[2] + 0.02 * L], [0, bh * 0.82, -0.22 * L], t);
-          if (i > 0 && i < 5) spPos[1] += 0.03 * L;
-          m.add('cone', spPos, [(0.068 - i * 0.003) * L, (0.115 - i * 0.006) * L, 0.088 * L], { pitch: -24 - i * 4, taper: 0.18, uv: UV_LIMB });
+        // 额顶前额毛
+        m.add('sph', add3(headC, [0, hr * 0.22, hr * 0.08]), [0.055 * L, hr * 0.42, hr * 0.50], { pitch: 18, noOutline: true, uv: UV_LIMB });
+        // 野猪标志性贴脊硬毛鬃带（平顺连续的铁锈橙背脊硬毛带，整齐挺拔耸立于背脊表面）
+        for (let i = 0; i < 7; i++) {
+          const t = i / 6;
+          const spPos = lerp3(
+            [0, headC[1] + hr * 0.38, headC[2] - 0.02 * L],
+            [0, bh * 0.88, -bl * 0.26], t
+          );
+          m.add('cone', spPos, [0.036 * L, 0.046 * L, 0.048 * L], { pitch: -14 - i * 4, taper: 0.30, uv: UV_LIMB, noOutline: true });
         }
+        // 下颌嘴角向上弯翘的一对白色小獠牙（向斜前外上方自然弯翘立起，避开面吻）
         const pair = {
-          L: [headC[0] - hr * 0.26, headC[1] - hr * 0.28, headC[2] + hr * 0.36],
-          R: [headC[0] + hr * 0.26, headC[1] - hr * 0.28, headC[2] + hr * 0.36],
+          L: [headC[0] - hr * 0.28, headC[1] - hr * 0.16, headC[2] + hr * 0.34],
+          R: [headC[0] + hr * 0.28, headC[1] - hr * 0.16, headC[2] + hr * 0.34],
         };
-        addSymSeg(m, pair, 0.115 * L, 0.046 * L, 0.014 * L, 22, 20, 0, UV_DETAIL, true);
+        addSymSeg(m, pair, 0.065 * L, 0.020 * L, 0.008 * L, 36, 24, 6, UV_DETAIL, false);
       }
-      const tp = addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.09 * L, 0.038 * L, 0.026 * L, -142, 0, 0, UV_COAT, false);
-      if (boar) addSeg(m, tp, 0.05 * L, 0.028 * L, 0.016 * L, -148, 0, 0, UV_LIMB, false, true);
+      const tp = addSeg(m, add3(tailBase, [0, 0.01 * L, 0.02 * L]), 0.08 * L, 0.034 * L, 0.022 * L, -145, 0, 0, UV_COAT, false);
+      if (boar) addSeg(m, tp, 0.05 * L, 0.022 * L, 0.012 * L, -155, 0, 0, UV_LIMB, false, true);
       break;
     }
 
@@ -1062,47 +1228,66 @@ export function buildAnimalModel(n, a, L) {
           m.add('cone', [0, surfY - 0.016 * L, sz], [0.044 * L, spH, 0.046 * L], { pitch: -18, noOutline: true, uv: UV_COAT });
         }
       } else {
-        const bh = 0.172 * L, bw = calibrateWidth(n, 0.56 * L, 0.24 * L);
-        m.add('sph', [0, 0, 0.05 * L], [bw, bh, 0.30 * L], { uv: UV_COAT });
+        const bh = 0.165 * L, bw = calibrateWidth(n, 0.56 * L, 0.26 * L);
+        // 贴地扁平流线长躯
+        m.add('sph', [0, 0, 0.05 * L], [bw, bh, 0.32 * L], { uv: UV_COAT });
         m.add('sph', [0, 0, -0.04 * L], [bw * 0.90, 0.122 * L, 0.34 * L], { uv: UV_COAT });
-        addSeg(m, [0, 0.092 * L, 0.06 * L], 0.51 * L, 0.160 * L, 0.022 * L, -97.8, 0, 0, UV_COAT, false);
-        m.add('sph', [0, 0.005 * L, 0.01 * L], [bw * 0.96, 0.148 * L, 0.34 * L], { noOutline: true, uv: UV_COAT });
-        m.add('sph', [0, 0.005 * L, -0.02 * L], [bw * 0.90, 0.072 * L, 0.34 * L], { noOutline: true, uv: UV_DETAIL });
+        addSeg(m, [0, 0.088 * L, 0.06 * L], 0.54 * L, 0.165 * L, 0.020 * L, -97.8, 0, 0, UV_COAT, false);
+        m.add('sph', [0, 0.005 * L, 0.01 * L], [bw * 0.96, 0.145 * L, 0.34 * L], { noOutline: true, uv: UV_COAT });
+        m.add('sph', [0, 0.002 * L, -0.02 * L], [bw * 0.75, 0.055 * L, 0.32 * L], { noOutline: true, uv: UV_DETAIL });
         m.add('sph', [0, 0, 0.12 * L], [bw * 0.76, 0.052 * L, 0.088 * L], { noOutline: true, uv: UV_COAT });
-        m.add('sph', [0, 0.034 * L, 0.225 * L], [0.112 * L, 0.062 * L, 0.21 * L], { pitch: 3, noOutline: true, uv: UV_DETAIL });
-        m.add('sph', [0, 0.065 * L, 0.19 * L], [0.148 * L, 0.094 * L, 0.16 * L], { uv: UV_COAT });
-        m.add('sph', [0, 0.053 * L, 0.19 * L], [0.172 * L, 0.118 * L, 0.18 * L], { noOutline: true, uv: UV_COAT });
-        addSymX(m, 'sph', 0.035 * L, 0.128 * L, 0.215 * L, [0.046 * L, 0.044 * L, 0.065 * L], { uv: UV_COAT, noOutline: true });
-        addSymX(m, 'sph', 0.044 * L, 0.132 * L, 0.225 * L, [0.028 * L, 0.026 * L, 0.036 * L], { uv: UV_EYE, noOutline: true });
-        m.add('sph', [0, 0.064 * L, 0.295 * L], [0.048 * L, 0.060 * L, 0.205 * L], { pitch: 2, uv: UV_COAT });
-        m.add('sph', [0, 0.055 * L, 0.295 * L], [0.122 * L, 0.078 * L, 0.215 * L], { pitch: 2, noOutline: true, uv: UV_COAT });
+        // 扁平头颅与宽阔厚实的经典 U 形长鳄吻 (顺滑渐变无阶梯断层，正视宽厚有力再现短吻鳄标志性强壮吻部)
+        m.add('sph', [0, 0.040 * L, 0.185 * L], [0.155 * L, 0.068 * L, 0.18 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0.036 * L, 0.185 * L], [0.165 * L, 0.076 * L, 0.19 * L], { noOutline: true, uv: UV_COAT });
+        // 突出凸起的立体眼眶座与冷酷侧眼
+        addSymX(m, 'sph', 0.042 * L, 0.096 * L, 0.208 * L, [0.038 * L, 0.036 * L, 0.055 * L], { uv: UV_COAT });
+        addSymX(m, 'sph', 0.046 * L, 0.104 * L, 0.215 * L, [0.022 * L, 0.022 * L, 0.030 * L], { uv: UV_EYE, noOutline: true });
+
+        // 宽阔厚实的中前吻部体块（由后至前平滑收敛：宽 0.145L -> 0.115L，高 0.054L -> 0.042L，顺滑无阶梯）
+        m.add('sph', [0, 0.036 * L, 0.260 * L], [0.142 * L, 0.054 * L, 0.18 * L], { uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.033 * L, 0.335 * L], [0.120 * L, 0.044 * L, 0.15 * L], { uv: UV_COAT, noOutline: true });
+        // 吻端圆滑厚实 U 形收口（宽 0.104L，厚 0.038L，正视饱满厚实，完全消除单薄平铲感）
+        m.add('sph', [0, 0.030 * L, 0.385 * L], [0.104 * L, 0.038 * L, 0.072 * L], { uv: UV_COAT });
+        m.add('sph', [0, 0.030 * L, 0.385 * L], [0.110 * L, 0.042 * L, 0.078 * L], { noOutline: true, uv: UV_COAT });
+
+        // 鼻梁平滑纵向连接体与米黄下颌平滑底板
+        m.add('sph', [0, 0.038 * L, 0.275 * L], [0.130 * L, 0.048 * L, 0.24 * L], { pitch: 1, uv: UV_COAT });
+        m.add('sph', [0, 0.020 * L, 0.265 * L], [0.096 * L, 0.026 * L, 0.20 * L], { pitch: 1, noOutline: true, uv: UV_DETAIL });
       }
       break;
     }
 
     case 'Serpent': {
-      const pts = [
-        [-0.07 * L, 0.145 * L, -0.14 * L],
-        [-0.02 * L, 0.132 * L, -0.05 * L],
-        [ 0.10 * L, 0.110 * L, -0.08 * L],
-        [-0.11 * L, 0.082 * L, -0.14 * L],
-        [-0.04 * L, 0.044 * L, -0.27 * L],
-        [ 0.10 * L, 0.042 * L, -0.15 * L],
-        [ 0.09 * L, 0.042 * L,  0.03 * L],
-        [ 0.00 * L, 0.044 * L,  0.12 * L],
-        [ 0.00 * L, 0.145 * L,  0.09 * L],
-        [ 0.00 * L, 0.255 * L,  0.04 * L],
-        [ 0.00 * L, 0.355 * L,  0.025 * L],
+      // 1. 底盘阿基米德平滑流线螺旋（几何连续无折角，从尾尖平滑盘绕至昂起曲颈，底圈贴地 y0=0）
+      const pts = [];
+      const diams = [];
+      const numSpiral = 18;
+      const turns = 1.30;
+      for (let i = 0; i < numSpiral; i++) {
+        const t = i / (numSpiral - 1);
+        const angle = -1.1 + t * Math.PI * 2 * turns;
+        const r = (0.24 - t * 0.13) * L;
+        const x = Math.cos(angle) * r;
+        const z = Math.sin(angle) * r - 0.04 * L;
+        const y = (0.015 + t * 0.110) * L;
+        pts.push([x, y, z]);
+        diams.push((0.032 + t * 0.052) * L);
+      }
+      // 昂起曲颈段（平滑连接底盘，先向前探出、再优雅向后仰、头部向前探视的立体S形微拱）
+      const neckNodes = [
+        [ 0.010 * L, 0.145 * L,  0.085 * L, 0.068 * L],
+        [ 0.000 * L, 0.210 * L,  0.045 * L, 0.062 * L],
+        [ 0.000 * L, 0.275 * L, -0.005 * L, 0.056 * L],
+        [ 0.000 * L, 0.335 * L,  0.025 * L, 0.050 * L],
       ];
-      const diams = [
-        0.028 * L, 0.046 * L, 0.064 * L, 0.072 * L,
-        0.078 * L, 0.082 * L, 0.084 * L, 0.086 * L,
-        0.082 * L, 0.078 * L, 0.074 * L
-      ];
+      for (const [nx, ny, nz, nd] of neckNodes) {
+        pts.push([nx, ny, nz]);
+        diams.push(nd);
+      }
+
       for (let i = 0; i < pts.length; i++) {
-        const ds = diams[i], dc = Math.max(0.014 * L, ds - 0.026 * L);
-        m.add('sph', [pts[i][0], pts[i][1] - dc * 0.5, pts[i][2]], [dc, dc, dc], { uv: UV_COAT });
-        m.add('sph', [pts[i][0], pts[i][1] - ds * 0.5, pts[i][2]], [ds, ds, ds], { noOutline: true, uv: UV_COAT });
+        const ds = diams[i];
+        m.add('sph', [pts[i][0], pts[i][1] - ds * 0.44, pts[i][2]], [ds * 0.98, ds * 0.98, ds * 0.98], { noOutline: true, uv: UV_COAT });
         if (i < pts.length - 1) {
           const dx = pts[i + 1][0] - pts[i][0];
           const dy = pts[i + 1][1] - pts[i][1];
@@ -1110,20 +1295,22 @@ export function buildAnimalModel(n, a, L) {
           const segLen = Math.hypot(dx, dy, dz);
           const segPitch = Math.acos(Math.max(-1, Math.min(1, dy / segLen))) * 180 / Math.PI;
           const segYaw = Math.atan2(dx, dz) * 180 / Math.PI;
+          const dc = Math.max(0.014 * L, ds - 0.026 * L);
           const dcNext = Math.max(0.014 * L, diams[i + 1] - 0.026 * L);
           addSeg(m, pts[i], segLen, dc, dcNext, segPitch, segYaw, 0, UV_COAT, false);
           m.add('cyl', pts[i], [ds, segLen, ds], { yaw: segYaw, pitch: segPitch, taper: diams[i + 1] / ds, noOutline: true, uv: UV_COAT });
         }
       }
-      m.add('sph', [0, 0.065 * L, 0.082 * L], [0.062 * L, 0.28 * L, 0.062 * L], { pitch: -19, noOutline: true, uv: UV_HEAD });
-      m.add('sph', [0, 0.235 * L, 0.028 * L], [0.118 * L, 0.145 * L, 0.064 * L], { pitch: -12, uv: UV_COAT });
-      m.add('sph', [0, 0.225 * L, 0.028 * L], [0.140 * L, 0.166 * L, 0.082 * L], { pitch: -12, noOutline: true, uv: UV_COAT });
-      m.add('sph', [0, 0.240 * L, 0.040 * L], [0.084 * L, 0.135 * L, 0.066 * L], { pitch: -12, noOutline: true, uv: UV_HEAD });
-      const headC = [0, 0.365 * L, 0.052 * L];
-      m.add('sph', [headC[0], headC[1] - 0.032 * L, headC[2]], [0.042 * L, 0.064 * L, 0.098 * L], { uv: UV_COAT });
-      m.add('sph', [headC[0], headC[1] - 0.042 * L, headC[2]], [0.098 * L, 0.082 * L, 0.114 * L], { noOutline: true, uv: UV_COAT });
-      m.add('sph', [headC[0], headC[1] - 0.038 * L, headC[2] + 0.004 * L], [0.072 * L, 0.042 * L, 0.092 * L], { noOutline: true, uv: UV_HEAD });
-      addSymX(m, 'sph', 0.036 * L, headC[1] - 0.004 * L, headC[2] + 0.022 * L, [0.022 * L, 0.022 * L, 0.026 * L], { uv: UV_EYE, noOutline: true });
+
+      // 2. 原版 2D 贴图完全无宽展兜帽，颈部平顺挺立与躯干等粗，颈前浅腹鳞带自然顺延
+      m.add('sph', [0, 0.085 * L, 0.072 * L], [0.048 * L, 0.22 * L, 0.048 * L], { pitch: -14, noOutline: true, uv: UV_HEAD });
+
+      // 3. 顺滑衔接的精炼卵圆形小蛇头（完全还原原版细长平顺小蛇头，无横展翼片）
+      const headC = [0, 0.335 * L, 0.042 * L];
+      m.add('sph', [headC[0], headC[1] - 0.018 * L, headC[2]], [0.052 * L, 0.042 * L, 0.076 * L], { uv: UV_COAT });
+      m.add('sph', [headC[0], headC[1] - 0.022 * L, headC[2]], [0.058 * L, 0.046 * L, 0.082 * L], { noOutline: true, uv: UV_COAT });
+      m.add('sph', [headC[0], headC[1] - 0.020 * L, headC[2] + 0.006 * L], [0.048 * L, 0.034 * L, 0.068 * L], { noOutline: true, uv: UV_HEAD });
+      addSymX(m, 'sph', 0.024 * L, headC[1] - 0.002 * L, headC[2] + 0.016 * L, [0.016 * L, 0.016 * L, 0.018 * L], { uv: UV_EYE, noOutline: true });
       break;
     }
 
@@ -1169,43 +1356,35 @@ export function buildAnimalModel(n, a, L) {
         m.add('sph', [0, 0.008 * L, -0.01 * L], [0.200 * L, 0.140 * L, 0.26 * L], { pitch: -6, noOutline: true, uv: UV_COAT });
         m.add('sph', [0, 0.012 * L, 0.07 * L], [0.180 * L, 0.138 * L, 0.18 * L], { pitch: 18, noOutline: true, uv: UV_COAT });
         m.add('cone', [0, 0.032 * L, 0.11 * L], [0.052 * L, 0.085 * L, 0.052 * L], { pitch: 108, noOutline: true, uv: UV_COAT });
-        const abdPts = [
-          [0, 0.068 * L, -0.06 * L],
-          [0, 0.155 * L, -0.14 * L],
-          [0, 0.208 * L, -0.22 * L],
-          [0, 0.168 * L, -0.28 * L],
-        ];
-        const abdD = [0.155 * L, 0.172 * L, 0.158 * L, 0.112 * L];
-        for (let i = 0; i < abdPts.length; i++) {
-          const ds = abdD[i], dc = ds - 0.024 * L;
-          m.add('sph', [abdPts[i][0], abdPts[i][1] - dc * 0.5, abdPts[i][2]], [dc * 1.18, dc, dc * 1.12], { uv: UV_COAT });
-          m.add('sph', [abdPts[i][0], abdPts[i][1] - ds * 0.5, abdPts[i][2]], [ds * 1.18, ds, ds * 1.12], { noOutline: true, uv: UV_COAT });
-          if (i < abdPts.length - 1) {
-            const dy = abdPts[i + 1][1] - abdPts[i][1], dz = abdPts[i + 1][2] - abdPts[i][2];
-            const segLen = Math.hypot(dy, dz);
-            const segPitch = -Math.acos(Math.max(-1, Math.min(1, dy / segLen))) * 180 / Math.PI;
-            const dcNext = abdD[i + 1] - 0.024 * L;
-            addSeg(m, abdPts[i], segLen, dc * 1.12, dcNext * 1.12, segPitch, 0, 0, UV_COAT, false);
-            m.add('cyl', abdPts[i], [ds * 1.12, segLen, ds], { pitch: segPitch, taper: abdD[i + 1] / ds, noOutline: true, uv: UV_COAT });
-          }
-        }
-        m.add('sph', [0, 0.032 * L, -0.14 * L], [0.165 * L, 0.120 * L, 0.14 * L], { pitch: -35, noOutline: true, uv: UV_LIMB });
-        addSymX(m, 'sph', 0.058 * L, 0.095 * L, -0.20 * L, [0.068 * L, 0.095 * L, 0.095 * L], { pitch: -20, uv: UV_DETAIL, noOutline: true });
-        m.add('cone', [0, 0.148 * L, -0.29 * L], [0.044 * L, 0.065 * L, 0.048 * L], { pitch: -148, uv: UV_COAT });
+        // 贯穿整个后腹的一体化坚固高拱几丁质主腹甲 (Solid Chitinous Opisthosoma，彻底消除多球糖葫芦堆叠感)
+        m.add('sph', [0, 0.125 * L, -0.175 * L], [0.205 * L, 0.170 * L, 0.265 * L], { pitch: -26, uv: UV_COAT });
+        m.add('sph', [0, 0.120 * L, -0.175 * L], [0.220 * L, 0.180 * L, 0.280 * L], { pitch: -26, noOutline: true, uv: UV_COAT });
+
+        // 腹甲背侧横向覆瓦状硬质几丁质背板 (Tergite Plates，平贴背壳，消除突起破面)
+        m.add('sph', [0, 0.170 * L, -0.115 * L], [0.185 * L, 0.024 * L, 0.075 * L], { pitch: -22, uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.205 * L, -0.175 * L], [0.180 * L, 0.024 * L, 0.075 * L], { pitch: -26, uv: UV_COAT, noOutline: true });
+        m.add('sph', [0, 0.185 * L, -0.235 * L], [0.160 * L, 0.024 * L, 0.070 * L], { pitch: -30, uv: UV_COAT, noOutline: true });
+
+        // 腹底平顺暗托与下钩尾刺
+        m.add('sph', [0, 0.055 * L, -0.14 * L], [0.160 * L, 0.095 * L, 0.14 * L], { pitch: -35, noOutline: true, uv: UV_LIMB });
+        m.add('cone', [0, 0.145 * L, -0.295 * L], [0.044 * L, 0.065 * L, 0.048 * L], { pitch: -148, uv: UV_COAT });
         m.add('sph', [0, 0.135 * L, 0.10 * L], [0.205 * L, 0.088 * L, 0.13 * L], { pitch: -18, uv: UV_COAT });
         m.add('sph', [0, 0.124 * L, 0.10 * L], [0.232 * L, 0.110 * L, 0.155 * L], { pitch: -18, noOutline: true, uv: UV_COAT });
-        addSymX(m, 'cone', 0.068 * L, 0.175 * L, 0.095 * L, [0.054 * L, 0.195 * L, 0.058 * L], { pitch: -36, splay: 46, uv: UV_COAT });
-        addSymX(m, 'cone', 0.055 * L, 0.162 * L, 0.105 * L, [0.088 * L, 0.215 * L, 0.092 * L], { pitch: -36, splay: 46, uv: UV_COAT, noOutline: true });
+        // 头胸两侧霸气上挑的新月角冠头盾（向斜上方霸气挑起，真实再现原版昆虫新月头冠）
+        addSymX(m, 'cone', 0.080 * L, 0.165 * L, 0.105 * L, [0.046 * L, 0.180 * L, 0.052 * L], { pitch: 22, splay: 44, uv: UV_COAT });
+        addSymX(m, 'cone', 0.070 * L, 0.155 * L, 0.112 * L, [0.072 * L, 0.190 * L, 0.078 * L], { pitch: 22, splay: 44, uv: UV_COAT, noOutline: true });
         m.add('sph', [0, 0.082 * L, 0.155 * L], [0.136 * L, 0.096 * L, 0.14 * L], { pitch: 12, uv: UV_COAT });
         m.add('sph', [0, 0.072 * L, 0.155 * L], [0.160 * L, 0.118 * L, 0.16 * L], { pitch: 12, noOutline: true, uv: UV_COAT });
-        m.add('cone', [0, 0.162 * L, 0.20 * L], [0.014 * L, 0.125 * L, 0.036 * L], { pitch: 86, uv: UV_COAT });
-        m.add('cone', [0, 0.162 * L, 0.19 * L], [0.040 * L, 0.135 * L, 0.042 * L], { pitch: 86, noOutline: true, uv: UV_COAT });
-        addSymX(m, 'sph', 0.046 * L, 0.150 * L, 0.195 * L, [0.025 * L, 0.025 * L, 0.025 * L], { uv: UV_EYE, noOutline: true });
-        addSymX(m, 'sph', 0.064 * L, 0.134 * L, 0.180 * L, [0.023 * L, 0.023 * L, 0.023 * L], { uv: UV_EYE, noOutline: true });
-        addSymX(m, 'sph', 0.042 * L, 0.120 * L, 0.205 * L, [0.021 * L, 0.021 * L, 0.021 * L], { uv: UV_EYE, noOutline: true });
-        addSymX(m, 'cone', 0.052 * L, 0.112 * L, 0.195 * L, [0.024 * L, 0.125 * L, 0.042 * L], { pitch: 112, yaw: -12, uv: UV_COAT });
-        addSymX(m, 'cone', 0.052 * L, 0.112 * L, 0.188 * L, [0.052 * L, 0.132 * L, 0.052 * L], { pitch: 112, yaw: -12, uv: UV_COAT, noOutline: true });
-        addSymX(m, 'cone', 0.020 * L, 0.095 * L, 0.210 * L, [0.026 * L, 0.075 * L, 0.026 * L], { pitch: 142, noOutline: true, uv: UV_LIMB });
+        // 额前中央向上向前微勾的中央锐角
+        m.add('cone', [0, 0.155 * L, 0.195 * L], [0.018 * L, 0.110 * L, 0.032 * L], { pitch: 65, uv: UV_COAT });
+        m.add('cone', [0, 0.155 * L, 0.185 * L], [0.036 * L, 0.120 * L, 0.038 * L], { pitch: 65, noOutline: true, uv: UV_COAT });
+        addSymX(m, 'sph', 0.046 * L, 0.145 * L, 0.195 * L, [0.025 * L, 0.025 * L, 0.025 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.064 * L, 0.130 * L, 0.180 * L, [0.023 * L, 0.023 * L, 0.023 * L], { uv: UV_EYE, noOutline: true });
+        addSymX(m, 'sph', 0.042 * L, 0.115 * L, 0.205 * L, [0.021 * L, 0.021 * L, 0.021 * L], { uv: UV_EYE, noOutline: true });
+        // 额前两侧向前下方内拢的双螯（大螯在外，小触角在内偏下，错开分布0穿模）
+        addSymX(m, 'cone', 0.052 * L, 0.105 * L, 0.195 * L, [0.024 * L, 0.115 * L, 0.038 * L], { pitch: 104, yaw: -18, uv: UV_COAT });
+        addSymX(m, 'cone', 0.052 * L, 0.105 * L, 0.188 * L, [0.048 * L, 0.122 * L, 0.048 * L], { pitch: 104, yaw: -18, uv: UV_COAT, noOutline: true });
+        addSymX(m, 'cone', 0.016 * L, 0.082 * L, 0.218 * L, [0.020 * L, 0.058 * L, 0.020 * L], { pitch: 142, noOutline: true, uv: UV_LIMB });
       }
       break;
     }
@@ -1262,7 +1441,7 @@ function compileMesh(spKey, m, outlineW) {
         quad([c0 * r, 0, s0 * rz], [c0 * topR, h, s0 * topRz], [c1 * topR, h, s1 * topRz], [c1 * r, 0, s1 * rz],
           [i / seg, 0], [i / seg, 1], [(i + 1) / seg, 1], [(i + 1) / seg, 0]);
       }
-      if (!cone && ratio > 0.08) {
+      if (!cone && !p.noTop && ratio > 0.08) {
         const tc = vtx([0, h, 0], [0.5, 0.5]);
         for (let i = 0; i < seg; i++) {
           const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
@@ -1271,15 +1450,17 @@ function compileMesh(spKey, m, outlineW) {
           tri(tc, v1, v0);
         }
       }
-      const bc = vtx([0, 0, 0], [0.5, 0.5]);
-      for (let i = 0; i < seg; i++) {
-        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
-        const v0 = vtx([Math.cos(a0) * r, 0, Math.sin(a0) * rz], [0.5, 0.5]);
-        const v1 = vtx([Math.cos(a1) * r, 0, Math.sin(a1) * rz], [0.5, 0.5]);
-        tri(bc, v0, v1);
+      if (!p.noBottom) {
+        const bc = vtx([0, 0, 0], [0.5, 0.5]);
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+          const v0 = vtx([Math.cos(a0) * r, 0, Math.sin(a0) * rz], [0.5, 0.5]);
+          const v1 = vtx([Math.cos(a1) * r, 0, Math.sin(a1) * rz], [0.5, 0.5]);
+          tri(bc, v0, v1);
+        }
       }
     } else {
-      const lon = 14, lat = 10;
+      const lon = 24, lat = 16;
       const rx = sx * 0.5, ry = sy * 0.5, rz = sz * 0.5;
       for (let iy = 0; iy < lat; iy++) {
         const v0 = (iy / lat) * Math.PI, v1 = ((iy + 1) / lat) * Math.PI;
@@ -1300,7 +1481,7 @@ function compileMesh(spKey, m, outlineW) {
       }
     }
 
-    partBoxes.push({ k: p.kind, uv: p.uv, x0, x1, y0, y1, z0, z1 });
+    partBoxes.push({ k: p.kind, uv: p.uv, noOutline: !!p.noOutline, x0, x1, y0, y1, z0, z1 });
 
     // 逐部件平滑法线计算与反绕描边壳（与 ModelBuilder.ToHull 完全同口径）
     const avg = pVerts.map(() => [0, 0, 0]);
@@ -1397,7 +1578,7 @@ const DS_MAP = Object.fromEntries(SPECIES);
 
 // ---------------------------------------------------------------- Three.js 场景
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(1);
 renderer.setClearColor(0x20242c, 1);
@@ -1460,8 +1641,10 @@ function buildOneGroup(name, overrideL = null) {
   const bodyMesh = new THREE.Mesh(bodyGeo, matAtlas);
   const hullMesh = new THREE.Mesh(hullGeo, matHull);
   bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
-  grp.add(hullMesh);
+  bodyMesh.renderOrder = 1;
+  hullMesh.renderOrder = 2;
   grp.add(bodyMesh);
+  grp.add(hullMesh);
   return { grp, L, a, partBoxes, bodyGeo };
 }
 
@@ -1596,10 +1779,11 @@ if (PARTS) {
   hideChrome();
   grid.visible = false;
   const viewKeys = ['侧视·东', '主视·南', '后视·北', '45°'];
-  const CW = 340, CH = 280;
+  const CW = 340, CH = 240;
   const totalW = CW * viewKeys.length, totalH = CH;
   renderer.setSize(totalW, totalH);
   renderer.setScissorTest(true);
+  camera.fov = 18;
   camera.aspect = CW / CH;
   camera.updateProjectionMatrix();
 
@@ -1609,18 +1793,35 @@ if (PARTS) {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   const span = Math.max(size.x, size.y * 1.25, size.z, 0.4);
-  const dist = span * 1.48;
-  for (let c = 0; c < viewKeys.length; c++) {
-    const o = VIEWS[viewKeys[c]].off;
-    camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
-    L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
-    L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
-    camera.lookAt(center);
-    const wx = c * CW;
-    renderer.setViewport(wx, 0, CW, CH);
-    renderer.setScissor(wx, 0, CW, CH);
-    renderer.render(scene, camera);
+  const dist = span * 3.2;
+
+  const SINGLE_VIEWS = {
+    '侧视·东': { off: [-1.0, 0.0,  0.0] },
+    '主视·南': { off: [ 0.0, 0.0,  1.0] },
+    '后视·北': { off: [ 0.0, 0.0, -1.0] },
+    '45°':     { off: [ 0.78, 0.52,  0.78] },
+  };
+function renderSingle() {
+    renderer.setScissorTest(true);
+    for (let c = 0; c < viewKeys.length; c++) {
+      const o = SINGLE_VIEWS[viewKeys[c]].off;
+      camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+      L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+      L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+      camera.lookAt(center);
+      const wx = c * CW;
+      renderer.setViewport(wx, 0, CW, CH);
+      renderer.setScissor(wx, 0, CW, CH);
+      renderer.render(scene, camera);
+    }
   }
+  renderSingle();
+
+  function loopSingle() {
+    requestAnimationFrame(loopSingle);
+    renderSingle();
+  }
+  loopSingle();
 } else if (SHEET !== null) {
   hideChrome();
   grid.visible = false;
@@ -1644,7 +1845,7 @@ if (PARTS) {
     const dist = span * 1.48;
     const wy = (list.length - 1 - r) * CH;
     for (let c = 0; c < viewKeys.length; c++) {
-      const o = VIEWS[viewKeys[c]].off;
+      const o = SINGLE_VIEWS[viewKeys[c]].off;
       camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
       L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
       L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
@@ -1672,6 +1873,7 @@ function loop() {
 loop();
 
 addEventListener('resize', () => {
+  if (SINGLE || SHEET !== null || PARTS) return;
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);

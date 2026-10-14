@@ -68,6 +68,40 @@ namespace RimFirstPerson3D
                 Vector2 size = Text.CalcSize(label);
                 Widgets.Label(new Rect(cx + g + a + 8f, cy - size.y * 0.5f, size.x + 4f, size.y), label);
             }
+
+            float belowY = cy + g + a + 8f;
+
+            // 准星下方：原版样式进度条（比例与配色取自 SubEffecter_ProgressBar / MoteProgressBar，进度直接读取原版 JobDriver）
+            float? workProgress = CameraRig3D.GetActiveWorkProgress();
+            if (workProgress.HasValue)
+            {
+                float barW = 68f * k;
+                float barH = 12f * k;
+                float margin = Mathf.Max(2f, Mathf.Round(2f * k));
+                float barX = cx - barW * 0.5f;
+
+                GUI.color = new Color(0.3f, 0.3f, 0.3f, 0.65f);
+                Fill(barX, belowY, barW, barH);
+
+                float fillPct = Mathf.Clamp01(workProgress.Value);
+                float innerW = Mathf.Max(0f, (barW - margin * 2f) * fillPct);
+                float innerH = Mathf.Max(1f, barH - margin * 2f);
+                if (innerW > 0.1f)
+                {
+                    GUI.color = new Color(0.9f, 0.85f, 0.2f, 0.65f);
+                    Fill(barX + margin, belowY + margin, innerW, innerH);
+                }
+                GUI.color = Color.white;
+                belowY += barH + 6f;
+            }
+
+            // 准星下方：[E] 非破坏性交互提示（如 [E] 收获、[E] 建造、[E] 研究等）
+            string prompt = CameraRig3D.GetAimedInteractPrompt();
+            if (!string.IsNullOrEmpty(prompt))
+            {
+                Vector2 pSize = Text.CalcSize(prompt);
+                Widgets.Label(new Rect(cx - pSize.x * 0.5f, belowY, pSize.x + 6f, pSize.y), prompt);
+            }
         }
 
         // 纯绘制调用：不经 GUI 控件系统，不消耗也不拦截任何输入事件。

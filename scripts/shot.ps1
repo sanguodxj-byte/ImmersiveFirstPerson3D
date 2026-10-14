@@ -9,20 +9,26 @@ public class Win32 {
     [DllImport("user32.dll")] public static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
+    [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 }
 "@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$h = [Win32]::FindWindow($null, "RimWorld by Ludeon Studios")
-if ($h -eq [IntPtr]::Zero) {
-    $p = Get-Process -Name 'RimWorldWin64' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { $h = $p.MainWindowHandle }
+$p = Get-Process -Name 'RimWorldWin64' -ErrorAction SilentlyContinue | Select-Object -First 1
+$h = [IntPtr]::Zero
+if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+    $h = $p.MainWindowHandle
+} else {
+    $h = [Win32]::FindWindow($null, "RimWorld by Ludeon Studios")
 }
 if ($h -eq [IntPtr]::Zero) { throw "RimWorld window not found" }
+[Win32]::ShowWindow($h, 9) | Out-Null
+[Win32]::SwitchToThisWindow($h, $true)
 [Win32]::SetForegroundWindow($h) | Out-Null
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 500
 $r = New-Object Win32+RECT
 [Win32]::GetWindowRect($h, [ref]$r) | Out-Null
 $w = $r.R - $r.L; $ht = $r.B - $r.T

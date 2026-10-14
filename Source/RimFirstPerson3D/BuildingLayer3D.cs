@@ -16,15 +16,30 @@ namespace RimFirstPerson3D
         private readonly Map map;
         private readonly float baseY;
 
+        private class Surface
+        {
+            public Material mat;
+            public Mesh mesh;
+            public Vector3[] verts;
+            public Vector3[] normals;
+            public Color32[] colors;
+            public bool unlit;
+        }
+
         private class Chunk
         {
             public Dictionary<Material, Mesh> meshes = new Dictionary<Material, Mesh>();
+            public readonly List<Surface> surfaces = new List<Surface>();
             public Mesh hullMesh;
+            public Mesh blueprintHullMesh;
             public bool dirty = true;
+            public bool colorDirty;
             // 图内局部包围盒（不含 worldOffset），供视锥剔除用；无网格时 valid=false
             public Bounds bounds;
             public bool boundsValid;
         }
+
+        public const float RoofThickness = 0.24f;
 
         private readonly Dictionary<int, Chunk> chunks = new Dictionary<int, Chunk>();
         private bool allDirty = true;
@@ -32,6 +47,22 @@ namespace RimFirstPerson3D
         private readonly List<Thing> cachedFurniture = new List<Thing>();
         private readonly List<Thing> cachedWreckage = new List<Thing>();
         private bool furnitureListDirty = true;
+
+        // 房顶采样与覆盖缓存（按连通房顶区域决定单一 RoofStyle，供顶面/天花板/封边共用）
+        private sealed class RoofStyle
+        {
+            public Material material;
+            public Vector4 topUv;
+            public Vector4 sideUv;
+            public bool repeatTop;
+        }
+
+        private bool roofCacheDirty = true;
+        private bool[] roofCovered;
+        private RoofStyle[] roofStyles;
+        private static readonly Dictionary<TerrainDef, RoofStyle> roofFloorStyles = new Dictionary<TerrainDef, RoofStyle>();
+        private static readonly Dictionary<string, RoofStyle> roofWallStyles = new Dictionary<string, RoofStyle>();
+        private static RoofStyle roofFallbackStyle;
 
         // 光照场（F013），由 Scene3D 注入。为空或光照关闭时不写顶点色。
         public LightField3D light;
@@ -48,16 +79,55 @@ namespace RimFirstPerson3D
         {
             allDirty = true;
             furnitureListDirty = true;
+            roofCacheDirty = true;
+        }
+
+        public void MarkAllColorDirty()
+        {
+            foreach (var kv in chunks)
+                if (!kv.Value.dirty && kv.Value.surfaces.Count > 0)
+                    kv.Value.colorDirty = true;
+        }
+
+        public void NotifyRoofOrTerrainChanged(IntVec3 c)
+        {
+            roofCacheDirty = true;
+            if (!c.InBounds(map)) return;
+            int baseCx = c.x / ChunkSize;
+            int baseCz = c.z / ChunkSize;
+            int maxCx = (map.Size.x + ChunkSize - 1) / ChunkSize;
+            int maxCz = (map.Size.z + ChunkSize - 1) / ChunkSize;
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int nx = baseCx + dx, nz = baseCz + dz;
+                    if (nx < 0 || nz < 0 || nx >= maxCx || nz >= maxCz) continue;
+                    int key = nx * 10000 + nz;
+                    if (!chunks.TryGetValue(key, out var ch)) { ch = new Chunk(); chunks[key] = ch; }
+                    ch.dirty = true;
+                }
+            }
         }
 
         public void NotifyThingChanged(Thing t)
         {
-            if (t == null || !t.Spawned || t.def.category != ThingCategory.Building) return;
+            if (t == null || t.def == null) return;
+            bool isConstruct = t is Blueprint || t is Frame || t.def.IsBlueprint || t.def.IsFrame;
+            if (t.def.category != ThingCategory.Building && !isConstruct) return;
             furnitureListDirty = true;
+            if (t.def.category == ThingCategory.Building && t.def.Fillage == FillCategory.Full)
+                roofCacheDirty = true;
+
+            ThingDef effDef = t.def;
+            if (t is Blueprint bp && bp.EntityToBuild() is ThingDef bd) effDef = bd;
+            else if (t is Frame fr && fr.BuildDef != null) effDef = fr.BuildDef;
+
             // 满格或四向连接矮墙/围栏变化时把四个正交邻居的 chunk 也标脏。
-            bool full = t.def.Fillage == FillCategory.Full || WallModels3D.IsLinkedBarrier(t.def);
+            bool full = effDef.Fillage == FillCategory.Full || WallModels3D.IsLinkedBarrier(effDef);
             foreach (var c in GenAdj.OccupiedRect(t))
             {
+                if (!c.InBounds(map)) continue;
                 MarkChunkDirty(c);
                 if (!full) continue;
                 for (int d = 0; d < 4; d++)
@@ -84,6 +154,22 @@ namespace RimFirstPerson3D
             if (chunks.TryGetValue(key, out var ch)) ch.dirty = true;
         }
 
+        /// <summary>光照场变化驱动的原位重刷顶点色（零 Mesh 销毁与重建）：連带四正交邻格，保证跨块墙体立面同步受光。</summary>
+        public void MarkCellColorDirty(IntVec3 c)
+        {
+            TouchChunkColor(c);
+            for (int d = 0; d < 4; d++)
+                TouchChunkColor(c + DirOff[d]);
+        }
+
+        private void TouchChunkColor(IntVec3 c)
+        {
+            if (!c.InBounds(map)) return;
+            int key = (c.x / ChunkSize) * 10000 + (c.z / ChunkSize);
+            if (chunks.TryGetValue(key, out var ch) && !ch.dirty && ch.surfaces.Count > 0)
+                ch.colorDirty = true;
+        }
+
         /// <summary>把本层所有网格的颜色统计并进探针（只在按需导出时走）。</summary>
         public void Summarize(Lighting3D.Probe p)
         {
@@ -106,18 +192,56 @@ namespace RimFirstPerson3D
                 allDirty = false;
             }
             int budget = Fps3DState.ChunkRebuildBudget;
+            int colorBudget = budget * 2 + 2;
+            float colorMs = Fps3DState.ChunkColorBudgetMs;
             int remaining = 0;
+            // 第一轮：优先重建与重刷当前相机视锥内的 chunk；屏幕外的 colorDirty 留到进入视野时再刷
             foreach (var kv in chunks)
             {
-                if (!kv.Value.dirty) continue;
-                if (budget > 0)
+                var ch = kv.Value;
+                if (!ch.dirty && !ch.colorDirty) continue;
+                if (ch.boundsValid)
+                {
+                    var wb = ch.bounds;
+                    wb.center += worldOffset;
+                    if (!Frustum3D.Visible(wb)) continue;
+                }
+                if (ch.dirty)
+                {
+                    if (budget > 0)
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        RebuildChunk(kv.Key / 10000, kv.Key % 10000, ch);
+                        PerfCounters.LastBuildingBuildMs = (float)sw.Elapsed.TotalMilliseconds;
+                        budget--;
+                    }
+                    else remaining++;
+                }
+                else if (ch.colorDirty && colorBudget > 0 && colorMs > 0f)
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
-                    RebuildChunk(kv.Key / 10000, kv.Key % 10000, kv.Value);
-                    PerfCounters.LastBuildingBuildMs = (float)sw.Elapsed.TotalMilliseconds;
-                    budget--;
+                    RecolorChunk(ch);
+                    float elapsed = (float)sw.Elapsed.TotalMilliseconds;
+                    PerfCounters.LastBuildingBuildMs = elapsed;
+                    colorMs -= elapsed;
+                    colorBudget--;
                 }
-                else remaining++;
+            }
+            // 第二轮：仅利用剩余预算后台推进视锥外的几何脏块（dirty），不刷视锥外的 colorDirty
+            foreach (var kv in chunks)
+            {
+                var ch = kv.Value;
+                if (ch.dirty)
+                {
+                    if (budget > 0)
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        RebuildChunk(kv.Key / 10000, kv.Key % 10000, ch);
+                        PerfCounters.LastBuildingBuildMs = (float)sw.Elapsed.TotalMilliseconds;
+                        budget--;
+                    }
+                    else remaining++;
+                }
             }
             return remaining;
         }
@@ -125,11 +249,15 @@ namespace RimFirstPerson3D
         private void RebuildChunk(int cx, int cz, Chunk chunk)
         {
             DisposeChunk(chunk);
+            EnsureRoofCache();
             var rect = new CellRect(cx * ChunkSize, cz * ChunkSize, ChunkSize, ChunkSize);
             rect.ClipInsideMap(map);
 
             var builders = new Dictionary<Material, MeshBuilderX>();
             MeshBuilderX hull = null;
+            MeshBuilderX bpHull = null;
+            var st = FirstPerson3DMod.settings;
+            float outline = st != null ? st.wallOutline : 0.03f;
 
             rebuildSeen.Clear();
             for (int z = rect.minZ; z <= rect.maxZ; z++)
@@ -138,25 +266,37 @@ namespace RimFirstPerson3D
                 {
                     var c = new IntVec3(x, 0, z);
                     var ed = c.GetEdifice(map);
-                    if (ed != null && ed.Spawned && ed.def != null && ed.def.category == ThingCategory.Building && rebuildSeen.Add(ed))
+                    if (ed != null && ed.Spawned && ed.def != null && rebuildSeen.Add(ed))
                     {
-                        if (!(ed is Frame))
+                        var occ = GenAdj.OccupiedRect(ed);
+                        try
                         {
-                            var occ = GenAdj.OccupiedRect(ed);
-                            try { BakeBuilding(ed, occ, rect, builders, ref hull); }
-                            catch (System.Exception e)
-                            {
-                                if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake " + ed.def.defName + ": " + e.Message, ed.thingIDNumber);
-                            }
+                            if (ed is Frame)
+                                BakeConstructible(ed, occ, rect, builders, ref bpHull, outline);
+                            else if (ed.def.category == ThingCategory.Building)
+                                BakeBuilding(ed, occ, rect, builders, ref hull);
+                        }
+                        catch (System.Exception e)
+                        {
+                            if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake " + ed.def.defName + ": " + e.Message, ed.thingIDNumber);
                         }
                     }
                     var list = c.GetThingList(map);
                     for (int i = 0; i < list.Count; i++)
                     {
                         var t = list[i];
-                        if (t != ed && t != null && t.Spawned && t.def != null && t.def.category == ThingCategory.Building && rebuildSeen.Add(t))
+                        if (t != ed && t != null && t.Spawned && t.def != null && rebuildSeen.Add(t))
                         {
-                            if (!(t is Blueprint || t is Frame))
+                            if (t is Blueprint || t is Frame)
+                            {
+                                var occ = GenAdj.OccupiedRect(t);
+                                try { BakeConstructible(t, occ, rect, builders, ref bpHull, outline); }
+                                catch (System.Exception e)
+                                {
+                                    if (Util3D.VerboseLog) Log.WarningOnce("[FirstPerson3D] bake bp " + t.def.defName + ": " + e.Message, t.thingIDNumber);
+                                }
+                            }
+                            else if (t.def.category == ThingCategory.Building)
                             {
                                 var occ = GenAdj.OccupiedRect(t);
                                 try { BakeBuilding(t, occ, rect, builders, ref hull); }
@@ -171,17 +311,23 @@ namespace RimFirstPerson3D
             }
             rebuildSeen.Clear();
 
+            BakeChunkRoofs(rect, builders, ref hull, outline);
+
             bool hasBounds = false;
             var acc = new Bounds();
             var lf = LightOrNull;
+            Material bpWallMat = WallAtlasTex() != null ? Util3D.BlueprintMatFor(WallAtlasTex(), FilterMode.Point) : null;
             foreach (var kv in builders)
             {
-                var mesh = kv.Value.ToMesh(lf);
-                if (mesh != null)
+                bool unlit = kv.Key == bpWallMat || (kv.Key != null && kv.Key.name != null && kv.Key.name.StartsWith("Fps3D_Blueprint_"));
+                var surf = kv.Value.ToSurface(kv.Key, unlit ? null : lf);
+                if (surf != null)
                 {
-                    chunk.meshes[kv.Key] = mesh;
-                    if (!hasBounds) { acc = mesh.bounds; hasBounds = true; }
-                    else acc.Encapsulate(mesh.bounds);
+                    surf.unlit = unlit;
+                    chunk.meshes[kv.Key] = surf.mesh;
+                    chunk.surfaces.Add(surf);
+                    if (!hasBounds) { acc = surf.mesh.bounds; hasBounds = true; }
+                    else acc.Encapsulate(surf.mesh.bounds);
                 }
             }
             chunk.hullMesh = hull?.ToMesh(null);
@@ -190,9 +336,40 @@ namespace RimFirstPerson3D
                 if (!hasBounds) { acc = chunk.hullMesh.bounds; hasBounds = true; }
                 else acc.Encapsulate(chunk.hullMesh.bounds);
             }
+            chunk.blueprintHullMesh = bpHull?.ToMesh(null);
+            if (chunk.blueprintHullMesh != null)
+            {
+                if (!hasBounds) { acc = chunk.blueprintHullMesh.bounds; hasBounds = true; }
+                else acc.Encapsulate(chunk.blueprintHullMesh.bounds);
+            }
             chunk.bounds = acc;
             chunk.boundsValid = hasBounds;
             chunk.dirty = false;
+            chunk.colorDirty = false;
+        }
+
+        private void RecolorChunk(Chunk chunk)
+        {
+            chunk.colorDirty = false;
+            var lf = LightOrNull;
+            for (int s = 0; s < chunk.surfaces.Count; s++)
+            {
+                var surf = chunk.surfaces[s];
+                var v = surf.verts;
+                var n = surf.normals;
+                var c = surf.colors;
+                if (lf != null && !surf.unlit)
+                {
+                    for (int i = 0; i < v.Length; i++)
+                        c[i] = Lighting3D.To32(lf.Shade(v[i], n[i], true));
+                }
+                else
+                {
+                    var white = new Color32(255, 255, 255, 255);
+                    for (int i = 0; i < v.Length; i++) c[i] = white;
+                }
+                surf.mesh.colors32 = c;
+            }
         }
 
         private void BakeBuilding(Thing t, CellRect occ, CellRect chunkRect,
@@ -203,8 +380,8 @@ namespace RimFirstPerson3D
             if (g == null) return;
             Material srcMat = null;
             try { srcMat = g.MatAt(t.Rotation, t); } catch { }
-            if (srcMat == null || srcMat.mainTexture == null) { try { srcMat = g.MatSingle; } catch { } }
-            if (srcMat == null || srcMat.mainTexture == null) return;
+            if (srcMat == null || srcMat.mainTexture == null || srcMat.NullOrBad()) { try { srcMat = g.MatSingle; } catch { } }
+            if (srcMat == null || srcMat.mainTexture == null || srcMat.NullOrBad() || srcMat.mainTexture == BaseContent.BadTex) return;
 
             var center = t.DrawPos;
             var pos = new Vector3(center.x, baseY, center.z);
@@ -217,9 +394,17 @@ namespace RimFirstPerson3D
             var wArch = WallModels3D.ArchOf(t);
 
             // 全系列满格墙体与穿墙设备（建造砖/木/光滑墙、平滑岩墙、加固防爆墙、飞船船体墙、
-            // 虫穴墙、平滑冰墙、迷宫灰墙、虚空金属刺墙、扭曲血肉墙、穿墙通风口、穿墙制冷机）
+            // 穿墙设备（穿墙通风管 Vent、穿墙制冷机 Cooler）：
+            // 设备本体为 1x1x1（高 1.00m），上方 1.00m..WallHeight 空隙由两侧相邻墙体材质填充。
+            if (fullCell && !isDoor && WallModels3D.IsInWallDevice(wArch) && WallAtlasTex() != null)
+            {
+                BakeInWallDevice(t, wArch, occ, chunkRect, srcMat, builders, ref hull, outline);
+                return;
+            }
+
+            // 满格墙体（砖墙、木墙、光滑石/金属墙、加固墙、船体墙、虫穴墙、平滑冰墙、迷宫灰墙、虚空金属刺墙、扭曲血肉墙）
             // 统一走 WallAtlas 图集与 3D 表面浮雕构造。
-            if (fullCell && !isDoor && WallModels3D.IsFullWallOrInWall(wArch) && WallAtlasTex() != null)
+            if (fullCell && !isDoor && WallModels3D.IsFullWall(wArch) && WallAtlasTex() != null)
             {
                 BakeWall(t, wArch, occ, chunkRect, srcMat, builders, ref hull, outline);
                 return;
@@ -250,8 +435,8 @@ namespace RimFirstPerson3D
                 var door = (Building_Door)t;
                 Rot4 doorRot = DoorRotation(door);
                 try { srcMat = g.MatAt(doorRot, t); } catch { }
-                if (srcMat == null || srcMat.mainTexture == null) { try { srcMat = g.MatSingle; } catch { } }
-                if (srcMat == null || srcMat.mainTexture == null) return;
+                if (srcMat == null || srcMat.mainTexture == null || srcMat.NullOrBad()) { try { srcMat = g.MatSingle; } catch { } }
+                if (srcMat == null || srcMat.mainTexture == null || srcMat.NullOrBad() || srcMat.mainTexture == BaseContent.BadTex) return;
 
                 bool header = WallAtlasTex() != null && HeaderDoors.Contains(t.def.defName);
                 bool horiz = doorRot.IsHorizontal;
@@ -319,6 +504,7 @@ namespace RimFirstPerson3D
             if (Wreckage3D.Handles(t)) return;
 
             // 家具等：立板（沿建筑朝向）+ 地面贴片，双面。
+            if (mat == null || mat.NullOrBad() || mat.mainTexture == null || mat.mainTexture == BaseContent.BadTex) return;
             float yaw = t.Rotation.AsAngle;
             float slabH = Mathf.Min(1.7f, Mathf.Max(0.8f, g.drawSize.y));
             float slabW = Mathf.Max(0.5f, g.drawSize.x);
@@ -562,7 +748,7 @@ namespace RimFirstPerson3D
         // 染色取这块墙 MatAt 材质上的 color，不另读颜色表。
         private static Material WallAtlasMat(Thing t, Material src, Texture2D atlas)
         {
-            var col = src != null ? src.color : Color.white;
+            var col = (src != null && !src.NullOrBad()) ? src.color : Color.white;
             var c32 = (Color32)col;
             string key = AppearanceKey(t) + "|" + c32.r + "," + c32.g + "," + c32.b + "," + c32.a;
             if (wallMats.TryGetValue(key, out var m)) return m;
@@ -638,8 +824,11 @@ namespace RimFirstPerson3D
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
-                b.AppendWallTop(c.x, c.z, y1, top);
-                if (shell) hull.AppendWallTopHull(c.x, c.z, y1, outline);
+                if (!IsRoofCoveredAt(c))
+                {
+                    b.AppendWallTop(c.x, c.z, y1, top);
+                    if (shell) hull.AppendWallTopHull(c.x, c.z, y1, outline);
+                }
 
                 bool[] openFace = new bool[4];
                 bool anyOpen = false;
@@ -659,21 +848,112 @@ namespace RimFirstPerson3D
                 {
                     var relief = new Model3D();
                     int cellHash = c.x * 73856093 ^ c.z * 19349663;
-                    if (wArch == WallModels3D.WallArch.Vent || wArch == WallModels3D.WallArch.Cooler)
-                    {
-                        WallModels3D.AddInWallDeviceRelief(relief, wArch, t.Rotation, h,
-                            openFace[0], openFace[1], openFace[2], openFace[3]);
-                    }
-                    else
-                    {
-                        for (int d = 0; d < 4; d++)
-                            if (openFace[d]) WallModels3D.AddExposedFaceRelief(relief, wArch, d, h, cellHash);
-                    }
+                    for (int d = 0; d < 4; d++)
+                        if (openFace[d]) WallModels3D.AddExposedFaceRelief(relief, wArch, d, h, cellHash);
                     if (relief.parts.Count > 0)
                     {
                         var mb = new ModelBuilder(uvs, false);
                         mb.AddAll(relief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
                         b.AppendFromModelBuilder(mb, null, 0f);
+                    }
+                }
+            }
+        }
+
+        // 穿墙设备（Vent 通风口 / Cooler 制冷机）：
+        // 下半 [baseY, baseY + 1.00m] 为 1x1x1 机体与风门/百叶浮雕；
+        // 上半 [baseY + 1.00m, baseY + WallHeight] 空隙继承两侧相邻墙体的材质、贴图与颜色填充。
+        private void BakeInWallDevice(Thing t, WallModels3D.WallArch wArch, CellRect occ, CellRect chunkRect, Material srcMat,
+            Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
+        {
+            const float devH = 1.00f;
+            float wallH = Fps3DState.WallHeight;
+            float yMid = baseY + devH;
+            float yTop = baseY + wallH;
+            bool shell = Fps3DState.DrawOutlines;
+            if (shell) hull = hull ?? new MeshBuilderX();
+
+            // 1. 下半 1x1x1 设备机体（Vent / Cooler 自身图集与材质）
+            string devAp = WallModels3D.AtlasPrefix(wArch);
+            var devB = BuilderFor(builders, WallAtlasMat(t, srcMat, WallAtlasTex()));
+            var devTop = WallModels3D.GetUv(devAp, "top");
+            var devSide = WallModels3D.GetUv(devAp, "side");
+            var devUvs = WallModels3D.BuildUvSpecs(wArch);
+
+            // 2. 上半 [1.00m .. WallHeight] 墙体填充：优先取设备两侧（垂直于送风轴）的相邻满格墙材质与染色
+            bool horiz = t.Rotation.IsHorizontal;
+            Thing wallRef = FindAdjacentWall(occ, horiz, out Material adjMat) ?? t;
+            Material wallMat = adjMat ?? srcMat;
+            string wallAp = AppearanceKey(wallRef);
+            var wallArch = WallModels3D.ArchOf(wallRef);
+            var wallB = BuilderFor(builders, WallAtlasMat(wallRef, wallMat, WallAtlasTex()));
+            var wallTop = WallModels3D.GetUv(wallAp, "top");
+            var wallSide = WallModels3D.GetUv(wallAp, "side");
+
+            foreach (var c in occ)
+            {
+                if (!chunkRect.Contains(c)) continue;
+
+                // 顶部封盖在 yTop，采用两侧填充墙的顶盖纹理（若已被房顶覆盖则不重复发射）
+                if (!IsRoofCoveredAt(c))
+                {
+                    wallB.AppendWallTop(c.x, c.z, yTop, wallTop);
+                    if (shell) hull.AppendWallTopHull(c.x, c.z, yTop, outline);
+                }
+
+                bool[] openFace = new bool[4];
+                bool anyOpen = false;
+                for (int d = 0; d < 4; d++)
+                {
+                    if (!WallFaceExposed(c, d)) continue;
+
+                    // 下部 [baseY .. yMid]：1x1x1 通风管/空调机体立面
+                    devB.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, yMid, devSide, baseY, devH);
+                    if (shell) hull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, baseY, yMid, baseY, outline);
+
+                    // 上部 [yMid .. yTop]：两侧墙体材质填充空隙（UV 沿整墙高度 baseY..wallH 连续映射，砖缝与两侧墙完全对齐）
+                    wallB.AppendWallFace(d, c.x, c.z, 0f, 1f, yMid, yTop, wallSide, baseY, wallH);
+                    if (shell) hull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, yMid, yTop, yMid, outline);
+
+                    if (!SolidAt(c + DirOff[d]) && HeaderDoorAt(c + DirOff[d]) == null)
+                    {
+                        openFace[d] = true;
+                        anyOpen = true;
+                    }
+                }
+
+                if (anyOpen)
+                {
+                    // 1x1x1 设备百叶/风口/冷热面板浮雕
+                    var devRelief = new Model3D();
+                    WallModels3D.AddInWallDeviceRelief(devRelief, wArch, t.Rotation, devH,
+                        openFace[0], openFace[1], openFace[2], openFace[3]);
+                    if (devRelief.parts.Count > 0)
+                    {
+                        var mb = new ModelBuilder(devUvs, false);
+                        mb.AddAll(devRelief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                        devB.AppendFromModelBuilder(mb, null, 0f);
+                    }
+
+                    // 上半墙体填充段的顶部檐口浮雕（与两侧满格墙顶檐连续）
+                    if (WallModels3D.IsFullWall(wallArch))
+                    {
+                        var fullRelief = new Model3D();
+                        int cellHash = c.x * 73856093 ^ c.z * 19349663;
+                        for (int d = 0; d < 4; d++)
+                            if (openFace[d]) WallModels3D.AddExposedFaceRelief(fullRelief, wallArch, d, wallH, cellHash);
+                        var upperRelief = new Model3D();
+                        for (int i = 0; i < fullRelief.parts.Count; i++)
+                        {
+                            if (fullRelief.parts[i].pos.y >= devH - 0.02f)
+                                upperRelief.parts.Add(fullRelief.parts[i]);
+                        }
+                        if (upperRelief.parts.Count > 0)
+                        {
+                            var wMb = new ModelBuilder(WallModels3D.BuildUvSpecs(wallArch), false);
+                            wMb.AddAll(upperRelief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                            wallB.AppendFromModelBuilder(wMb, null, 0f);
+                        }
                     }
                 }
             }
@@ -704,7 +984,7 @@ namespace RimFirstPerson3D
             }
         }
 
-        // 壁挂灯具（WallLamp / TorchWallLamp）：按朝向贴合在相邻墙体的可见外立面上
+        // 壁挂件（WallLamp / TorchWallLamp，1x1 格内高度 Y = 2.00m）与火把木柄（TorchLamp）
         private void BakeWallAttachment(Thing t, WallModels3D.WallArch wArch, CellRect chunkRect, Material srcMat,
             Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX hull, float outline)
         {
@@ -715,14 +995,9 @@ namespace RimFirstPerson3D
             if (shell) hull = hull ?? new MeshBuilderX();
             var uvs = WallModels3D.BuildUvSpecs(wArch);
 
-            var wallCell = t.Rotation.FacingCell;
-            var anchor = new Vector3(
-                c.x + 0.5f + wallCell.x * 0.44f,
-                baseY + Metrics3D.TorchHeadHeight - 0.15f,
-                c.z + 0.5f + wallCell.z * 0.44f);
             var model = WallModels3D.BuildCellModel(wArch, false, false, false, false, t.Rotation);
             var mb = new ModelBuilder(uvs, false);
-            mb.AddAll(model, Matrix4x4.Translate(anchor));
+            mb.AddAll(model, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
             b.AppendFromModelBuilder(mb, shell ? hull : null, outline * 0.55f);
         }
 
@@ -781,11 +1056,13 @@ namespace RimFirstPerson3D
                     var n = c + DirOff[d];
                     if (occ.Contains(n) || !n.InBounds(map)) continue;
                     var ed = n.GetEdifice(map);
-                    if (ed != null && WallModels3D.IsFullWallOrInWall(WallModels3D.ArchOf(ed)) && ed.Graphic != null)
+                    Graphic edG = null;
+                    try { edG = ed?.Graphic; } catch { }
+                    if (ed != null && WallModels3D.IsFullWall(WallModels3D.ArchOf(ed)) && edG != null)
                     {
-                        try { wallSrcMat = ed.Graphic.MatAt(ed.Rotation, ed); } catch { }
-                        if (wallSrcMat == null) { try { wallSrcMat = ed.Graphic.MatSingle; } catch { } }
-                        if (wallSrcMat != null) return ed;
+                        try { wallSrcMat = edG.MatAt(ed.Rotation, ed); } catch { }
+                        if (wallSrcMat == null || wallSrcMat.NullOrBad()) { try { wallSrcMat = edG.MatSingle; } catch { } }
+                        if (wallSrcMat != null && !wallSrcMat.NullOrBad()) return ed;
                     }
                 }
             }
@@ -816,8 +1093,11 @@ namespace RimFirstPerson3D
             foreach (var c in occ)
             {
                 if (!chunkRect.Contains(c)) continue;
-                b.AppendWallTop(c.x, c.z, y1, top);
-                if (shell) sh.AppendWallTopHull(c.x, c.z, y1, outline);
+                if (!IsRoofCoveredAt(c))
+                {
+                    b.AppendWallTop(c.x, c.z, y1, top);
+                    if (shell) sh.AppendWallTopHull(c.x, c.z, y1, outline);
+                }
                 // 门洞上沿底面：法线朝下，贴墙帽段（不发 BottomHull，避免在 2.02m 处翻出穿墙黑框）
                 b.AppendWallBottom(c.x, c.z, sill, top);
 
@@ -872,12 +1152,692 @@ namespace RimFirstPerson3D
             }
         }
 
+        // 建筑蓝图（Blueprint）与建造框架（Frame）的三维蓝色投影建模。
+        private void BakeConstructible(Thing t, CellRect occ, CellRect chunkRect,
+            Dictionary<Material, MeshBuilderX> builders, ref MeshBuilderX bpHull, float outline)
+        {
+            if (Furniture3D.Handles(t)) return;
+            var atlas = WallAtlasTex();
+            Material bpMat = Util3D.BlueprintMatFor(atlas, FilterMode.Point);
+            if (bpMat == null) return;
+
+            BuildableDef buildable = null;
+            if (t is Blueprint bp) buildable = bp.EntityToBuild();
+            else if (t is Frame fr) buildable = fr.def.entityDefToBuild;
+            if (buildable == null) return;
+
+            bool shell = Fps3DState.DrawOutlines;
+            if (shell) bpHull = bpHull ?? new MeshBuilderX();
+
+            // 地板蓝图/框架：在地面铺一层 0.06m 厚的蓝色投影板
+            if (buildable is TerrainDef)
+            {
+                var b = BuilderFor(builders, bpMat);
+                var topUv = WallModels3D.GetUv("smooth", "top");
+                var sideUv = WallModels3D.GetUv("smooth", "side");
+                float y1 = baseY + 0.06f;
+                foreach (var c in occ)
+                {
+                    if (!chunkRect.Contains(c)) continue;
+                    b.AppendWallTop(c.x, c.z, y1, topUv);
+                    for (int d = 0; d < 4; d++)
+                        b.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, y1, sideUv, baseY, 0.06f);
+                }
+                return;
+            }
+
+            var buildDef = buildable as ThingDef;
+            if (buildDef == null) return;
+
+            var wArch = WallModels3D.ArchOf(t);
+            bool isDoor = buildDef.thingClass != null && typeof(Building_Door).IsAssignableFrom(buildDef.thingClass);
+            bool fullCell = buildDef.Fillage == FillCategory.Full;
+
+            // 1) 穿墙设备蓝图/框架（Vent / Cooler）
+            if (fullCell && !isDoor && WallModels3D.IsInWallDevice(wArch) && atlas != null)
+            {
+                const float devH = 1.00f;
+                float wallH = Fps3DState.WallHeight;
+                float yMid = baseY + devH;
+                float yTop = baseY + wallH;
+                string devAp = WallModels3D.AtlasPrefix(wArch);
+                var devB = BuilderFor(builders, bpMat);
+                var devSide = WallModels3D.GetUv(devAp, "side");
+                var devTop = WallModels3D.GetUv(devAp, "top");
+                var devUvs = WallModels3D.BuildUvSpecs(wArch);
+                foreach (var c in occ)
+                {
+                    if (!chunkRect.Contains(c)) continue;
+                    devB.AppendWallTop(c.x, c.z, yTop, devTop);
+                    if (shell) bpHull.AppendWallTopHull(c.x, c.z, yTop, outline);
+                    bool[] openFace = new bool[4];
+                    bool anyOpen = false;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (!BlueprintWallFaceExposed(c, d)) continue;
+                        devB.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, yMid, devSide, baseY, devH);
+                        devB.AppendWallFace(d, c.x, c.z, 0f, 1f, yMid, yTop, devSide, baseY, wallH);
+                        if (shell) bpHull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, baseY, yTop, baseY, outline);
+                        openFace[d] = true;
+                        anyOpen = true;
+                    }
+                    if (anyOpen)
+                    {
+                        var devRelief = new Model3D();
+                        WallModels3D.AddInWallDeviceRelief(devRelief, wArch, t.Rotation, devH,
+                            openFace[0], openFace[1], openFace[2], openFace[3]);
+                        if (devRelief.parts.Count > 0)
+                        {
+                            var mb = new ModelBuilder(devUvs, false);
+                            mb.AddAll(devRelief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                            devB.AppendFromModelBuilder(mb, null, 0f);
+                        }
+                    }
+                }
+                return;
+            }
+
+            // 2) 满格墙体蓝图/框架
+            if (fullCell && !isDoor && WallModels3D.IsFullWall(wArch) && atlas != null)
+            {
+                string ap = WallModels3D.AtlasPrefix(wArch);
+                var b = BuilderFor(builders, bpMat);
+                var top = WallModels3D.GetUv(ap, "top");
+                var side = WallModels3D.GetUv(ap, "side");
+                float h = Fps3DState.WallHeight;
+                float y1 = baseY + h;
+                var uvs = WallModels3D.BuildUvSpecs(wArch);
+                foreach (var c in occ)
+                {
+                    if (!chunkRect.Contains(c)) continue;
+                    b.AppendWallTop(c.x, c.z, y1, top);
+                    if (shell) bpHull.AppendWallTopHull(c.x, c.z, y1, outline);
+                    bool[] openFace = new bool[4];
+                    bool anyOpen = false;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (!BlueprintWallFaceExposed(c, d)) continue;
+                        b.AppendWallFace(d, c.x, c.z, 0f, 1f, baseY, y1, side, baseY, h);
+                        if (shell) bpHull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, baseY, y1, baseY, outline);
+                        openFace[d] = true;
+                        anyOpen = true;
+                    }
+                    if (anyOpen)
+                    {
+                        var relief = new Model3D();
+                        int cellHash = c.x * 73856093 ^ c.z * 19349663;
+                        for (int d = 0; d < 4; d++)
+                            if (openFace[d]) WallModels3D.AddExposedFaceRelief(relief, wArch, d, h, cellHash);
+                        if (relief.parts.Count > 0)
+                        {
+                            var mb = new ModelBuilder(uvs, false);
+                            mb.AddAll(relief, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                            b.AppendFromModelBuilder(mb, null, 0f);
+                        }
+                    }
+                }
+                return;
+            }
+
+            // 3) 矮墙掩体与围栏蓝图/框架（沙袋、路障、栅栏）
+            if (!isDoor && WallModels3D.IsLowBarrierOrFence(wArch) && atlas != null)
+            {
+                var b = BuilderFor(builders, bpMat);
+                var uvs = WallModels3D.BuildUvSpecs(wArch);
+                float hw = outline * 0.65f;
+                foreach (var c in occ)
+                {
+                    if (!chunkRect.Contains(c)) continue;
+                    bool ln = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[0]);
+                    bool ls = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[1]);
+                    bool lw = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[2]);
+                    bool le = WallModels3D.BarrierLinksTo(map, c, wArch, c + DirOff[3]);
+                    int cellHash = c.x * 73856093 ^ c.z * 19349663;
+                    var model = WallModels3D.BuildCellModel(wArch, ln, ls, lw, le, t.Rotation, cellHash);
+                    var mb = new ModelBuilder(uvs, false);
+                    mb.AddAll(model, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                    b.AppendFromModelBuilder(mb, shell ? bpHull : null, hw);
+                }
+                return;
+            }
+
+            // 4) 壁挂灯具/火把蓝图/框架
+            if (!isDoor && WallModels3D.IsWallAttachment(wArch) && atlas != null)
+            {
+                var c = t.Position;
+                if (!chunkRect.Contains(c)) return;
+                var b = BuilderFor(builders, bpMat);
+                var uvs = WallModels3D.BuildUvSpecs(wArch);
+                var model = WallModels3D.BuildCellModel(wArch, false, false, false, false, t.Rotation);
+                var mb = new ModelBuilder(uvs, false);
+                mb.AddAll(model, Matrix4x4.Translate(new Vector3(c.x + 0.5f, baseY, c.z + 0.5f)));
+                b.AppendFromModelBuilder(mb, shell ? bpHull : null, outline * 0.55f);
+                return;
+            }
+
+            // 5) 门蓝图/框架（门板 + 门楣门框）
+            if (isDoor)
+            {
+                Rot4 doorRot = buildDef.size == IntVec2.One
+                    ? DoorUtility.DoorRotationAt(t.Position, map, buildDef.building != null && buildDef.building.preferConnectingToFences)
+                    : t.Rotation;
+                bool header = atlas != null && HeaderDoors.Contains(buildDef.defName);
+                bool horiz = doorRot.IsHorizontal;
+                float inset = header ? (1f - Metrics3D.DoorWidth) * 0.5f : 0f;
+                float span = (horiz ? occ.Height : occ.Width) - inset * 2f;
+                float dw = horiz ? Metrics3D.DoorPanelThickness : span;
+                float dd = horiz ? span : Metrics3D.DoorPanelThickness;
+                float dh = buildDef.defName == "FenceGate" ? Metrics3D.FenceHeight : Metrics3D.DoorHeight;
+                var center = t.DrawPos;
+                var pos = new Vector3(center.x, baseY, center.z);
+                if (chunkRect.Contains(t.Position))
+                {
+                    var b = BuilderFor(builders, bpMat);
+                    var m = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
+                    b.AppendDoorPanel(dw, dh, dd, horiz, WallModels3D.GetUv("smooth", "side"), m);
+                    if (shell) bpHull.AppendBoxHull(dw, dh, dd, outline, m);
+                }
+                if (header)
+                {
+                    var b = BuilderFor(builders, bpMat);
+                    var top = WallModels3D.GetUv("smooth", "top");
+                    var side = WallModels3D.GetUv("smooth", "side");
+                    float h = Fps3DState.WallHeight;
+                    float y1 = baseY + h;
+                    float sill = baseY + Metrics3D.DoorHeight;
+                    foreach (var c in occ)
+                    {
+                        if (!chunkRect.Contains(c)) continue;
+                        b.AppendWallTop(c.x, c.z, y1, top);
+                        b.AppendWallBottom(c.x, c.z, sill, top);
+                        if (shell) bpHull.AppendWallTopHull(c.x, c.z, y1, outline);
+                        for (int d = 0; d < 4; d++)
+                        {
+                            var n = c + DirOff[d];
+                            if (occ.Contains(n)) continue;
+                            if (!BlueprintSolidAt(n))
+                            {
+                                b.AppendWallFace(d, c.x, c.z, 0f, 1f, sill, y1, side, baseY, h);
+                                if (shell) bpHull.AppendWallFaceHull(d, c.x, c.z, 0f, 1f, sill, y1, sill, outline);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
+            // 6) 其它建筑蓝图/框架（发电机、电池、炮塔、箱柜等）：按占格与高度生成立体蓝色投影模型
+            if (!chunkRect.Contains(t.Position)) return;
+            {
+                var center = t.DrawPos;
+                var pos = new Vector3(center.x, baseY, center.z);
+                float boxW = Mathf.Max(0.42f, occ.Width - 0.08f);
+                float boxD = Mathf.Max(0.42f, occ.Height - 0.08f);
+                float boxH = fullCell ? Fps3DState.WallHeight : Mathf.Clamp(Mathf.Max(0.75f, buildDef.fillPercent * 1.5f), 0.35f, 1.85f);
+                if (buildDef.defName == "PowerConduit" || buildDef.defName == "WaterproofConduit")
+                {
+                    boxW = 0.28f; boxD = 0.28f; boxH = 0.14f;
+                }
+                var b = BuilderFor(builders, bpMat);
+                var uvs = WallModels3D.BuildUvSpecs(WallModels3D.WallArch.WallSmooth);
+                var model = new Model3D();
+                model.parts.Add(new Part
+                {
+                    kind = Prim.Box,
+                    pos = new Vector3(0f, 0f, 0f),
+                    size = new Vector3(boxW, boxH, boxD),
+                    uv = 0
+                });
+                var mb = new ModelBuilder(uvs, false);
+                mb.AddAll(model, Matrix4x4.Translate(pos));
+                b.AppendFromModelBuilder(mb, shell ? bpHull : null, outline * 0.7f);
+            }
+        }
+
+        private bool BlueprintSolidAt(IntVec3 c)
+        {
+            if (SolidAt(c)) return true;
+            if (!c.InBounds(map)) return false;
+            var ed = c.GetEdifice(map);
+            if (ed is Frame fr && fr.BuildDef != null && fr.BuildDef.Fillage == FillCategory.Full) return true;
+            var list = c.GetThingList(map);
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (list[i] is Blueprint bp && bp.EntityToBuild() is ThingDef bd && bd.Fillage == FillCategory.Full)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool BlueprintWallFaceExposed(IntVec3 wallCell, int dir)
+        {
+            var n = wallCell + DirOff[dir];
+            return !BlueprintSolidAt(n);
+        }
+
+        // ---- 房顶 3D 建模（F004）：默认采样墙体样式；若存在 3x3 及以上同类人工地板则采样地板，排除自然地形 ----
+
+        public static bool IsArtificialFloor(TerrainDef td)
+        {
+            if (td == null || td.natural) return false;
+            if (td.IsSoil || td.IsRock || td.IsWater || td.IsIce || td.IsFlood || td.IsRoad) return false;
+            if (td.smoothedTerrain != null) return false; // RoughHewn 粗凿岩地不属于人工地板
+            if (td.defName == "Underwall") return false;
+            return td.IsFloor || (td.layerable && td.designationCategory != null);
+        }
+
+        private bool HasDirectBuildingRoof(int x, int z)
+        {
+            if (map == null || map.roofGrid == null) return false;
+            int idx = z * map.Size.x + x;
+            var roof = map.roofGrid.RoofAt(x, z);
+            if (roof == null) return false;
+            if (mountain != null && mountain.Ready && mountain.Cells[idx] == 1) return false;
+            return !roof.isNatural;
+        }
+
+        private bool IsRoofSupportWallOrDoor(int x, int z)
+        {
+            var ed = map.edificeGrid[z * map.Size.x + x];
+            if (ed == null || ed.def == null || ed is Frame) return false;
+            if (MountainField3D.IsRock(ed)) return false;
+            if (ed is Building_Door) return HeaderDoors.Contains(ed.def.defName);
+            return ed.def.Fillage == FillCategory.Full;
+        }
+
+        private bool IsRoofCoveredAt(IntVec3 c)
+        {
+            if (!c.InBounds(map) || roofCovered == null) return false;
+            return roofCovered[c.z * map.Size.x + c.x];
+        }
+
+        private bool HasFullHeightWallOrHeaderAt(IntVec3 c)
+        {
+            if (!c.InBounds(map)) return false;
+            var ed = c.GetEdifice(map);
+            if (ed == null || ed.def == null || ed is Frame) return false;
+            if (ed is Building_Door) return HeaderDoors.Contains(ed.def.defName);
+            return ed.def.Fillage == FillCategory.Full;
+        }
+
+        private static RoofStyle RoofFloorStyle(TerrainDef td)
+        {
+            if (td == null) return null;
+            if (roofFloorStyles.TryGetValue(td, out var cached) && cached != null) return cached;
+            Material src = null;
+            try { src = td.DrawMatSingle; } catch { }
+            Texture tex = src != null ? src.mainTexture : null;
+            if (tex == null && !string.IsNullOrEmpty(td.texturePath))
+            {
+                try { tex = ContentFinder<Texture2D>.Get(td.texturePath, reportFailure: false); } catch { }
+            }
+            if (tex == null) return null;
+            if (tex is Texture2D tw && tw.wrapMode != TextureWrapMode.Repeat)
+                tw.wrapMode = TextureWrapMode.Repeat;
+            var m = new Material(ShaderDatabase.Cutout)
+            {
+                name = "Fps3D_RoofFloor_" + td.defName,
+                mainTexture = tex,
+                color = td.color
+            };
+            var style = new RoofStyle
+            {
+                material = m,
+                topUv = new Vector4(0f, 0f, 1f, 1f),
+                sideUv = new Vector4(0f, 0f, 1f, RoofThickness),
+                repeatTop = true
+            };
+            roofFloorStyles[td] = style;
+            return style;
+        }
+
+        private static RoofStyle RoofFallbackStyle()
+        {
+            if (roofFallbackStyle != null) return roofFallbackStyle;
+            var m = new Material(ShaderDatabase.Cutout)
+            {
+                name = "Fps3D_RoofFallback",
+                color = Color.white
+            };
+            roofFallbackStyle = new RoofStyle
+            {
+                material = m,
+                topUv = WallModels3D.GetUv("smooth", "top"),
+                sideUv = WallModels3D.GetUv("smooth", "side")
+            };
+            return roofFallbackStyle;
+        }
+
+        private static RoofStyle RoofWallStyle(Thing t, Material src, Texture2D atlas)
+        {
+            if (atlas == null) return null;
+            var col = src != null ? src.color : Color.white;
+            var c32 = (Color32)col;
+            string ap = AppearanceKey(t) ?? "smooth";
+            string key = ap + "|" + c32.r + "," + c32.g + "," + c32.b + "," + c32.a;
+            if (roofWallStyles.TryGetValue(key, out var cached) && cached != null) return cached;
+            var m = WallAtlasMat(t, src, atlas);
+            if (m == null) return null;
+            var style = new RoofStyle
+            {
+                material = m,
+                topUv = WallModels3D.GetUv(ap, "top"),
+                sideUv = WallModels3D.GetUv(ap, "side"),
+                repeatTop = false
+            };
+            roofWallStyles[key] = style;
+            return style;
+        }
+
+        private void EnsureRoofCache()
+        {
+            if (!roofCacheDirty && roofCovered != null) return;
+            roofCacheDirty = false;
+
+            int sx = map.Size.x, sz = map.Size.z;
+            int total = sx * sz;
+            if (roofCovered == null || roofCovered.Length != total)
+            {
+                roofCovered = new bool[total];
+                roofStyles = new RoofStyle[total];
+            }
+            else
+            {
+                System.Array.Clear(roofCovered, 0, total);
+                System.Array.Clear(roofStyles, 0, total);
+            }
+
+            // 1) 标记直接带房顶的格，以及紧邻室内房顶的围护墙/门框格（使房顶完整压在四周墙顶之上）
+            bool anyRoof = false;
+            for (int z = 0; z < sz; z++)
+            {
+                int row = z * sx;
+                for (int x = 0; x < sx; x++)
+                {
+                    if (HasDirectBuildingRoof(x, z))
+                    {
+                        roofCovered[row + x] = true;
+                        anyRoof = true;
+                    }
+                }
+            }
+            if (!anyRoof) return;
+
+            for (int z = 0; z < sz; z++)
+            {
+                int row = z * sx;
+                for (int x = 0; x < sx; x++)
+                {
+                    if (roofCovered[row + x] || !IsRoofSupportWallOrDoor(x, z)) continue;
+                    bool adjInteriorRoof = false;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = x + DirOff[d].x, nz = z + DirOff[d].z;
+                        if (nx < 0 || nz < 0 || nx >= sx || nz >= sz) continue;
+                        if (HasDirectBuildingRoof(nx, nz) && !IsRoofSupportWallOrDoor(nx, nz))
+                        {
+                            adjInteriorRoof = true;
+                            break;
+                        }
+                    }
+                    if (!adjInteriorRoof)
+                    {
+                        // 转角墙格：斜对角为带房顶室内格且两侧正交邻居均为围护墙
+                        for (int dz = -1; dz <= 1 && !adjInteriorRoof; dz += 2)
+                        {
+                            for (int dx = -1; dx <= 1; dx += 2)
+                            {
+                                int nx = x + dx, nz = z + dz;
+                                if (nx < 0 || nz < 0 || nx >= sx || nz >= sz) continue;
+                                if (HasDirectBuildingRoof(nx, nz) && !IsRoofSupportWallOrDoor(nx, nz)
+                                    && IsRoofSupportWallOrDoor(nx, z) && IsRoofSupportWallOrDoor(x, nz))
+                                {
+                                    adjInteriorRoof = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (adjInteriorRoof) roofCovered[row + x] = true;
+                }
+            }
+
+            // 2) 检测所有满足 >= 3x3 连续正方形的同类人工地板格（严格排除自然地形）
+            var floor3x3 = new TerrainDef[total];
+            var tGrid = map.terrainGrid;
+            for (int z = 0; z <= sz - 3; z++)
+            {
+                for (int x = 0; x <= sx - 3; x++)
+                {
+                    bool touchesRoof = false;
+                    for (int dz = 0; dz < 3 && !touchesRoof; dz++)
+                        for (int dx = 0; dx < 3; dx++)
+                            if (roofCovered[(z + dz) * sx + (x + dx)]) { touchesRoof = true; break; }
+                    if (!touchesRoof) continue;
+
+                    TerrainDef td = tGrid.TerrainAt(new IntVec3(x, 0, z));
+                    if (!IsArtificialFloor(td)) continue;
+
+                    bool allSame = true;
+                    for (int dz = 0; dz < 3 && allSame; dz++)
+                    {
+                        for (int dx = 0; dx < 3; dx++)
+                        {
+                            if (tGrid.TerrainAt(new IntVec3(x + dx, 0, z + dz)) != td)
+                            {
+                                allSame = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!allSame) continue;
+
+                    for (int dz = 0; dz < 3; dz++)
+                        for (int dx = 0; dx < 3; dx++)
+                            floor3x3[(z + dz) * sx + (x + dx)] = td;
+                }
+            }
+
+            // 3) 按连通房顶区域聚合并采样样式：有 3x3 人工地板则采样该地板，否则采样该建筑的墙体样式
+            var visited = new bool[total];
+            var queue = new List<int>(128);
+            var floorCounts = new Dictionary<TerrainDef, int>();
+            var atlas = WallAtlasTex();
+
+            for (int start = 0; start < total; start++)
+            {
+                if (!roofCovered[start] || visited[start]) continue;
+                queue.Clear();
+                floorCounts.Clear();
+                visited[start] = true;
+                queue.Add(start);
+
+                Thing bestWall = null;
+                Material bestWallSrcMat = null;
+
+                int head = 0;
+                while (head < queue.Count)
+                {
+                    int cur = queue[head++];
+                    int cx = cur % sx, cz = cur / sx;
+
+                    var f = floor3x3[cur];
+                    if (f != null)
+                    {
+                        floorCounts.TryGetValue(f, out int cnt);
+                        floorCounts[f] = cnt + 1;
+                    }
+
+                    // 采集区域内及边界上的墙体样本
+                    var ed = map.edificeGrid[cur];
+                    Graphic edG = null;
+                    try { edG = ed?.Graphic; } catch { }
+                    if (ed != null && bestWall == null && WallModels3D.IsFullWall(WallModels3D.ArchOf(ed)) && edG != null)
+                    {
+                        Material m = null;
+                        try { m = edG.MatAt(ed.Rotation, ed); } catch { }
+                        if (m == null || m.NullOrBad()) { try { m = edG.MatSingle; } catch { } }
+                        if (m != null && !m.NullOrBad()) { bestWall = ed; bestWallSrcMat = m; }
+                    }
+
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = cx + DirOff[d].x, nz = cz + DirOff[d].z;
+                        if (nx < 0 || nz < 0 || nx >= sx || nz >= sz) continue;
+                        int nIdx = nz * sx + nx;
+                        if (roofCovered[nIdx] && !visited[nIdx])
+                        {
+                            visited[nIdx] = true;
+                            queue.Add(nIdx);
+                        }
+                        else if (bestWall == null)
+                        {
+                            var ned = map.edificeGrid[nIdx];
+                            Graphic nedG = null;
+                            try { nedG = ned?.Graphic; } catch { }
+                            if (ned != null && WallModels3D.IsFullWall(WallModels3D.ArchOf(ned)) && nedG != null)
+                            {
+                                Material m = null;
+                                try { m = nedG.MatAt(ned.Rotation, ned); } catch { }
+                                if (m == null || m.NullOrBad()) { try { m = nedG.MatSingle; } catch { } }
+                                if (m != null && !m.NullOrBad()) { bestWall = ned; bestWallSrcMat = m; }
+                            }
+                        }
+                    }
+                }
+
+                RoofStyle chosenStyle = null;
+                int bestFloorCount = 0;
+                foreach (var kv in floorCounts)
+                {
+                    var style = RoofFloorStyle(kv.Key);
+                    if (kv.Value > bestFloorCount && style != null)
+                    {
+                        bestFloorCount = kv.Value;
+                        chosenStyle = style;
+                    }
+                }
+
+                if (chosenStyle == null && atlas != null)
+                {
+                    chosenStyle = bestWall != null
+                        ? RoofWallStyle(bestWall, bestWallSrcMat, atlas)
+                        : RoofWallStyle(null, null, atlas);
+                }
+                if (chosenStyle == null)
+                    chosenStyle = RoofFallbackStyle();
+
+                for (int i = 0; i < queue.Count; i++)
+                    roofStyles[queue[i]] = chosenStyle;
+            }
+        }
+
+        private void BakeChunkRoofs(CellRect chunkRect, Dictionary<Material, MeshBuilderX> builders,
+            ref MeshBuilderX hull, float outline)
+        {
+            if (roofCovered == null) return;
+            int sx = map.Size.x;
+            float y0 = baseY + Fps3DState.WallHeight;
+            float y1 = y0 + RoofThickness;
+            bool shell = Fps3DState.DrawOutlines;
+            if (shell) hull = hull ?? new MeshBuilderX();
+
+            // 水平面按 RoofStyle 做贪心矩形合并：大房顶不再为每格重复写四个顶点，
+            // 只保留边界檐口的逐边发射。矩形只在 chunk 内合并，跨 chunk 仍无缝共面。
+            int rw = chunkRect.maxX - chunkRect.minX + 1;
+            int rz = chunkRect.maxZ - chunkRect.minZ + 1;
+            var topDone = new bool[rw * rz];
+            var bottomDone = new bool[rw * rz];
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool bottom = pass == 1;
+                var done = bottom ? bottomDone : topDone;
+                for (int z = chunkRect.minZ; z <= chunkRect.maxZ; z++)
+                {
+                    for (int x = chunkRect.minX; x <= chunkRect.maxX; x++)
+                    {
+                        int local = (z - chunkRect.minZ) * rw + x - chunkRect.minX;
+                        if (done[local]) continue;
+                        int idx = z * sx + x;
+                        if (!roofCovered[idx]) { done[local] = true; continue; }
+                        if (bottom && HasFullHeightWallOrHeaderAt(new IntVec3(x, 0, z)))
+                        {
+                            done[local] = true;
+                            continue;
+                        }
+                        var style = roofStyles[idx];
+                        if (style == null || style.material == null)
+                        {
+                            done[local] = true;
+                            continue;
+                        }
+
+                        int xEnd = x;
+                        while (xEnd + 1 <= chunkRect.maxX && SameRoofPlane(style, xEnd + 1, z, bottom))
+                            xEnd++;
+                        int zEnd = z;
+                        while (zEnd + 1 <= chunkRect.maxZ)
+                        {
+                            bool rowSame = true;
+                            for (int xx = x; xx <= xEnd; xx++)
+                                if (!SameRoofPlane(style, xx, zEnd + 1, bottom)) { rowSame = false; break; }
+                            if (!rowSame) break;
+                            zEnd++;
+                        }
+
+                        for (int zz = z; zz <= zEnd; zz++)
+                            for (int xx = x; xx <= xEnd; xx++)
+                                done[(zz - chunkRect.minZ) * rw + xx - chunkRect.minX] = true;
+
+                        var b = BuilderFor(builders, style.material);
+                        if (bottom)
+                            b.AppendWallBottomRect(x, z, xEnd + 1f, zEnd + 1f, y0, style.topUv, style.repeatTop);
+                        else
+                            b.AppendWallTopRect(x, z, xEnd + 1f, zEnd + 1f, y1, style.topUv, style.repeatTop);
+                        if (shell)
+                        {
+                            if (bottom) hull.AppendWallBottomHullRect(x, z, xEnd + 1f, zEnd + 1f, y0, outline);
+                            else hull.AppendWallTopHullRect(x, z, xEnd + 1f, zEnd + 1f, y1, outline);
+                        }
+                    }
+                }
+            }
+
+            // 房顶外沿檐口立面：仅边界边发射，形成完整围合并消除内部重叠。
+            for (int z = chunkRect.minZ; z <= chunkRect.maxZ; z++)
+            {
+                for (int x = chunkRect.minX; x <= chunkRect.maxX; x++)
+                {
+                    int idx = z * sx + x;
+                    if (!roofCovered[idx]) continue;
+                    var style = roofStyles[idx];
+                    if (style == null || style.material == null) continue;
+                    var b = BuilderFor(builders, style.material);
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (!RoofMeshTopology3D.IsBoundaryEdge(roofCovered, sx, map.Size.z, x, z, d)) continue;
+                        b.AppendWallFace(d, x, z, 0f, 1f, y0, y1, style.sideUv, y0, RoofThickness);
+                        if (shell) hull.AppendWallFaceHull(d, x, z, 0f, 1f, y0, y1, y0, outline);
+                    }
+                }
+            }
+        }
+
+        private bool SameRoofPlane(RoofStyle style, int x, int z, bool bottom)
+        {
+            if (x < 0 || z < 0 || x >= map.Size.x || z >= map.Size.z) return false;
+            int idx = z * map.Size.x + x;
+            if (!roofCovered[idx] || roofStyles[idx] != style) return false;
+            return !bottom || !HasFullHeightWallOrHeaderAt(new IntVec3(x, 0, z));
+        }
+
         // 该格是否被满格建筑占据（墙/天然岩）。图外视为空气：
         // 图边墙的外侧面在流式邻图上看得见，不能剔。
         private bool SolidAt(IntVec3 c)
         {
             if (!c.InBounds(map)) return false;
             var ed = c.GetEdifice(map);
+            if (ed is Frame) return false;
             if (MountainField3D.IsRock(ed))
             {
                 if (mountain != null && mountain.Ready)
@@ -903,7 +1863,7 @@ namespace RimFirstPerson3D
             foreach (var kv in chunks)
             {
                 var chunk = kv.Value;
-                if (chunk.meshes.Count == 0 && chunk.hullMesh == null) continue;
+                if (chunk.meshes.Count == 0 && chunk.hullMesh == null && chunk.blueprintHullMesh == null) continue;
                 // 屏幕外 / 超远 chunk 直接跳过提交（相机视锥缓存在 Frustum3D 每帧刷新）
                 if (chunk.boundsValid)
                 {
@@ -922,6 +1882,11 @@ namespace RimFirstPerson3D
                     Graphics.DrawMesh(chunk.hullMesh, m, Util3D.OutlineMat, 0);
                     PerfCounters.OutlineMeshesDrawn++;
                 }
+                if (chunk.blueprintHullMesh != null && Fps3DState.DrawOutlines)
+                {
+                    Graphics.DrawMesh(chunk.blueprintHullMesh, m, Util3D.BlueprintOutlineMat, 0);
+                    PerfCounters.OutlineMeshesDrawn++;
+                }
             }
             DrawFurniture();
             DrawWreckage();
@@ -938,9 +1903,10 @@ namespace RimFirstPerson3D
             {
                 var t = all[i];
                 if (t == null || !t.Spawned || t.def == null) continue;
-                if (t.def.category != ThingCategory.Building) continue;
+                bool isConstruct = t is Blueprint || t is Frame;
+                if (t.def.category != ThingCategory.Building && !isConstruct) continue;
                 if (Furniture3D.Handles(t)) cachedFurniture.Add(t);
-                else if (Wreckage3D.Handles(t)) cachedWreckage.Add(t);
+                else if (!isConstruct && Wreckage3D.Handles(t)) cachedWreckage.Add(t);
             }
         }
 
@@ -997,8 +1963,11 @@ namespace RimFirstPerson3D
         {
             foreach (var mkv in chunk.meshes) Util3D.SafeDestroy(mkv.Value);
             chunk.meshes.Clear();
+            chunk.surfaces.Clear();
             Util3D.SafeDestroy(chunk.hullMesh);
             chunk.hullMesh = null;
+            Util3D.SafeDestroy(chunk.blueprintHullMesh);
+            chunk.blueprintHullMesh = null;
         }
 
         private void DisposeMeshes()
@@ -1266,6 +2235,26 @@ namespace RimFirstPerson3D
                     Matrix4x4.identity);
             }
 
+            public void AppendWallTopRect(float x0, float z0, float x1, float z1, float y, Vector4 r, bool repeat)
+            {
+                float u1 = repeat ? x1 - x0 : 1f;
+                float v1 = repeat ? z1 - z0 : 1f;
+                Quad(new Vector3(x0, y, z1), new Vector3(x1, y, z1),
+                    new Vector3(x1, y, z0), new Vector3(x0, y, z0),
+                    RectUv(r, 0f, v1), RectUv(r, u1, v1), RectUv(r, u1, 0f), RectUv(r, 0f, 0f),
+                    Matrix4x4.identity);
+            }
+
+            public void AppendWallBottomRect(float x0, float z0, float x1, float z1, float y, Vector4 r, bool repeat)
+            {
+                float u1 = repeat ? x1 - x0 : 1f;
+                float v1 = repeat ? z1 - z0 : 1f;
+                Quad(new Vector3(x0, y, z0), new Vector3(x1, y, z0),
+                    new Vector3(x1, y, z1), new Vector3(x0, y, z1),
+                    RectUv(r, 0f, 0f), RectUv(r, u1, 0f), RectUv(r, u1, v1), RectUv(r, 0f, v1),
+                    Matrix4x4.identity);
+            }
+
             // 描边壳只包实际发出的那些面：同一块面向外推 inflate、面内四边各扩 inflate
             // 后翻转绕序（从内侧可见），与 AppendSolidCellHull 同一手法。底边不落到地面以下。
             public void AppendWallFaceHull(int dir, float x, float z, float ua, float ub,
@@ -1296,11 +2285,28 @@ namespace RimFirstPerson3D
 
             public void AppendWallBottomHull(float x, float z, float y, float inflate)
             {
+                AppendWallBottomHullRect(x, z, x + 1f, z + 1f, y, inflate);
+            }
+
+            public void AppendWallTopHullRect(float x0, float z0, float x1, float z1, float y, float inflate)
+            {
                 int t0 = tris.Count;
-                Quad(new Vector3(x - inflate, y - inflate, z - inflate),
-                    new Vector3(x + 1f + inflate, y - inflate, z - inflate),
-                    new Vector3(x + 1f + inflate, y - inflate, z + 1f + inflate),
-                    new Vector3(x - inflate, y - inflate, z + 1f + inflate),
+                Quad(new Vector3(x0 - inflate, y + inflate, z1 + inflate),
+                    new Vector3(x1 + inflate, y + inflate, z1 + inflate),
+                    new Vector3(x1 + inflate, y + inflate, z0 - inflate),
+                    new Vector3(x0 - inflate, y + inflate, z0 - inflate),
+                    new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1), new Vector2(0, 1),
+                    Matrix4x4.identity);
+                FlipLast(t0);
+            }
+
+            public void AppendWallBottomHullRect(float x0, float z0, float x1, float z1, float y, float inflate)
+            {
+                int t0 = tris.Count;
+                Quad(new Vector3(x0 - inflate, y - inflate, z0 - inflate),
+                    new Vector3(x1 + inflate, y - inflate, z0 - inflate),
+                    new Vector3(x1 + inflate, y - inflate, z1 + inflate),
+                    new Vector3(x0 - inflate, y - inflate, z1 + inflate),
                     new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1), new Vector2(0, 1),
                     Matrix4x4.identity);
                 FlipLast(t0);
@@ -1332,6 +2338,39 @@ namespace RimFirstPerson3D
                 uvs.Add(uvBL); uvs.Add(uvBR); uvs.Add(uvTR); uvs.Add(uvTL);
                 tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
                 tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+            }
+
+            public Surface ToSurface(Material mat, LightField3D field)
+            {
+                if (verts.Count == 0) return null;
+                var vArr = verts.ToArray();
+                var nArr = normals.ToArray();
+                var cArr = new Color32[vArr.Length];
+                if (field != null)
+                {
+                    for (int i = 0; i < vArr.Length; i++)
+                        cArr[i] = Lighting3D.To32(field.Shade(vArr[i], nArr[i], true));
+                }
+                else
+                {
+                    var white = new Color32(255, 255, 255, 255);
+                    for (int i = 0; i < vArr.Length; i++) cArr[i] = white;
+                }
+                var mesh = new Mesh();
+                mesh.vertices = vArr;
+                mesh.normals = nArr;
+                mesh.SetUVs(0, uvs);
+                mesh.colors32 = cArr;
+                mesh.SetTriangles(tris, 0);
+                mesh.RecalculateBounds();
+                return new Surface
+                {
+                    mat = mat,
+                    mesh = mesh,
+                    verts = vArr,
+                    normals = nArr,
+                    colors = cArr
+                };
             }
 
             /// <summary>

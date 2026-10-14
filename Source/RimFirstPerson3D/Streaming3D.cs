@@ -204,11 +204,14 @@ namespace RimFirstPerson3D
         public static bool TryCrossBoundary(Pawn p)
         {
             var st = FirstPerson3DMod.settings;
-            if (p == null || !p.Spawned || p.CarriedBy != null) { if (st != null) st.diagCross = "p-invalid"; return false; }
+            if (p == null || !p.Spawned || p.CarriedBy != null) return false;
             var cur = p.MapHeld;
-            if (cur == null) { if (st != null) st.diagCross = "no-map"; return false; }
-            var o = OffsetOf(cur);
+            if (cur == null) return false;
             var c = p.Position;
+            bool onEdge = c.x <= 0 || c.x >= cur.Size.x - 1 || c.z <= 0 || c.z >= cur.Size.z - 1;
+            if (!onEdge || byId.Count <= 1) return false;
+
+            var o = OffsetOf(cur);
             // 按世界坐标边界精确匹配邻居（兼容不同尺寸地图：
             // 邻图偏移差不一定等于 cur.Size，主图 250 宽 vs 邻图 100 宽）。
             Map target = null;
@@ -282,6 +285,8 @@ namespace RimFirstPerson3D
             return true;
         }
 
+        private static float nextNeighborCheckTime;
+
         // 世界邻图登记：把世界上"已经生成"的邻接地图登记进偏移表，供 TryCrossBoundary
         // 在走到边缘前就能寻到目标。本函数只补登记，不生成新图（不调用 GetOrGenerateMap），
         // 也不写第二套跨边逻辑——落点/传送仍由 TryCrossBoundary 按登记偏移处理。
@@ -296,6 +301,10 @@ namespace RimFirstPerson3D
                 if (!byId.ContainsKey(cur.uniqueID))
                     RegisterPlacement(cur, Vector3.zero);
             }
+            float now = Time.unscaledTime;
+            if (now < nextNeighborCheckTime) return;
+            nextNeighborCheckTime = now + 1.0f;
+
             // 世界格无效（如口袋图）没有邻接 tile，跳过邻图登记。
             if (!cur.Tile.Valid) return;
             var layer = cur.Tile.Layer;

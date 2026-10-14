@@ -24,6 +24,7 @@ namespace RimFirstPerson3D
             public byte[] alphas;
             public Color32[] colors;
             public bool isEdgeFan;
+            public int quadCount;
         }
 
         private class Chunk
@@ -113,8 +114,42 @@ namespace RimFirstPerson3D
                 allDirty = false;
             }
             int budget = Fps3DState.ChunkRebuildBudget;
-            int colorBudget = budget * 4 + 4;
+            int colorBudget = budget * 2 + 2;
+            float colorMs = Fps3DState.ChunkColorBudgetMs;
             int dirtyRemaining = 0;
+            // 第一轮：仅重建与重刷当前相机视锥内的地形 chunk；屏幕外的 colorDirty 留到进入视野时再刷
+            foreach (var kv in chunks)
+            {
+                var ch = kv.Value;
+                if (!ch.dirty && !ch.colorDirty) continue;
+                if (ch.boundsValid)
+                {
+                    var wb = ch.bounds;
+                    wb.center += worldOffset;
+                    if (!Frustum3D.Visible(wb)) continue;
+                }
+                if (ch.dirty)
+                {
+                    if (budget > 0)
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        RebuildChunk(kv.Key, ch);
+                        PerfCounters.LastTerrainBuildMs = (float)sw.Elapsed.TotalMilliseconds;
+                        budget--;
+                    }
+                    else dirtyRemaining++;
+                }
+                else if (ch.colorDirty && colorBudget > 0 && colorMs > 0f)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    RecolorChunk(ch);
+                    float elapsed = (float)sw.Elapsed.TotalMilliseconds;
+                    PerfCounters.LastTerrainBuildMs = elapsed;
+                    colorMs -= elapsed;
+                    colorBudget--;
+                }
+            }
+            // 第二轮：仅利用剩余预算后台推进视锥外的几何脏块（dirty），不刷视锥外的 colorDirty
             foreach (var kv in chunks)
             {
                 var ch = kv.Value;
@@ -128,16 +163,6 @@ namespace RimFirstPerson3D
                         budget--;
                     }
                     else dirtyRemaining++;
-                }
-                else if (ch.colorDirty)
-                {
-                    if (colorBudget > 0)
-                    {
-                        var sw = System.Diagnostics.Stopwatch.StartNew();
-                        RecolorChunk(ch);
-                        PerfCounters.LastTerrainBuildMs = (float)sw.Elapsed.TotalMilliseconds;
-                        colorBudget--;
-                    }
                 }
             }
             return dirtyRemaining;
@@ -426,11 +451,12 @@ namespace RimFirstPerson3D
             Material src = null;
             try { src = td.DrawMatSingle; } catch { }
             Texture tex = null;
-            if (src != null) tex = src.mainTexture;
+            if (src != null && !src.NullOrBad()) tex = src.mainTexture;
+            if (tex is Texture2D tBad && tBad.NullOrBad()) tex = null;
             if (tex == null)
             {
                 var t2 = ContentFinder<Texture2D>.Get(td.texturePath, reportFailure: false);
-                tex = t2;
+                if (t2 != null && !t2.NullOrBad()) tex = t2;
             }
             if (tex == null) return null;
             if (tex is Texture2D tw && tw.wrapMode != TextureWrapMode.Repeat)
@@ -449,11 +475,12 @@ namespace RimFirstPerson3D
             Material src = null;
             try { src = td.DrawMatSingle; } catch { }
             Texture tex = null;
-            if (src != null) tex = src.mainTexture;
+            if (src != null && !src.NullOrBad()) tex = src.mainTexture;
+            if (tex is Texture2D tBad && tBad.NullOrBad()) tex = null;
             if (tex == null)
             {
                 var t2 = ContentFinder<Texture2D>.Get(td.texturePath, reportFailure: false);
-                tex = t2;
+                if (t2 != null && !t2.NullOrBad()) tex = t2;
             }
             if (tex == null) return null;
             if (tex is Texture2D tw && tw.wrapMode != TextureWrapMode.Repeat)
@@ -519,7 +546,7 @@ namespace RimFirstPerson3D
                     var drawMat = surf.isEdgeFan && lf != null ? Lighting3D.MatFor(surf.mat, edgeLit) : surf.mat;
                     Graphics.DrawMesh(surf.mesh, m, drawMat, 0);
                     PerfCounters.TerrainMeshesDrawn++;
-                    PerfCounters.TerrainQuads += surf.mesh.vertexCount / 4;
+                    PerfCounters.TerrainQuads += surf.quadCount;
                 }
             }
         }
@@ -640,7 +667,8 @@ namespace RimFirstPerson3D
                     normals = nArr,
                     alphas = aArr,
                     colors = cArr,
-                    isEdgeFan = isEdgeFan
+                    isEdgeFan = isEdgeFan,
+                    quadCount = vArr.Length / 4
                 };
             }
         }

@@ -103,8 +103,8 @@ namespace RimFirstPerson3D
                     if (g == null) continue;
                     Material m = null;
                     try { m = g.MatAt(t.Rotation, t); } catch { }
-                    if (m == null || m.mainTexture == null) { try { m = g.MatSingle; } catch { } }
-                    if (m == null || m.mainTexture == null) continue;
+                    if (m == null || m.mainTexture == null || m.NullOrBad()) { try { m = g.MatSingle; } catch { } }
+                    if (m == null || m.mainTexture == null || m.NullOrBad()) continue;
                     var dp = t.DrawPos;
                     var e = new Entry
                     {

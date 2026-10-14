@@ -677,17 +677,32 @@ namespace RimFirstPerson3D
             output.Add(new MountainTriangle3D(pBotA, pTopB, pTopA, norm, norm, norm, false));
         }
 
+        private static float SampleForNormal(MountainShape3D shape, int nx, int nz, int ox, int oz, float hc)
+        {
+            float hn = shape.SampleHeight(nx, nz);
+            if (hn > 0.01f) return hn;
+            float ho = shape.SampleHeight(ox, oz);
+            if (ho > 0.01f)
+            {
+                float extrap = 2f * hc - ho;
+                return extrap > 0.5f ? extrap : hc;
+            }
+            return hc;
+        }
+
         private static MountainPoint3D ComputeVertexNormal(MountainShape3D shape, int sx, int sz)
         {
-            // 3x3 Sobel-weighted central difference for smooth isotropic normals without grid-axis crease artifacts
-            float h00 = shape.SampleHeight(sx - 1, sz - 1);
-            float h10 = shape.SampleHeight(sx, sz - 1);
-            float h20 = shape.SampleHeight(sx + 1, sz - 1);
-            float h01 = shape.SampleHeight(sx - 1, sz);
-            float h21 = shape.SampleHeight(sx + 1, sz);
-            float h02 = shape.SampleHeight(sx - 1, sz + 1);
-            float h12 = shape.SampleHeight(sx, sz + 1);
-            float h22 = shape.SampleHeight(sx + 1, sz + 1);
+            float hc = shape.SampleHeight(sx, sz);
+            // 3x3 Sobel-weighted central difference with boundary extrapolation so vertical cliff drops to 0m
+            // outside the mountain footprint do not bend the top slope normals horizontally.
+            float h00 = SampleForNormal(shape, sx - 1, sz - 1, sx + 1, sz + 1, hc);
+            float h10 = SampleForNormal(shape, sx, sz - 1, sx, sz + 1, hc);
+            float h20 = SampleForNormal(shape, sx + 1, sz - 1, sx - 1, sz + 1, hc);
+            float h01 = SampleForNormal(shape, sx - 1, sz, sx + 1, sz, hc);
+            float h21 = SampleForNormal(shape, sx + 1, sz, sx - 1, sz, hc);
+            float h02 = SampleForNormal(shape, sx - 1, sz + 1, sx + 1, sz - 1, hc);
+            float h12 = SampleForNormal(shape, sx, sz + 1, sx, sz - 1, hc);
+            float h22 = SampleForNormal(shape, sx + 1, sz + 1, sx - 1, sz - 1, hc);
 
             // Each sample step is 0.5m, so 2 steps = 1.0m. Sobel weights (1, 2, 1) sum to 4 over a 1.0m span => divide by 4.0m.
             float dhdx = ((h20 - h00) + 2f * (h21 - h01) + (h22 - h02)) * 0.25f;

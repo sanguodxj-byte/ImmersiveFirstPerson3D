@@ -18,7 +18,7 @@ namespace RimFirstPerson3D
     // 这样四个立面各有其真实像素，而不是把一张图糊到六面上。
     //
     // 【取样区】坐标在 scripts/furn_atlas.py 的 SPEC 里逐图像素级目视标定，
-    // 打包成 1.6/Textures/FPS3D/FurnitureAtlas.png，UV 常量表由 FurnitureUVGen.cs
+    // 打包成 Textures\FPS3D\FurnitureAtlas.png，UV 常量表由 FurnitureUVGen.cs
     // 自动生成。取样的像素**全部来自原版贴图**，只有黑色笔画被邻域补绘替换
     // （描边由反绕外壳网格负责，不进材质）。校验：scripts/furn_uv_check.py。
     //
@@ -92,6 +92,18 @@ namespace RimFirstPerson3D
             new Recipe(new[] { "tablesculpting" }, Arch.ProductionBench, "tablesculpting"),
             new Recipe(new[] { "fueledsmithy" }, Arch.ProductionBench, "tablesmithingfueled"),
             new Recipe(new[] { "electricsmithy" }, Arch.ProductionBench, "tablesmithingelectric"),
+            new Recipe(new[] { "electricstove" }, Arch.ProductionBench, "tablestoveelectric"),
+            new Recipe(new[] { "fueledstove" }, Arch.ProductionBench, "tablestovefueled"),
+            new Recipe(new[] { "handtailoringbench" }, Arch.ProductionBench, "tabletailorhand"),
+            new Recipe(new[] { "electrictailoringbench" }, Arch.ProductionBench, "tabletailorelectric"),
+            new Recipe(new[] { "tablestonecutter" }, Arch.ProductionBench, "tablestonecutter"),
+            new Recipe(new[] { "tablemachining" }, Arch.ProductionBench, "tablemachining"),
+            new Recipe(new[] { "druglab" }, Arch.ProductionBench, "tabledruglab"),
+            new Recipe(new[] { "brewery" }, Arch.ProductionBench, "tablebrewery"),
+            new Recipe(new[] { "electricsmelter" }, Arch.ProductionBench, "electricsmelter"),
+            new Recipe(new[] { "simpleresearchbench" }, Arch.ProductionBench, "researchbenchsimple"),
+            new Recipe(new[] { "hitechresearchbench" }, Arch.ProductionBench, "researchbenchhitech"),
+            new Recipe(new[] { "fabricationbench" }, Arch.ProductionBench, "fabricationbench"),
         };
 
         private class Built
@@ -176,15 +188,36 @@ namespace RimFirstPerson3D
             return false;
         }
 
-        /// <summary>该建筑是否由本层绘制（BuildingLayer3D 据此跳过立板回退）。</summary>
+        public static bool ResolveBuildDef(Thing t, out ThingDef buildDef, out bool isConstructible)
+        {
+            buildDef = null;
+            isConstructible = false;
+            if (t == null || t.def == null) return false;
+            if (t is Blueprint bp)
+            {
+                buildDef = bp.EntityToBuild() as ThingDef;
+                isConstructible = true;
+                return buildDef != null;
+            }
+            if (t is Frame fr)
+            {
+                buildDef = fr.BuildDef;
+                isConstructible = true;
+                return buildDef != null;
+            }
+            buildDef = t.def;
+            return true;
+        }
+
+        /// <summary>该建筑（或其蓝图/建造框架）是否由本层绘制（BuildingLayer3D 据此跳过立板回退）。</summary>
         public static bool Handles(Thing t)
         {
-            if (!Enabled || t == null || t.def == null) return false;
-            if (t.def.category != ThingCategory.Building) return false;
-            if (t.def.Fillage == FillCategory.Full) return false;
-            if (t is Building_Door) return false;
+            if (!Enabled || !ResolveBuildDef(t, out var d, out _)) return false;
+            if (d.category != ThingCategory.Building) return false;
+            if (d.Fillage == FillCategory.Full) return false;
+            if (t is Building_Door || (d.thingClass != null && typeof(Building_Door).IsAssignableFrom(d.thingClass))) return false;
             Arch a; string k;
-            return RecipeOf(t.def, out a, out k);
+            return RecipeOf(d, out a, out k);
         }
 
         // ---- 取样区 ----
@@ -197,22 +230,30 @@ namespace RimFirstPerson3D
         {
             "armchair.east.arml",
             "armchair.east.back",
+            "armchair.east.front",
             "armchair.east.top",
             "armchair.east.wood",
             "armchair.north.arml",
             "armchair.north.armr",
             "armchair.north.back",
+            "armchair.north.front",
             "armchair.north.top",
             "armchair.north.wood",
+            "armchair.south.arml",
+            "armchair.south.armr",
             "armchair.south.back",
             "armchair.south.front",
             "armchair.south.top",
             "armchair.south.wood",
             "bed.east.front",
+            "bed.east.pillow",
             "bed.east.top",
+            "bed.east.wood",
             "bed.north.front",
+            "bed.north.pillow",
             "bed.north.top",
             "bed.south.front",
+            "bed.south.pillow",
             "bed.south.top",
             "bed.south.wood",
             "bedroll.east.front",
@@ -246,6 +287,7 @@ namespace RimFirstPerson3D
             "column.south.front",
             "column.south.top",
             "column.south.wood",
+            "couch.east.arml",
             "couch.east.back",
             "couch.east.front",
             "couch.east.top",
@@ -289,12 +331,37 @@ namespace RimFirstPerson3D
             "dresser.south.front",
             "dresser.south.top",
             "dresser.south.wood",
+            "electricsmelter.east.front",
+            "electricsmelter.east.hood",
+            "electricsmelter.east.hood_s",
+            "electricsmelter.east.top",
+            "electricsmelter.north.front",
+            "electricsmelter.north.hood",
+            "electricsmelter.north.hood_s",
+            "electricsmelter.north.top",
+            "electricsmelter.south.front",
+            "electricsmelter.south.hood",
+            "electricsmelter.south.hood_s",
+            "electricsmelter.south.top",
+            "endtable.east.front",
             "endtable.east.top",
             "endtable.north.front",
             "endtable.north.top",
             "endtable.south.front",
             "endtable.south.top",
             "endtable.south.wood",
+            "fabricationbench.east.body",
+            "fabricationbench.east.front",
+            "fabricationbench.east.mach",
+            "fabricationbench.east.top",
+            "fabricationbench.north.body",
+            "fabricationbench.north.front",
+            "fabricationbench.north.mach",
+            "fabricationbench.north.top",
+            "fabricationbench.south.body",
+            "fabricationbench.south.front",
+            "fabricationbench.south.mach",
+            "fabricationbench.south.top",
             "floodlight.south.basel",
             "floodlight.south.baser",
             "floodlight.south.pole",
@@ -320,6 +387,24 @@ namespace RimFirstPerson3D
             "plantpot.south.front",
             "plantpot.south.top",
             "plantpot.south.wood",
+            "researchbenchhitech.east.flask",
+            "researchbenchhitech.east.front",
+            "researchbenchhitech.east.top",
+            "researchbenchhitech.east.tray",
+            "researchbenchhitech.north.flask",
+            "researchbenchhitech.north.front",
+            "researchbenchhitech.north.top",
+            "researchbenchhitech.north.tray",
+            "researchbenchhitech.south.flask",
+            "researchbenchhitech.south.front",
+            "researchbenchhitech.south.top",
+            "researchbenchhitech.south.tray",
+            "researchbenchsimple.east.front",
+            "researchbenchsimple.east.top",
+            "researchbenchsimple.north.front",
+            "researchbenchsimple.north.top",
+            "researchbenchsimple.south.front",
+            "researchbenchsimple.south.top",
             "royalbed.east.front",
             "royalbed.east.pillow",
             "royalbed.east.top",
@@ -388,24 +473,156 @@ namespace RimFirstPerson3D
             "table3x3.north.front",
             "table3x3.north.top",
             "table3x3.north.wood",
+            "tablebrewery.east.front",
+            "tablebrewery.east.top",
+            "tablebrewery.east.vat",
+            "tablebrewery.east.vat_s",
+            "tablebrewery.north.front",
+            "tablebrewery.north.top",
+            "tablebrewery.north.vat",
+            "tablebrewery.north.vat_s",
+            "tablebrewery.south.front",
+            "tablebrewery.south.top",
+            "tablebrewery.south.vat",
+            "tablebrewery.south.vat_s",
+            "tablebutcher.east.front",
+            "tablebutcher.east.top",
+            "tablebutcher.north.front",
+            "tablebutcher.north.top",
+            "tablebutcher.south.front",
+            "tablebutcher.south.top",
+            "tabledruglab.east.blu",
+            "tabledruglab.east.col",
+            "tabledruglab.east.front",
+            "tabledruglab.east.grn",
+            "tabledruglab.east.pad",
+            "tabledruglab.east.top",
+            "tabledruglab.east.vat",
+            "tabledruglab.north.blu",
+            "tabledruglab.north.col",
+            "tabledruglab.north.front",
+            "tabledruglab.north.grn",
+            "tabledruglab.north.pad",
+            "tabledruglab.north.top",
+            "tabledruglab.north.vat",
+            "tabledruglab.south.blu",
+            "tabledruglab.south.col",
+            "tabledruglab.south.front",
+            "tabledruglab.south.grn",
+            "tabledruglab.south.pad",
+            "tabledruglab.south.top",
+            "tabledruglab.south.vat",
+            "tablemachining.east.body",
+            "tablemachining.east.front",
+            "tablemachining.east.pad",
+            "tablemachining.east.top",
+            "tablemachining.north.body",
+            "tablemachining.north.front",
+            "tablemachining.north.pad",
+            "tablemachining.north.top",
+            "tablemachining.south.body",
+            "tablemachining.south.front",
+            "tablemachining.south.pad",
+            "tablemachining.south.top",
+            "tablesculpting.east.front",
+            "tablesculpting.east.stone",
+            "tablesculpting.east.stone_s",
+            "tablesculpting.east.top",
+            "tablesculpting.north.front",
+            "tablesculpting.north.stone",
+            "tablesculpting.north.stone_s",
+            "tablesculpting.north.top",
+            "tablesculpting.south.front",
+            "tablesculpting.south.stone",
+            "tablesculpting.south.stone_s",
+            "tablesculpting.south.top",
+            "tablesmithingelectric.east.box_front",
+            "tablesmithingelectric.east.box_top",
+            "tablesmithingelectric.east.front",
+            "tablesmithingelectric.east.hood",
+            "tablesmithingelectric.east.top",
+            "tablesmithingelectric.north.box_front",
+            "tablesmithingelectric.north.box_top",
+            "tablesmithingelectric.north.front",
+            "tablesmithingelectric.north.hood",
+            "tablesmithingelectric.north.top",
+            "tablesmithingelectric.south.box_front",
+            "tablesmithingelectric.south.box_top",
+            "tablesmithingelectric.south.front",
+            "tablesmithingelectric.south.hood",
+            "tablesmithingelectric.south.top",
+            "tablesmithingfueled.east.box_front",
+            "tablesmithingfueled.east.box_top",
+            "tablesmithingfueled.east.front",
+            "tablesmithingfueled.east.hood",
+            "tablesmithingfueled.east.top",
+            "tablesmithingfueled.north.box_front",
+            "tablesmithingfueled.north.box_top",
+            "tablesmithingfueled.north.front",
+            "tablesmithingfueled.north.hood",
+            "tablesmithingfueled.north.top",
+            "tablesmithingfueled.south.box_front",
+            "tablesmithingfueled.south.box_top",
+            "tablesmithingfueled.south.front",
+            "tablesmithingfueled.south.hood",
+            "tablesmithingfueled.south.top",
+            "tablestonecutter.east.disc",
+            "tablestonecutter.east.front",
+            "tablestonecutter.east.top",
+            "tablestonecutter.north.disc",
+            "tablestonecutter.north.front",
+            "tablestonecutter.north.top",
+            "tablestonecutter.south.disc",
+            "tablestonecutter.south.front",
+            "tablestonecutter.south.top",
+            "tablestoveelectric.east.box_front",
+            "tablestoveelectric.east.box_top",
+            "tablestoveelectric.east.front",
+            "tablestoveelectric.east.top",
+            "tablestoveelectric.north.box_front",
+            "tablestoveelectric.north.box_top",
+            "tablestoveelectric.north.front",
+            "tablestoveelectric.north.top",
+            "tablestoveelectric.south.box_front",
+            "tablestoveelectric.south.box_top",
+            "tablestoveelectric.south.front",
+            "tablestoveelectric.south.top",
+            "tablestovefueled.east.box_front",
+            "tablestovefueled.east.box_top",
+            "tablestovefueled.east.front",
+            "tablestovefueled.east.top",
+            "tablestovefueled.north.box_front",
+            "tablestovefueled.north.box_top",
+            "tablestovefueled.north.front",
+            "tablestovefueled.north.top",
+            "tablestovefueled.south.box_front",
+            "tablestovefueled.south.box_top",
+            "tablestovefueled.south.front",
+            "tablestovefueled.south.top",
+            "tabletailorelectric.east.front",
+            "tabletailorelectric.east.mach",
+            "tabletailorelectric.east.mach_s",
+            "tabletailorelectric.east.top",
+            "tabletailorelectric.north.front",
+            "tabletailorelectric.north.mach",
+            "tabletailorelectric.north.mach_s",
+            "tabletailorelectric.north.top",
+            "tabletailorelectric.south.front",
+            "tabletailorelectric.south.mach",
+            "tabletailorelectric.south.mach_s",
+            "tabletailorelectric.south.top",
+            "tabletailorhand.east.front",
+            "tabletailorhand.east.top",
+            "tabletailorhand.north.front",
+            "tabletailorhand.north.top",
+            "tabletailorhand.south.front",
+            "tabletailorhand.south.top",
             "throne.south.arml",
             "throne.south.armr",
             "throne.south.back",
             "throne.south.front",
             "throne.south.top",
             "throne.south.wood",
-            "tablebutcher.east.device", "tablebutcher.east.front", "tablebutcher.east.top", "tablebutcher.east.wood",
-            "tablebutcher.north.device", "tablebutcher.north.front", "tablebutcher.north.top", "tablebutcher.north.wood",
-            "tablebutcher.south.device", "tablebutcher.south.front", "tablebutcher.south.top", "tablebutcher.south.wood",
-            "tablesculpting.east.device", "tablesculpting.east.front", "tablesculpting.east.top", "tablesculpting.east.wood",
-            "tablesculpting.north.device", "tablesculpting.north.front", "tablesculpting.north.top", "tablesculpting.north.wood",
-            "tablesculpting.south.device", "tablesculpting.south.front", "tablesculpting.south.top", "tablesculpting.south.wood",
-            "tablesmithingfueled.east.device", "tablesmithingfueled.east.front", "tablesmithingfueled.east.top", "tablesmithingfueled.east.wood",
-            "tablesmithingfueled.north.device", "tablesmithingfueled.north.front", "tablesmithingfueled.north.top", "tablesmithingfueled.north.wood",
-            "tablesmithingfueled.south.device", "tablesmithingfueled.south.front", "tablesmithingfueled.south.top", "tablesmithingfueled.south.wood",
-            "tablesmithingelectric.east.device", "tablesmithingelectric.east.front", "tablesmithingelectric.east.top", "tablesmithingelectric.east.wood",
-            "tablesmithingelectric.north.device", "tablesmithingelectric.north.front", "tablesmithingelectric.north.top", "tablesmithingelectric.north.wood",
-            "tablesmithingelectric.south.device", "tablesmithingelectric.south.front", "tablesmithingelectric.south.top", "tablesmithingelectric.south.wood",
         };
 
         private static Vector4 Reg(string key)
@@ -444,35 +661,45 @@ namespace RimFirstPerson3D
             return Vector4.zero;
         }
 
+        private static Vector4[] Side4ByRot(string arch, Rot4 rot, string sr)
+        {
+            if (rot == Rot4.South)
+                return new[] { Region(arch, "south", sr), Region(arch, "north", sr), Region(arch, "east", sr), Region(arch, "east", sr) };
+            if (rot == Rot4.North)
+                return new[] { Region(arch, "north", sr), Region(arch, "south", sr), Region(arch, "east", sr), Region(arch, "east", sr) };
+            if (rot == Rot4.East)
+                return new[] { Region(arch, "east", sr), Region(arch, "east", sr), Region(arch, "south", sr), Region(arch, "north", sr) };
+            return new[] { Region(arch, "east", sr), Region(arch, "east", sr), Region(arch, "north", sr), Region(arch, "south", sr) };
+        }
+
         /// <summary>
         /// 一个部件的取样规格：顶面用当前朝向的俯视段，四个立面按朝向各自配
-        /// 那张图的立面段。dir: 0北(-Z) 1南(+Z) 2东(+X) 3西(-X)。
+        /// 那张图的立面段。dir: 0南(-Z) 1北(+Z) 2东(+X) 3西(-X)。
         /// </summary>
         private static UvSpec FaceUv(string arch, Rot4 rot, Vector2 xz, string topRegion = "top")
         {
             string v = ViewOf(rot);
-            // 东/西面：当物件本身朝东/西时，它的端面由 south/north 图给出；
-            // 否则由 east 图给出。
-            string cross = (v == "east") ? "south" : "east";
-            var side4 = new Vector4[4];
+            Vector4[] side4;
             if (!HasRegion(arch, "front"))
             {
                 // 有的件整张图就没有立面段（diningchair 的"腿带"是纯线稿，几何也不拿它当面）：
                 // 退到木面，而不是 Vector4.zero —— 那会去采图集原点。
                 var wf = WoodRegion(arch, rot);
-                for (int i = 0; i < 4; i++) side4[i] = wf;
+                side4 = new[] { wf, wf, wf, wf };
             }
             else
             {
-                side4[0] = Region(arch, Opp(v), "front");
-                side4[1] = Region(arch, v, "front");
-                side4[2] = Region(arch, cross, "front");
-                side4[3] = side4[2];
+                side4 = Side4ByRot(arch, rot, "front");
             }
+            var top = Region(arch, v, topRegion);
+            if (rot == Rot4.North && Reg(arch + ".north." + topRegion).w <= Reg(arch + ".north." + topRegion).y)
+                top = new Vector4(top.x, top.w, top.z, top.y);
+            else if (rot == Rot4.West)
+                top = new Vector4(top.z, top.y, top.x, top.w);
             return new UvSpec
             {
-                top = Region(arch, v, topRegion),
-                side = side4[1],
+                top = top,
+                side = side4[0],
                 side4 = side4,
                 sideTileH = 0f,
                 sideTileW = 0f,
@@ -551,6 +778,29 @@ namespace RimFirstPerson3D
         }
 
         /// <summary>
+        /// Production benches are not line-art furniture. Their source sprite
+        /// already contains a complete 3x1 top projection and a separate
+        /// lower apron strip for each view. Keep the four vertical faces on
+        /// their matching source view instead of stretching the current view
+        /// across every face.
+        /// </summary>
+        private static UvSpec ProductionUv(string key, Rot4 rot, Vector2 xz,
+            string topRegion, string sideRegion)
+        {
+            string v = ViewOf(rot);
+            var side4 = Side4ByRot(key, rot, sideRegion);
+            return new UvSpec
+            {
+                top = Region(key, v, topRegion),
+                side = side4[0],
+                side4 = side4,
+                sideTileH = 0f,
+                sideTileW = 0f,
+                modelXZ = xz
+            };
+        }
+
+        /// <summary>
         /// "背对镜头的那一端"在模型长轴上的符号：三视图的镜头在该件朝向的那一侧，
         /// 所以图里远端（枕头/椅背所在）= 反向。
         /// </summary>
@@ -565,18 +815,17 @@ namespace RimFirstPerson3D
         /// 软包板件（靠背/扶手）：大面用该件自己的白面带，两条边棱用木面 ——
         /// 三视图里板件的边棱同样没有对应像素。longZ 决定边棱落在哪个轴。
         /// </summary>
-        private static UvSpec PanelUv(string arch, Rot4 rot, Vector2 xz, string face)
+        private static UvSpec PanelUv(string arch, Rot4 rot, Vector2 xz, string face, bool wideAlongX)
         {
             string v = ViewOf(rot);
-            var t = Region(arch, v, "top");
             var s = Region(arch, v, face);
             var w = WoodRegion(arch, rot);
             var s4 = new[] { s, s, s, s };
-            if (rot == Rot4.North || rot == Rot4.South) { s4[2] = w; s4[3] = w; }
+            if (wideAlongX) { s4[2] = w; s4[3] = w; }
             else { s4[0] = w; s4[1] = w; }
             return new UvSpec
             {
-                top = t,
+                top = w,
                 side = s,
                 side4 = s4,
                 sideTileH = 0f,
@@ -598,21 +847,30 @@ namespace RimFirstPerson3D
         private const float DrapeRodHeight = 1.42f;
         private const float ClothThickness = 0.06f;
         // Production phase 1 dimensions are authored constants, independent of
-        // ThingDef drawSize/occupancy. The four vanilla benches are 2x1 in the
-        // source defs; these values are the 3D presentation contract.
-        private const float ProductionBenchLong = 2.00f;
+        // ThingDef drawSize. These four vanilla benches are 3x1 in their Defs
+        // and their source sprites use the same 3:1 top projection.
+        private const float ProductionBenchLong = 3.00f;
         private const float ProductionBenchShort = 1.00f;
         private const float ProductionBenchBodyHeight = 0.72f;
         private const float ProductionBenchTopThickness = 0.08f;
-        private const float ProductionBenchSupportThickness = 0.10f;
-        private const float ProductionBenchDeviceHeight = 0.22f;
 
         private static void ProductionSize(string key, Rot4 rot, out float w, out float d)
         {
-            bool longZ = rot == Rot4.North || rot == Rot4.South;
-            float a = ProductionBenchLong, b = ProductionBenchShort;
-            w = longZ ? b : a;
-            d = longZ ? a : b;
+            float longSpan = ProductionBenchLong;
+            float shortSpan = ProductionBenchShort;
+            if (key == "researchbenchsimple")
+            {
+                longSpan = 3.00f;
+                shortSpan = 2.00f;
+            }
+            else if (key == "researchbenchhitech" || key == "fabricationbench")
+            {
+                longSpan = 5.00f;
+                shortSpan = 2.00f;
+            }
+            bool longX = rot == Rot4.North || rot == Rot4.South;
+            w = longX ? longSpan : shortSpan;
+            d = longX ? shortSpan : longSpan;
         }
 
         private static bool HasRegion(string key, string region)
@@ -644,14 +902,14 @@ namespace RimFirstPerson3D
             {
                 case Arch.Bed:
                 {
-                    // 床架（顶面埋进床垫，不发顶）+ 床垫 + 床头板 + 床尾板 + 四立柱
+                    // 床架比床垫宽一圈，保留木面顶沿以防露出反绕黑壳 + 床垫 + 床头板 + 床尾板 + 四立柱
                     var frame = new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0f, 0f),
                         size = new Vector3(w - 0.06f, Metrics3D.BedFrameHeight, d - 0.06f),
-                        noTop = true,
-                        uv = 4        // 床架侧板 = 木面（见下）
+                        noTop = false,
+                        uv = 4        // 床架侧板与外露床沿 = 木面（见下）
                     };
                     m.parts.Add(frame);
                     m.parts.Add(new Part
@@ -677,7 +935,7 @@ namespace RimFirstPerson3D
                     if (HasRegion(key, "pillow"))
                     {
                         int pi = uvs.Count;
-                        uvs.Add(UvNames(key, rot, xz, "pillow", "pillow"));
+                        uvs.Add(UvNames(key, rot, Vector2.zero, "pillow", "pillow"));
                         AddPillows(m, pi, w, d, rot, Metrics3D.MattressSurface,
                                    PillowDepth, PillowThickness);
                     }
@@ -699,7 +957,7 @@ namespace RimFirstPerson3D
                     if (HasRegion(key, "pillow"))
                     {
                         int pi = uvs.Count;
-                        uvs.Add(UvNames(key, rot, xz, "pillow", "pillow"));
+                        uvs.Add(UvNames(key, rot, Vector2.zero, "pillow", "pillow"));
                         AddPillows(m, pi, w, d, rot, BedrollThickness, PillowDepth, PillowThickness);
                     }
                     break;
@@ -750,7 +1008,7 @@ namespace RimFirstPerson3D
                     });
                     float bs = BackSign(rot);
                     int bi = uvs.Count;
-                    uvs.Add(PanelUv(key, rot, xz, "back"));
+                    uvs.Add(PanelUv(key, rot, Vector2.zero, "back", longZ));
                     float bh = Metrics3D.ChairBackHeight - (sh - cush);      // 板底插进座盘以下
                     m.parts.Add(longZ
                         ? new Part
@@ -781,7 +1039,7 @@ namespace RimFirstPerson3D
                     float bh = throne ? ThroneBackHeight : Metrics3D.ArmchairBackHeight;
                     float t = Metrics3D.UpholsteryThickness;
                     float bs = BackSign(rot);
-                    uvs.Add(UvNames(key, rot, xz, "top", "front"));    // 1 = 箱体
+                    uvs.Add(FaceUv(key, rot, Vector2.zero));                 // 1 = 箱体（四立面各自取对应朝向 front）
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
@@ -789,7 +1047,7 @@ namespace RimFirstPerson3D
                         size = new Vector3(w * 0.9f, sh, d * 0.86f),
                         uv = 1
                     });
-                    uvs.Add(PanelUv(key, rot, xz, "back"));             // 2 = 靠背
+                    uvs.Add(PanelUv(key, rot, Vector2.zero, "back", longZ)); // 2 = 靠背
                     m.parts.Add(longZ
                         ? new Part
                         {
@@ -803,8 +1061,8 @@ namespace RimFirstPerson3D
                             pos = new Vector3(bs * (w * 0.5f - t * 0.5f), sh, 0f),
                             size = new Vector3(t, bh - sh, d * 0.98f)
                         });
-                    uvs.Add(PanelUv(key, rot, xz, "arml"));             // 3 = 扶手 A
-                    uvs.Add(PanelUv(key, rot, xz, "armr"));             // 4 = 扶手 B
+                    uvs.Add(PanelUv(key, rot, Vector2.zero, "arml", !longZ)); // 3 = 扶手 A
+                    uvs.Add(PanelUv(key, rot, Vector2.zero, "armr", !longZ)); // 4 = 扶手 B
                     // 扶手往后伸进靠背（0.88 半长 0.88 > 靠背内面 0.84），否则两者之间留缝
                     for (int i = 0; i < 2; i++)
                     {
@@ -863,57 +1121,12 @@ namespace RimFirstPerson3D
                         uv = 1
                     });
                     uvs.Add(UvNames(key, rot, xz, "wood", "front"));   // 2 = 腿
-                    Legs(m, 2, Mathf.Min(w, d) * 0.5f - 0.14f, h, Metrics3D.LegThickness);
+                    LegsXY(m, 2, w * 0.5f - 0.14f, d * 0.5f - 0.14f, h, Metrics3D.LegThickness);
                     break;
                 }
                 case Arch.ProductionBench:
                 {
-                    // Reusable workbench prototype: slab + substantial body/
-                    // supports + a visible device feature. Each part uses the
-                    // same bench's own south/east/north atlas samples.
-                    float topY = ProductionBenchBodyHeight;
-                    uvs.Add(UvNames(key, rot, xz, "top", "front")); // 1 body
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, topY, 0f),
-                        size = new Vector3(w - 0.04f, ProductionBenchTopThickness, d - 0.04f),
-                        uv = 1
-                    });
-                    uvs.Add(UvNames(key, rot, xz, "wood", "front")); // 2 cabinet/support
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, topY * 0.5f, 0f),
-                        size = new Vector3(w - 0.16f, topY, d - 0.16f),
-                        noTop = true,
-                        uv = 2
-                    });
-                    // End supports read as legs on butcher/sculpting tables and
-                    // as smithy uprights on the two smithies.
-                    float supportX = Mathf.Max(0.05f, w * 0.5f - ProductionBenchSupportThickness);
-                    uvs.Add(WoodUv(key, rot, xz)); // 3 device/support material
-                    for (int sx = -1; sx <= 1; sx += 2)
-                        m.parts.Add(new Part
-                        {
-                            kind = Prim.Box,
-                            pos = new Vector3(sx * supportX, 0f, 0f),
-                            size = new Vector3(ProductionBenchSupportThickness, topY, d * 0.72f),
-                            noTop = true,
-                            uv = 3
-                        });
-                    uvs.Add(UvNames(key, rot, xz, "device", "device")); // 4 equipment feature
-                    bool smithy = key == "tablesmithingfueled" || key == "tablesmithingelectric";
-                    m.parts.Add(new Part
-                    {
-                        kind = smithy ? Prim.Cylinder : Prim.Box,
-                        pos = new Vector3(0f, topY + ProductionBenchTopThickness, 0f),
-                        size = smithy
-                            ? new Vector3(0.34f, ProductionBenchDeviceHeight, 0.34f)
-                            : new Vector3(0.52f, ProductionBenchDeviceHeight, 0.38f),
-                        taper = smithy ? 0.82f : 0f,
-                        uv = 4
-                    });
+                    BuildProductionBench(m, uvs, key, rot, w, d, xz);
                     break;
                 }
                 case Arch.Lamp:
@@ -1000,30 +1213,30 @@ namespace RimFirstPerson3D
                 case Arch.Marker:
                 {
                     int pi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "front", "front"));
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "front", "front"));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0f, 0f),
-                        size = new Vector3(0.10f, 0.85f, 0.10f),
+                        size = new Vector3(0.08f, 0.85f, 0.08f),
                         uv = pi
                     });
                     int bi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "top", "top"));
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "top", "top"));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0.60f, 0f),
-                        size = new Vector3(0.62f, 0.20f, 0.08f),
+                        size = longZ ? new Vector3(0.62f, 0.20f, 0.12f) : new Vector3(0.12f, 0.20f, 0.62f),
                         uv = bi
                     });
                     int ti = uvs.Count;                       // 桩头露在牌子上面那一截
-                    uvs.Add(UvNames(key, rot, xz, "tip", "tip"));
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "tip", "tip"));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0.80f, 0f),
-                        size = new Vector3(0.08f, 0.14f, 0.08f),   // 比桩身窄一圈，别与它共面
+                        size = new Vector3(0.06f, 0.14f, 0.06f),   // 比桩身窄一圈，别与它共面
                         uv = ti
                     });
                     break;
@@ -1032,7 +1245,7 @@ namespace RimFirstPerson3D
                 {
                     // 底座：图里是一条椭圆，左半 = 侧壁，右半 = 顶面（两条都不含洞）
                     int bi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "baser", "basel"));
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "baser", "basel"));
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
@@ -1041,7 +1254,7 @@ namespace RimFirstPerson3D
                         uv = bi
                     });
                     int pi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "pole", "pole"));     // 2 = 灯杆（图里杆与底座是一条竖带）
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "pole", "pole"));     // 2 = 灯杆（图里杆与底座是一条竖带）
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
@@ -1050,12 +1263,12 @@ namespace RimFirstPerson3D
                         uv = pi
                     });
                     int hi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "top", "top"));       // 3 = 横灯头（两端黄色灯面就在这条带里）
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "wood", "top"));      // 3 = 横灯头（顶面用素金属 wood，立面带两端黄灯面 top）
                     m.parts.Add(new Part
                     {
                         kind = Prim.Box,
                         pos = new Vector3(0f, 0.76f, 0f),
-                        size = new Vector3(0.90f, 0.24f, 0.30f),
+                        size = longZ ? new Vector3(0.90f, 0.24f, 0.30f) : new Vector3(0.30f, 0.24f, 0.90f),
                         uv = hi
                     });
                     break;
@@ -1065,158 +1278,67 @@ namespace RimFirstPerson3D
                     // 大王座（3x2）：白台座 + 台阶 + 金椅 + 尖顶。图里金与白是两块分开的带，
                     // 所以几何也分两批板件，各点自己的取样带。
                     float bs = BackSign(rot);
+                    float spanW = longZ ? w : d, spanD = longZ ? d : w;
                     int di = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "top", "front"));      // 1 = 台座（顶面/立面分开）
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0f, 0f),
-                        size = new Vector3(w * 0.96f, 0.16f, d * 0.94f),
-                        uv = di
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.16f, -bs * d * 0.22f),
-                        size = new Vector3(w * 0.78f, 0.14f, d * 0.50f),
-                        uv = di
-                    });
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "top", "front"));      // 1 = 台座（顶面/立面分开）
+                    OrientBox(m, longZ, di, 0f, 0f, 0f, spanW * 0.96f, 0.16f, spanD * 0.94f);
+                    OrientBox(m, longZ, di, 0f, 0.16f, -bs * spanD * 0.22f, spanW * 0.78f, 0.14f, spanD * 0.50f);
                     int gi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "gold", "gold"));      // 2 = 金椅 + 尖顶
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "gold", "gold"));      // 2 = 金椅 + 尖顶
                     float seatY = 0.30f;
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, seatY, 0f),
-                        size = new Vector3(0.95f, 0.22f, 0.85f),
-                        uv = gi
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, seatY + 0.22f, bs * 0.36f),
-                        size = new Vector3(0.80f, 0.85f, 0.14f),
-                        uv = gi
-                    });
+                    OrientBox(m, longZ, gi, 0f, seatY, 0f, 0.95f, 0.22f, 0.85f);
+                    OrientBox(m, longZ, gi, 0f, seatY + 0.22f, bs * 0.36f, 0.80f, 0.85f, 0.14f);
                     int qi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "spire", "spire"));    // 3 = 尖顶
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, seatY + 1.07f, bs * 0.30f),
-                        size = new Vector3(0.34f, 0.42f, 0.28f),
-                        uv = qi
-                    });
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "spire", "spire"));    // 3 = 尖顶
+                    OrientBox(m, longZ, qi, 0f, seatY + 1.07f, bs * 0.30f, 0.34f, 0.42f, 0.28f);
                     int ai = gi;                                          // 4 = 两侧金扶手柱（同金带）
                     for (int sd = -1; sd <= 1; sd += 2)
-                        m.parts.Add(new Part
-                        {
-                            kind = Prim.Box,
-                            pos = new Vector3(sd * 0.54f, seatY - 0.06f, -0.04f),
-                            size = new Vector3(0.22f, 0.62f, 0.70f),
-                            uv = ai
-                        });
+                        OrientBox(m, longZ, ai, sd * 0.54f, seatY - 0.06f, -0.04f, 0.22f, 0.62f, 0.70f);
                     break;
                 }
                 case Arch.Drape:
                 {
-                    // 帷幔（2x1）：横杆 + 垂下的布面 + 三个穗子。布面是竖直的，原版把它画成
-                    // 三段横带 + 一道波浪裙摆，所以大面/薄边/顶面各取一段；穗子只有左右两块
-                    // 是实心矩形（中间那块与它们之间是透的），左右各取一条、中间复用。
+                    // 帷幔（2x1）：横杆 + 两侧立柱 + 垂下的布面 + 三个穗子。
                     float bs = BackSign(rot);
+                    float spanW = longZ ? w : d;
                     string sv = ViewOf(rot);
                     int ti = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "tassel", "tassel"));   // 1 = 横杆 + 左穗
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "tassel", "tassel"));   // 1 = 横杆 + 立柱 + 左穗
                     int tj = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "tassel2", "tassel2")); // 2 = 右穗
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "tassel2", "tassel2")); // 2 = 右穗
                     int tk = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "tassel3", "tassel3")); // 3 = 中穗
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, DrapeRodHeight, bs * 0.02f),
-                        size = new Vector3(w * 0.86f, 0.09f, 0.09f),
-                        uv = ti
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(-w * 0.36f, 0.34f, bs * 0.02f),
-                        size = new Vector3(0.09f, 0.13f, 0.09f),
-                        uv = ti
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.34f, bs * 0.02f),
-                        size = new Vector3(0.09f, 0.13f, 0.09f),
-                        uv = tk
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(w * 0.36f, 0.34f, bs * 0.02f),
-                        size = new Vector3(0.09f, 0.13f, 0.09f),
-                        uv = tj
-                    });
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "tassel3", "tassel3")); // 3 = 中穗
+                    OrientBox(m, longZ, ti, 0f, DrapeRodHeight, bs * 0.02f, spanW * 0.86f, 0.09f, 0.09f);
+                    for (int sd = -1; sd <= 1; sd += 2)
+                        OrientBox(m, longZ, ti, sd * spanW * 0.40f, 0f, bs * 0.02f, 0.07f, DrapeRodHeight + 0.045f, 0.07f);
+                    OrientBox(m, longZ, ti, -spanW * 0.36f, 0.34f, bs * 0.02f, 0.09f, 0.13f, 0.09f);
+                    OrientBox(m, longZ, tk, 0f, 0.34f, bs * 0.02f, 0.09f, 0.13f, 0.09f);
+                    OrientBox(m, longZ, tj, spanW * 0.36f, 0.34f, bs * 0.02f, 0.09f, 0.13f, 0.09f);
                     int ci = uvs.Count;
-                    uvs.Add(Bands(key, sv, "mid", "front", "top",           // 4 = 布面：大面取布身中段
-                                  new Vector2(w * 0.82f, ClothThickness)));
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.47f, bs * 0.02f),
-                        size = new Vector3(w * 0.82f, 0.95f, ClothThickness),
-                        uv = ci
-                    });
+                    uvs.Add(Bands(key, sv, "mid", "front", "top", Vector2.zero, longZ));
+                    OrientBox(m, longZ, ci, 0f, 0.47f, bs * 0.02f, spanW * 0.82f, 0.95f, ClothThickness);
                     break;
                 }
                 case Arch.Stele:
                 {
                     // 石碑：一块竖碑 + 一个基座。碑身的大面 = 图里那片刻纹（top），
                     // 基座 = 图底部那条带（front）。占格 2x2 / 3x3 只改高度与宽度。
+                    float spanW = longZ ? w : d, spanD = longZ ? d : w;
                     float h = 0.55f + 0.50f * Mathf.Max(w, d);
-                    // 碑身是上窄下宽的梯形：拆成三段叠块，每段的大面/薄边各取图里
-                    // 对应高度的那条横带。梯形逐带取样才铺得满 —— 一条矩形要么含洞、
-                    // 要么丢掉两侧（原版这块碑的图就是逐层收窄的）。
                     string sv = ViewOf(rot);
                     float hLow = (h - 0.18f) * 0.40f, hMid = (h - 0.18f) * 0.32f;
                     int si = uvs.Count;
-                    uvs.Add(Bands(key, sv, "face", "mid", "mid", new Vector2(w * 0.56f, 0.24f)));   // 1 = 下段
+                    uvs.Add(Bands(key, sv, "face", "mid", "mid", Vector2.zero, longZ));     // 1 = 下段
                     int ui = uvs.Count;
-                    uvs.Add(Bands(key, sv, "mid", "shoulder", "mid", new Vector2(w * 0.48f, 0.22f))); // 2 = 中段
+                    uvs.Add(Bands(key, sv, "mid", "shoulder", "mid", Vector2.zero, longZ)); // 2 = 中段
                     int vi = uvs.Count;
-                    uvs.Add(Bands(key, sv, "top", "top", "crest", new Vector2(w * 0.38f, 0.20f)));   // 3 = 上段
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.18f, 0f),
-                        size = new Vector3(w * 0.56f, hLow, 0.24f),
-                        uv = si
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.18f + hLow, 0f),
-                        size = new Vector3(w * 0.48f, hMid, 0.22f),
-                        uv = ui
-                    });
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0.18f + hLow + hMid, 0f),
-                        size = new Vector3(w * 0.38f, h - 0.18f - hLow - hMid, 0.20f),
-                        uv = vi
-                    });
+                    uvs.Add(Bands(key, sv, "top", "top", "crest", Vector2.zero, longZ));    // 3 = 上段
+                    OrientBox(m, longZ, si, 0f, 0.18f, 0f, spanW * 0.56f, hLow, 0.24f);
+                    OrientBox(m, longZ, ui, 0f, 0.18f + hLow, 0f, spanW * 0.48f, hMid, 0.22f);
+                    OrientBox(m, longZ, vi, 0f, 0.18f + hLow + hMid, 0f, spanW * 0.38f, h - 0.18f - hLow - hMid, 0.20f);
                     int bi = uvs.Count;
-                    uvs.Add(UvNames(key, rot, xz, "front", "front"));
-                    m.parts.Add(new Part
-                    {
-                        kind = Prim.Box,
-                        pos = new Vector3(0f, 0f, 0f),
-                        size = new Vector3(w * 0.72f, 0.18f, d * 0.42f),
-                        uv = bi
-                    });
+                    uvs.Add(UvNames(key, rot, Vector2.zero, "front", "front"));
+                    OrientBox(m, longZ, bi, 0f, 0f, 0f, spanW * 0.72f, 0.18f, spanD * 0.42f);
                     break;
                 }
                 case Arch.Cabinet:
@@ -1302,10 +1424,10 @@ namespace RimFirstPerson3D
             m.parts.Add(new Part { kind = Prim.Box, pos = pos, size = size, uv = uvIdx });
         }
 
-        /// <summary>一条带子铺满某个面：大面(±Z)取 face，薄边(±X)取 edge，顶面取 cap。
+        /// <summary>一条带子铺满某个面：大面取 face，薄边取 edge，顶面取 cap。
         /// 石碑这种"逐层收窄"的图靠它把每条横带派到对应的那一面。</summary>
         private static UvSpec Bands(string key, string view, string face, string edge,
-            string cap, Vector2 xz)
+            string cap, Vector2 xz, bool longZ = true)
         {
             var f = Region(key, view, face);
             var e = Region(key, view, edge);
@@ -1313,11 +1435,23 @@ namespace RimFirstPerson3D
             {
                 top = Region(key, view, cap),
                 side = f,
-                side4 = new[] { f, f, e, e },
+                side4 = longZ ? new[] { f, f, e, e } : new[] { e, e, f, f },
                 sideTileH = 0f,
                 sideTileW = 0f,
                 modelXZ = xz
             };
+        }
+
+        private static void OrientBox(Model3D m, bool longZ, int uvIdx,
+            float lx, float y0, float lz, float sx, float sy, float sz)
+        {
+            m.parts.Add(new Part
+            {
+                kind = Prim.Box,
+                pos = longZ ? new Vector3(lx, y0, lz) : new Vector3(lz, y0, lx),
+                size = longZ ? new Vector3(sx, sy, sz) : new Vector3(sz, sy, sx),
+                uv = uvIdx
+            });
         }
 
         /// <summary>枕头：贴着床头那一端，沿床宽并排（2 格宽的床放两个）。pos.y 是底面，
@@ -1377,15 +1511,266 @@ namespace RimFirstPerson3D
         /// <summary>四只腿，中心外偏 off，脚底在 y0。</summary>
         private static void Legs(Model3D m, int uvIdx, float off, float topY, float r)
         {
+            LegsXY(m, uvIdx, off, off, topY, r);
+        }
+
+        private static void LegsXY(Model3D m, int uvIdx, float offX, float offZ, float topY, float r)
+        {
             for (int sx = -1; sx <= 1; sx += 2)
                 for (int sz = -1; sz <= 1; sz += 2)
                     m.parts.Add(new Part
                     {
                         kind = Prim.Cylinder,
-                        pos = new Vector3(sx * off, 0f, sz * off),
+                        pos = new Vector3(sx * offX, 0f, sz * offZ),
                         size = new Vector3(r, topY, r),
                         uv = uvIdx
                     });
+        }
+
+        private static void BenchBox(Model3D m, Rot4 rot, int uvIdx,
+            float lx, float y0, float lz, float sx, float sy, float sz, bool noTop = false)
+        {
+            Vector3 pos, size;
+            if (rot == Rot4.South)
+            {
+                pos = new Vector3(lx, y0, lz);
+                size = new Vector3(sx, sy, sz);
+            }
+            else if (rot == Rot4.North)
+            {
+                pos = new Vector3(-lx, y0, -lz);
+                size = new Vector3(sx, sy, sz);
+            }
+            else
+            {
+                pos = new Vector3(-lz, y0, lx);
+                size = new Vector3(sz, sy, sx);
+            }
+            m.parts.Add(new Part
+            {
+                kind = Prim.Box,
+                pos = pos,
+                size = size,
+                noTop = noTop,
+                uv = uvIdx
+            });
+        }
+
+        private static void BenchCyl(Model3D m, Rot4 rot, int uvIdx,
+            float lx, float y0, float lz, float dia, float sy)
+        {
+            Vector3 pos;
+            if (rot == Rot4.South) pos = new Vector3(lx, y0, lz);
+            else if (rot == Rot4.North) pos = new Vector3(-lx, y0, -lz);
+            else pos = new Vector3(-lz, y0, lx);
+            m.parts.Add(new Part
+            {
+                kind = Prim.Cylinder,
+                pos = pos,
+                size = new Vector3(dia, sy, dia),
+                uv = uvIdx
+            });
+        }
+
+        private static void BuildProductionBench(Model3D m, List<UvSpec> uvs,
+            string key, Rot4 rot, float w, float d, Vector2 xz)
+        {
+            float topY = ProductionBenchBodyHeight;
+            float topT = ProductionBenchTopThickness;
+            float surfY = topY + topT;
+            int uLocal = uvs.Count;
+            uvs.Add(ProductionUv(key, rot, Vector2.zero, "top", "front"));
+            int uShared = uvs.Count;
+            uvs.Add(ProductionUv(key, rot, xz, "top", "front"));
+
+            if (key == "tablesculpting")
+            {
+                int uStone = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "stone", "stone_s"));
+                BenchBox(m, rot, uLocal, -0.50f, topY, 0f, 1.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, -0.50f, 0f, 0f, 1.84f, topY, 0.84f, true);
+                BenchCyl(m, rot, uStone, 0.04f, surfY, 0f, 0.72f, 0.05f);
+                BenchBox(m, rot, uStone, 0.68f, 0f, -0.10f, 0.48f, 0.70f, 0.46f);
+                BenchBox(m, rot, uStone, 0.78f, 0f, 0.22f, 0.40f, 0.84f, 0.36f);
+                BenchBox(m, rot, uStone, 1.14f, 0f, 0.04f, 0.50f, 0.78f, 0.50f);
+            }
+            else if (key == "tablesmithingfueled")
+            {
+                int uBox = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "box_top", "box_front"));
+                int uHood = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "hood", "hood"));
+                BenchBox(m, rot, uBox, -0.98f, 0f, 0f, 0.96f, 0.92f, 0.92f);
+                BenchBox(m, rot, uLocal, 0.48f, topY, -0.10f, 1.96f, topT, 0.76f);
+                BenchBox(m, rot, uLocal, 0.48f, 0f, -0.10f, 1.84f, topY, 0.68f, true);
+                BenchBox(m, rot, uHood, -0.06f, 0f, 0.34f, 0.38f, 0.54f, 0.22f, true);
+                BenchBox(m, rot, uHood, -0.06f, 0.54f, 0.34f, 0.62f, 0.22f, 0.28f);
+            }
+            else if (key == "tablesmithingelectric")
+            {
+                int uBox = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "box_top", "box_front"));
+                int uHood = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "hood", "hood"));
+                BenchBox(m, rot, uLocal, 0f, topY, -0.10f, 2.96f, topT, 0.76f);
+                BenchBox(m, rot, uLocal, 0f, 0f, -0.10f, 2.84f, topY, 0.68f, true);
+                BenchBox(m, rot, uBox, -0.84f, surfY, -0.08f, 0.56f, 0.26f, 0.62f);
+                BenchBox(m, rot, uHood, -0.06f, 0f, 0.34f, 0.38f, 0.54f, 0.22f, true);
+                BenchBox(m, rot, uHood, -0.06f, 0.54f, 0.34f, 0.62f, 0.22f, 0.28f);
+            }
+            else if (key == "tablestoveelectric")
+            {
+                int uBox = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "box_top", "box_front"));
+                BenchBox(m, rot, uLocal, -0.48f, topY, 0f, 1.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, -0.48f, 0f, 0f, 1.84f, topY, 0.84f, true);
+                BenchBox(m, rot, uBox, 0.98f, 0f, 0f, 0.96f, 0.90f, 0.92f);
+            }
+            else if (key == "tablestovefueled")
+            {
+                int uBox = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "box_top", "box_front"));
+                BenchBox(m, rot, uBox, -0.98f, 0f, 0f, 0.96f, 0.90f, 0.92f);
+                BenchBox(m, rot, uLocal, 0.48f, topY, 0f, 1.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, 0.48f, 0f, 0f, 1.84f, topY, 0.84f, true);
+            }
+            else if (key == "tabletailorhand" || key == "tabletailorelectric")
+            {
+                BenchBox(m, rot, uLocal, 0f, topY, 0f, 2.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, 0f, 0.16f, 0f, 2.84f, topY - 0.16f, 0.84f, true);
+                float[] footXs = { -1.34f, -0.45f, 0.45f, 1.34f };
+                for (int ix = 0; ix < footXs.Length; ix++)
+                    for (int sz = -1; sz <= 1; sz += 2)
+                        BenchCyl(m, rot, uLocal, footXs[ix], 0f, sz * 0.34f, 0.12f, 0.18f);
+                if (key == "tabletailorelectric")
+                {
+                    int uMach = uvs.Count;
+                    uvs.Add(ProductionUv(key, rot, Vector2.zero, "mach", "mach_s"));
+                    int uMachS = uvs.Count;
+                    uvs.Add(ProductionUv(key, rot, Vector2.zero, "mach_s", "mach_s"));
+                    BenchBox(m, rot, uMachS, 0.02f, surfY, 0.08f, 0.86f, 0.06f, 0.52f);
+                    BenchBox(m, rot, uMachS, 0.28f, surfY + 0.06f, 0.08f, 0.24f, 0.12f, 0.30f, true);
+                    BenchBox(m, rot, uMach, 0.04f, surfY + 0.18f, 0.08f, 0.74f, 0.10f, 0.30f);
+                    BenchBox(m, rot, uMachS, -0.20f, surfY + 0.11f, 0.08f, 0.16f, 0.07f, 0.22f, true);
+                }
+            }
+            else if (key == "tablestonecutter")
+            {
+                int uDisc = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "disc", "front"));
+                BenchBox(m, rot, uLocal, 0f, topY, -0.14f, 2.96f, topT, 0.62f);
+                BenchBox(m, rot, uLocal, 0f, 0f, -0.14f, 2.84f, topY, 0.56f, true);
+                BenchCyl(m, rot, uDisc, 0.02f, 0f, 0.08f, 0.92f, 0.78f);
+                BenchCyl(m, rot, uLocal, 0.02f, 0.78f, 0.04f, 1.14f, 0.06f);
+                BenchCyl(m, rot, uDisc, 0.02f, 0.84f, 0.04f, 0.94f, 0.02f);
+                BenchBox(m, rot, uDisc, -0.88f, 0f, 0.24f, 0.40f, 0.26f, 0.26f);
+                BenchBox(m, rot, uDisc, 0.60f, 0f, 0.26f, 0.24f, 0.22f, 0.22f);
+            }
+            else if (key == "tablemachining")
+            {
+                int uBody = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "top", "body"));
+                int uPad = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "pad", "front"));
+                BenchBox(m, rot, uBody, 0f, topY, 0f, 2.96f, topT, 0.96f);
+                BenchBox(m, rot, uBody, 0f, 0.16f, 0f, 2.84f, topY - 0.16f, 0.84f, true);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, 2.88f, 0.16f, 0.88f, false);
+                BenchBox(m, rot, uPad, -0.02f, surfY, 0.15f, 1.12f, 0.04f, 0.50f);
+            }
+            else if (key == "tabledruglab")
+            {
+                int uPad = uvs.Count; uvs.Add(ProductionUv(key, rot, Vector2.zero, "pad", "pad"));
+                int uCol = uvs.Count; uvs.Add(ProductionUv(key, rot, Vector2.zero, "col", "col"));
+                int uVat = uvs.Count; uvs.Add(ProductionUv(key, rot, Vector2.zero, "vat", "vat"));
+                int uGrn = uvs.Count; uvs.Add(ProductionUv(key, rot, Vector2.zero, "grn", "grn"));
+                int uBlu = uvs.Count; uvs.Add(ProductionUv(key, rot, Vector2.zero, "blu", "blu"));
+                BenchBox(m, rot, uLocal, 0f, topY, 0f, 2.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, 2.84f, topY, 0.84f, true);
+                BenchBox(m, rot, uPad, 1.08f, surfY, -0.04f, 0.44f, 0.08f, 0.42f);
+                BenchCyl(m, rot, uCol, 1.08f, surfY + 0.08f, -0.04f, 0.16f, 0.54f);
+                BenchCyl(m, rot, uVat, -0.06f, surfY, -0.06f, 0.44f, 0.24f);
+                BenchCyl(m, rot, uCol, -0.06f, surfY + 0.24f, -0.06f, 0.16f, 0.12f);
+                BenchBox(m, rot, uLocal, -0.60f, surfY, 0.22f, 0.36f, 0.06f, 0.34f);
+                BenchCyl(m, rot, uGrn, -0.60f, surfY + 0.06f, 0.22f, 0.28f, 0.20f);
+                BenchCyl(m, rot, uGrn, -0.60f, surfY + 0.26f, 0.22f, 0.12f, 0.10f);
+                BenchCyl(m, rot, uVat, -1.20f, surfY, -0.18f, 0.22f, 0.20f);
+                BenchCyl(m, rot, uCol, -1.20f, surfY + 0.20f, -0.18f, 0.10f, 0.10f);
+                BenchCyl(m, rot, uBlu, -0.90f, surfY, -0.02f, 0.22f, 0.20f);
+                BenchCyl(m, rot, uBlu, -0.90f, surfY + 0.20f, -0.02f, 0.10f, 0.10f);
+                BenchCyl(m, rot, uGrn, -1.18f, surfY, 0.18f, 0.22f, 0.20f);
+                BenchCyl(m, rot, uGrn, -1.18f, surfY + 0.20f, 0.18f, 0.10f, 0.10f);
+            }
+            else if (key == "tablebrewery")
+            {
+                int uVat = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "vat", "vat_s"));
+                BenchBox(m, rot, uLocal, -0.50f, topY, 0f, 1.96f, topT, 0.94f);
+                BenchBox(m, rot, uLocal, -0.50f, 0f, 0f, 1.84f, topY, 0.84f, true);
+                BenchCyl(m, rot, uVat, -1.16f, surfY, -0.06f, 0.46f, 0.08f);
+                BenchCyl(m, rot, uVat, -0.66f, surfY, -0.06f, 0.46f, 0.08f);
+                BenchCyl(m, rot, uVat, 0.74f, 0f, -0.14f, 0.58f, 0.84f);
+                BenchCyl(m, rot, uVat, 1.14f, 0f, 0.14f, 0.58f, 0.90f);
+            }
+            else if (key == "electricsmelter")
+            {
+                int uHood = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "hood_s", "hood_s"));
+                int uGlow = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "hood", "hood"));
+                BenchBox(m, rot, uLocal, 0f, topY, 0f, 2.96f, topT, 0.96f);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, 2.84f, topY, 0.84f, true);
+                BenchBox(m, rot, uHood, 0f, surfY, -0.18f, 1.24f, 0.24f, 0.36f);
+                BenchBox(m, rot, uHood, -0.58f, surfY, 0.13f, 0.44f, 0.20f, 0.26f);
+                BenchBox(m, rot, uHood, 0.58f, surfY, 0.13f, 0.44f, 0.20f, 0.26f);
+                BenchBox(m, rot, uGlow, 0f, surfY, 0.13f, 0.72f, 0.16f, 0.26f);
+                BenchBox(m, rot, uHood, 0f, surfY, 0.35f, 0.92f, 0.10f, 0.18f);
+            }
+            else if (key == "researchbenchhitech")
+            {
+                int uTray = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "tray", "tray"));
+                int uFlask = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "flask", "flask"));
+                BenchBox(m, rot, uLocal, 0f, topY, 0f, 4.96f, topT, 1.96f);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, 4.84f, topY, 1.84f, true);
+                BenchBox(m, rot, uTray, -1.80f, surfY, 0f, 0.64f, 0.06f, 1.66f);
+                BenchBox(m, rot, uTray, 1.80f, surfY, 0f, 0.64f, 0.06f, 1.66f);
+                BenchBox(m, rot, uTray, 0f, surfY, -0.32f, 0.92f, 0.12f, 0.50f);
+                float[] fzs = { 0.26f, -0.26f };
+                for (int i = 0; i < 2; i++)
+                {
+                    BenchCyl(m, rot, uFlask, -1.80f, surfY + 0.06f, fzs[i], 0.34f, 0.18f);
+                    BenchCyl(m, rot, uFlask, -1.80f, surfY + 0.24f, fzs[i], 0.14f, 0.10f);
+                }
+            }
+            else if (key == "fabricationbench")
+            {
+                int uBody = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "top", "body"));
+                int uSteel = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "body", "body"));
+                int uMach = uvs.Count;
+                uvs.Add(ProductionUv(key, rot, Vector2.zero, "mach", "mach"));
+                BenchBox(m, rot, uBody, 0f, topY, 0f, 4.96f, topT, 1.96f);
+                BenchBox(m, rot, uBody, 0f, 0.16f, 0f, 4.84f, topY - 0.16f, 1.84f, true);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, 4.88f, 0.16f, 1.88f, false);
+                BenchBox(m, rot, uMach, -1.76f, surfY, -0.22f, 0.68f, 0.16f, 0.72f);
+                BenchBox(m, rot, uMach, -0.78f, surfY, -0.18f, 0.84f, 0.24f, 1.16f);
+                BenchBox(m, rot, uMach, 0.80f, surfY, -0.18f, 0.84f, 0.24f, 1.16f);
+                BenchBox(m, rot, uMach, 1.78f, surfY, -0.22f, 0.68f, 0.16f, 0.72f);
+                BenchBox(m, rot, uSteel, -1.31f, surfY, -0.20f, 0.22f, 0.10f, 0.24f);
+                BenchBox(m, rot, uSteel, 0.01f, surfY, -0.20f, 0.74f, 0.10f, 0.28f);
+                BenchBox(m, rot, uSteel, 1.33f, surfY, -0.20f, 0.22f, 0.10f, 0.24f);
+                BenchBox(m, rot, uSteel, -0.80f, surfY, 0.66f, 0.42f, 0.18f, 0.46f);
+                BenchBox(m, rot, uSteel, 0.86f, surfY, 0.66f, 0.42f, 0.18f, 0.46f);
+            }
+            else
+            {
+                float longSpan = Mathf.Max(w, d);
+                float shortSpan = Mathf.Min(w, d);
+                BenchBox(m, rot, uLocal, 0f, topY, 0f, longSpan - 0.04f, topT, shortSpan - 0.04f);
+                BenchBox(m, rot, uLocal, 0f, 0f, 0f, longSpan - 0.16f, topY, shortSpan - 0.16f, true);
+            }
         }
 
         // ---- 材质与缓存 ----
@@ -1417,6 +1802,48 @@ namespace RimFirstPerson3D
             return b;
         }
 
+        // ---- 可站立支撑面 ----
+
+        /// <summary>本件家具的可站立顶面高度（米，相对地面 baseY）；0 = 不作为支撑面。
+        /// 座椅/床类取座面·床垫面（**不取靠背顶**，免得人站在椅背上）；其余取网格包围盒顶。</summary>
+        public static float TopOf(Thing t)
+        {
+            if (t is Blueprint) return 0f;
+            if (!Handles(t) || !ResolveBuildDef(t, out var def, out _)) return 0f;
+            Arch arch; string key;
+            if (!RecipeOf(def, out arch, out key)) return 0f;
+            var occ = GenAdj.OccupiedRect(t);
+            float w = Mathf.Max(0.3f, occ.Width), d = Mathf.Max(0.3f, occ.Height);
+            var rot = t.Rotation;
+            if (arch == Arch.Bed && rot == Rot4.West) rot = Rot4.East;   // 西向无独立图，按东向几何
+            var b = Get(arch, key, rot, w, d);
+            if (b == null) return 0f;
+            switch (arch)
+            {
+                case Arch.Bed: return Metrics3D.MattressSurface;
+                case Arch.Bedroll: return Metrics3D.BedrollLyingSurface;
+                case Arch.Chair:
+                case Arch.Stool: return Metrics3D.ChairSeatHeight + Metrics3D.SeatCushionThickness;
+                case Arch.Armchair: return Metrics3D.ArmchairSeatHeight + Metrics3D.SeatCushionThickness;
+                case Arch.Throne: return ThroneSeatHeight + Metrics3D.SeatCushionThickness;
+                default: return b.body != null ? b.body.bounds.max.y : 0f;
+            }
+        }
+
+        /// <summary>该格最高的可站立家具顶面（米）；格内无接管家具 = 0（站在地面）。</summary>
+        public static float SupportAt(Map map, IntVec3 c)
+        {
+            if (map == null || !c.InBounds(map)) return 0f;
+            float h = 0f;
+            var list = map.thingGrid.ThingsListAtFast(c);
+            for (int i = 0; i < list.Count; i++)
+            {
+                float y = TopOf(list[i]);
+                if (y > h) h = y;
+            }
+            return h;
+        }
+
         public static void Clear()
         {
             foreach (var kv in cache)
@@ -1427,15 +1854,15 @@ namespace RimFirstPerson3D
             cache.Clear();
         }
 
-        /// <summary>画一件家具；返回 false 表示本层没接管（调用方走原回退路径）。
+        /// <summary>画一件家具（或其蓝图/建造框架）；返回 false 表示本层没接管（调用方走原回退路径）。
         /// lit 是该件所在处的放置亮度（F013 实例乘子），与原型网格烘好的形体明暗相乘。</summary>
         public static bool TryDraw(Thing t, Vector3 pos, Color lit)
         {
-            if (!Handles(t)) return false;
+            if (!Handles(t) || !ResolveBuildDef(t, out var def, out bool isConstructible)) return false;
             var m = Mat;
             if (m == null) return false;
             Arch arch; string key;
-            if (!RecipeOf(t.def, out arch, out key)) return false;
+            if (!RecipeOf(def, out arch, out key)) return false;
             var occ = GenAdj.OccupiedRect(t);
             float w = Mathf.Max(0.3f, occ.Width), d = Mathf.Max(0.3f, occ.Height);
             var rot = t.Rotation;
@@ -1443,6 +1870,18 @@ namespace RimFirstPerson3D
             var b = Get(arch, key, rot, w, d);
             if (b == null || b.body == null) return false;
             var matrix = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
+            if (isConstructible)
+            {
+                var bpMat = Util3D.BlueprintMatFor(atlas, FilterMode.Bilinear);
+                Graphics.DrawMesh(b.body, matrix, bpMat, 0);
+                PerfCounters.BuildingMeshesDrawn++;
+                if (Fps3DState.DrawOutlines && b.hull != null)
+                {
+                    Graphics.DrawMesh(b.hull, matrix, Util3D.BlueprintOutlineMat, 0);
+                    PerfCounters.OutlineMeshesDrawn++;
+                }
+                return true;
+            }
             Graphics.DrawMesh(b.body, matrix, Lighting3D.MatFor(m, lit), 0);
             PerfCounters.BuildingMeshesDrawn++;
             if (Fps3DState.DrawOutlines && b.hull != null)

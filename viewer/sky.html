@@ -30,7 +30,7 @@ const qs = new URLSearchParams(location.search);
 const STILL = qs.get('still') === '1';
 if (STILL) document.body.classList.add('still');
 
-const MODE = qs.get('mode') || 'v2';     // 'old' = 旧版基线, 'v1' = 第一轮迭代, 'v2' = 第二轮精调
+const MODE = qs.get('mode') || 'v8';     // 'old' = 旧版基线, 'v6' = 3D世界空间版, 'v8' = 天空盒与光影精调版
 const PRESET = qs.get('preset') || 'noon';
 const PITCH = parseFloat(qs.get('pitch') || '16');
 const YAW = parseFloat(qs.get('yaw') || '0');
@@ -222,7 +222,7 @@ function sampleEnv(pKey, mode) {
   const p = PRESETS[pKey] || PRESETS.noon;
   const e = { ...p };
   const wet = e.snow > 0.2 ? Math.max(e.snow, e.rain * 0.35) : e.rain;
-  const isRefined = mode === 'v2' || mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6';
+  const isRefined = mode === 'v2' || mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6' || mode === 'v8';
   // 晴朗星夜保持低云量 (0.06)，让银河、繁星与满月完整展现；扬沙天由沙暴风幔主导
   const baseCloud = (isRefined && e.glow < 0.2 && wet < 0.1) ? 0.06
                   : (isRefined && e.sand > 0.5) ? 0.05
@@ -280,15 +280,15 @@ function sampleEnv(pKey, mode) {
 
   const g = clamp01(e.glow);
   const dayZenith = isRefined ? [0.09, 0.30, 0.76] : [0.16, 0.40, 0.84];
-  const nightZenith = [0.012, 0.024, 0.072];
+  const nightZenith = isRefined ? [0.004, 0.009, 0.032] : [0.012, 0.024, 0.072];
   const dayMid = isRefined ? [0.24, 0.52, 0.90] : [0.32, 0.58, 0.92];
-  const nightMid = [0.028, 0.052, 0.128];
+  const nightMid = isRefined ? [0.010, 0.022, 0.068] : [0.028, 0.052, 0.128];
   const dayHorizon = isRefined ? [0.68, 0.84, 0.97] : [0.68, 0.83, 0.96];
-  const nightHorizon = [0.062, 0.100, 0.185];
+  const nightHorizon = isRefined ? [0.028, 0.052, 0.115] : [0.062, 0.100, 0.185];
 
   e.sky = cMul(cLerp(nightZenith, dayZenith, Math.pow(g, 0.85)), e.skyMul);
   e.midSky = cMul(cLerp(nightMid, dayMid, Math.pow(g, 0.8)), e.skyMul);
-  e.horizon = cLerp(nightHorizon, dayHorizon, clamp01(Math.pow(g, 0.7) * 1.15));
+  e.horizon = cLerp(nightHorizon, dayHorizon, clamp01(Math.pow(g, 0.82) * 1.12));
 
   const sunElev = e.sunDir.y;
   const twilight = clamp01(1.0 - Math.abs(sunElev - 0.12) / 0.28) * clamp01((g - 0.06) / 0.35) * (1.0 - e.cloudiness * 0.55);
@@ -448,33 +448,48 @@ function makeDomeTexture(env, mode) {
             const moonGlow = Math.pow(md, 6.0) * 0.30 * nightVis;
             col = cLerp(col, [0.42, 0.54, 0.78], moonGlow);
 
-            // 银河带：沿倾斜大圆的高斯带 + 连续噪声云团与暗尘埃带
+            // 银河带：沿倾斜大圆的高斯带 + 全彩银心暖金/翼部蓝紫/玫瑰星云核与暗尘埃裂谷带
             const galLat = dx * galNorm.x + dy * galNorm.y + dz * galNorm.z;
             const galLon = Math.atan2(dx * galUp.x + dy * galUp.y + dz * galUp.z,
                                       dx * galRight.x + dy * galRight.y + dz * galRight.z);
-            const galProfile = Math.exp(-Math.pow(galLat / 0.22, 2)) * clamp01((k - 0.08) / 0.25);
-            if (galProfile > 0.02) {
+            const galProfile = Math.exp(-Math.pow(galLat / 0.26, 2)) * clamp01((k - 0.04) / 0.20);
+            if (galProfile > 0.01) {
               const uGal = (galLon / (Math.PI * 2) + 0.5);
               const vGal = galLat * 1.8 + 0.5;
-              const n1 = periodicFbm(uGal, vGal, 4, 4, 307);
-              const dustRift = smoothstep(0.46, 0.62, periodicFbm(uGal * 2, vGal * 2, 4, 3, 509)) * Math.exp(-Math.pow(galLat / 0.06, 2));
-              const mwIntensity = galProfile * clamp01((n1 - 0.32) * 1.9) * (1.0 - dustRift * 0.68) * nightVis;
-              const mwCol = cLerp([0.14, 0.22, 0.42], [0.38, 0.32, 0.52], n1);
-              col = [col[0] + mwCol[0] * mwIntensity * 0.85,
-                     col[1] + mwCol[1] * mwIntensity * 0.85,
-                     col[2] + mwCol[2] * mwIntensity * 0.95];
+              const n1 = periodicFbm(uGal * 2.0, vGal, 4, 4, 307);
+              const fine = periodicFbm(uGal * 5.0 + 0.17, vGal * 1.6 + 0.31, 4, 4, 613);
+              const dustRift = smoothstep(0.46, 0.64, periodicFbm(uGal * 3.0, vGal * 2.0, 4, 3, 509)) * Math.exp(-Math.pow(galLat / 0.06, 2));
+              const coreProf = Math.exp(-Math.pow(galLat / 0.11, 2));
+              const knot = Math.pow(clamp01((fine - 0.54) * 2.4), 1.8) * coreProf;
+              const mwIntensity = (galProfile * (0.22 + 0.78 * clamp01((n1 * 0.68 + fine * 0.32 - 0.24) * 1.95)) * (1.0 - dustRift * 0.75) + knot * 0.42) * nightVis;
+              let mwCol = cLerp([0.32, 0.52, 0.96], [0.98, 0.82, 0.62], clamp01(coreProf * 0.78 + n1 * 0.35));
+              mwCol = cLerp(mwCol, [0.94, 0.46, 0.78], clamp01(knot * 1.45));
+              col = [col[0] + mwCol[0] * mwIntensity * 1.35,
+                     col[1] + mwCol[1] * mwIntensity * 1.30,
+                     col[2] + mwCol[2] * mwIntensity * 1.42];
             }
 
-            // 极光幕（Aurora）
-            if (env.aurora > 0.05 && k > 0.12 && k < 0.82) {
-              const wave = Math.sin(theta * 3.0 + 0.8) * 0.08 + Math.cos(theta * 5.0 - 0.4) * 0.04;
-              const curtain = Math.exp(-Math.pow((k - 0.38 - wave) / 0.16, 2));
-              const rays = 0.55 + 0.45 * Math.sin(theta * 14.0 + periodicFbm(theta / (Math.PI * 2), k, 4, 3, 809) * 6.0);
-              const aurAmt = env.aurora * curtain * rays * nightVis;
-              const aurCol = cLerp([0.10, 0.92, 0.52], [0.58, 0.22, 0.90], clamp01((k - 0.28) / 0.32));
-              col = [col[0] + aurCol[0] * aurAmt * 0.62,
-                     col[1] + aurCol[1] * aurAmt * 0.68,
-                     col[2] + aurCol[2] * aurAmt * 0.62];
+            // 极光幕（Aurora：下翠绿氧线 -> 中青碧 -> 上紫红氮线 + 磁力线竖向流光射线）
+            if (env.aurora > 0.05 && k > 0.10 && k < 0.85) {
+              const wave = Math.sin(theta * 3.0 + 0.8) * 0.07 + Math.cos(theta * 6.0 - 0.4) * 0.035;
+              const baseK = 0.22 + wave;
+              const vt = (k - baseK) / 0.38;
+              if (vt > 0.0 && vt < 1.0) {
+                const botRise = smoothstep(0.0, 0.16, vt);
+                const topFade = Math.pow(clamp01(1.0 - vt), 1.35);
+                const brightRim = Math.exp(-Math.pow((vt - 0.18) / 0.08, 2.0)) * 0.48;
+                const vProf = clamp01(botRise * topFade + brightRim);
+                const r1 = periodicFbm(theta / (Math.PI * 2) * 4.0, vt * 0.35, 3, 4, 809);
+                const r2 = periodicFbm(theta / (Math.PI * 2) * 11.0 + 0.23, vt * 0.20, 3, 4, 947);
+                const rays = 0.36 + 0.64 * Math.pow(clamp01(r1 * 0.55 + r2 * 0.45), 1.35);
+                const aurAmt = env.aurora * vProf * rays * nightVis;
+                const aurCol = vt < 0.45
+                  ? cLerp([0.10, 0.96, 0.54], [0.26, 0.94, 0.82], vt / 0.45)
+                  : cLerp([0.26, 0.94, 0.82], [0.66, 0.24, 0.95], (vt - 0.45) / 0.55);
+                col = [col[0] + aurCol[0] * aurAmt * 0.78,
+                       col[1] + aurCol[1] * aurAmt * 0.84,
+                       col[2] + aurCol[2] * aurAmt * 0.78];
+              }
             }
           }
         } else {
@@ -834,6 +849,9 @@ function build3DWorldLightningBolt(topPos, botPos, seed = 404, trunkRadius = 1.6
     const tangent = new THREE.Vector3().subVectors(p1, p0);
     if (tangent.lengthSq() < 0.0001) return;
     tangent.normalize();
+    // 节点前后微延伸重叠，彻底消除折线转角处的分段缺口
+    const ext0 = p0.clone().addScaledVector(tangent, -r0 * 0.36);
+    const ext1 = p1.clone().addScaledVector(tangent, r1 * 0.36);
     const viewVec = new THREE.Vector3(p0.x, p0.y - 1.62, p0.z);
     let side = new THREE.Vector3().crossVectors(tangent, viewVec);
     if (side.lengthSq() < 0.001) side.set(1, 0, 0);
@@ -841,10 +859,10 @@ function build3DWorldLightningBolt(topPos, botPos, seed = 404, trunkRadius = 1.6
 
     const b = pos.length / 3;
     pos.push(
-      p0.x - side.x * r0, p0.y - side.y * r0, p0.z - side.z * r0,
-      p0.x + side.x * r0, p0.y + side.y * r0, p0.z + side.z * r0,
-      p1.x + side.x * r1, p1.y + side.y * r1, p1.z + side.z * r1,
-      p1.x - side.x * r1, p1.y - side.y * r1, p1.z - side.z * r1
+      ext0.x - side.x * r0, ext0.y - side.y * r0, ext0.z - side.z * r0,
+      ext0.x + side.x * r0, ext0.y + side.y * r0, ext0.z + side.z * r0,
+      ext1.x + side.x * r1, ext1.y + side.y * r1, ext1.z + side.z * r1,
+      ext1.x - side.x * r1, ext1.y - side.y * r1, ext1.z - side.z * r1
     );
     uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
@@ -928,34 +946,50 @@ function makeRainNeedleTex(w = 32, h = 128) {
   return t;
 }
 
-// 在世界空间 3D 盒体 (-60..60m, 0..20m, -60..60m) 内生成独立的世界坐标 3D 雨针
-function build3DRainVolumeMesh(count = 2400, windVec = new THREE.Vector2(0.5, 0.2), seed = 20261018) {
+// 判断世界坐标 (x, z) 是否位于殖民地房屋屋顶遮挡范围内（与 buildColonyForeground 10 座房屋一一对应）
+function isInsideColonyBuilding(x, z) {
+  for (let i = 0; i < 10; i++) {
+    const ang = (i / 10) * Math.PI * 2 + 0.18;
+    const dist = 20 + (i % 3) * 14;
+    const bx = Math.cos(ang) * dist, bz = Math.sin(ang) * dist;
+    const hw = (4 + (i % 3) * 2) * 0.5 + 0.25;
+    const hd = (4 + ((i + 1) % 2) * 2) * 0.5 + 0.25;
+    if (Math.abs(x - bx) <= hw && Math.abs(z - bz) <= hd) return true;
+  }
+  return false;
+}
+
+// 在世界空间内生成受屋顶/建筑遮挡裁剪的纤细半透明 3D 雨丝（绝不穿模、不进屋、不过白过粗）
+function build3DRainVolumeMesh(count = 1600, windVec = new THREE.Vector2(0.5, 0.2), seed = 20261018) {
   const rnd = mulberry32(seed);
   const pos = [], uvs = [], idx = [];
-  const axis = new THREE.Vector3(windVec.x * 0.16, -1.0, windVec.y * 0.16).normalize();
-  const side1 = new THREE.Vector3(0.866, 0, 0.5);
-  const side2 = new THREE.Vector3(-0.5, 0, 0.866);
+  const axis = new THREE.Vector3(windVec.x * 0.07, -1.0, windVec.y * 0.07).normalize();
 
   for (let i = 0; i < count; i++) {
-    const x = (rnd() - 0.5) * 96.0;
-    const z = (rnd() - 0.5) * 96.0;
-    const y = 0.2 + rnd() * 20.0;
-    const len = 0.95 + rnd() * 0.65;
-    const hw = 0.042 + rnd() * 0.018;
+    const x = (rnd() - 0.5) * 64.0;
+    const z = (rnd() - 0.5) * 64.0;
+    if (isInsideColonyBuilding(x, z)) continue;
+    const y = 0.08 + rnd() * 14.5;
+    const len = 0.68 + rnd() * 0.42;
+    const hw = 0.0065 + rnd() * 0.0035;
     const pBot = new THREE.Vector3(x, y, z);
     const pTop = pBot.clone().addScaledVector(axis, -len);
+    if (isInsideColonyBuilding(pTop.x, pTop.z)) continue;
 
-    for (const s of [side1, side2]) {
-      const b = pos.length / 3;
-      pos.push(
-        pBot.x - s.x * hw, pBot.y - s.y * hw, pBot.z - s.z * hw,
-        pBot.x + s.x * hw, pBot.y + s.y * hw, pBot.z + s.z * hw,
-        pTop.x + s.x * hw, pTop.y + s.y * hw, pTop.z + s.z * hw,
-        pTop.x - s.x * hw, pTop.y - s.y * hw, pTop.z - s.z * hw
-      );
-      uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
-      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
-    }
+    const toCam = new THREE.Vector3(camera.position.x - x, 0, camera.position.z - z);
+    const s = toCam.lengthSq() > 0.001
+      ? new THREE.Vector3(-toCam.z, 0, toCam.x).normalize()
+      : new THREE.Vector3(1, 0, 0);
+
+    const b = pos.length / 3;
+    pos.push(
+      pBot.x - s.x * hw, pBot.y - s.y * hw, pBot.z - s.z * hw,
+      pBot.x + s.x * hw, pBot.y + s.y * hw, pBot.z + s.z * hw,
+      pTop.x + s.x * hw, pTop.y + s.y * hw, pTop.z + s.z * hw,
+      pTop.x - s.x * hw, pTop.y - s.y * hw, pTop.z - s.z * hw
+    );
+    uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1404,14 +1438,14 @@ function buildStarDomeNew(count = 720, radius = 118, seed = 20261015) {
     if (right.lengthSq() < 0.01) right.set(1, 0, 0);
     const up = new THREE.Vector3().crossVectors(n, right).normalize();
 
-    // 幂律星等分布：极少数一等亮星 (row 0)，多数细小微星 (row 2..3)
     const rMag = rnd();
-    const row = rMag < 0.07 ? 0 : (rMag < 0.26 ? 1 : (rMag < 0.62 ? 2 : 3));
+    const row = rMag < 0.09 ? 0 : (rMag < 0.30 ? 1 : (rMag < 0.65 ? 2 : 3));
     const col = Math.floor(rnd() * 4);
-    const s = row === 0 ? (0.58 + rnd() * 0.28)
-            : row === 1 ? (0.34 + rnd() * 0.16)
-            : row === 2 ? (0.22 + rnd() * 0.10)
-            : (0.16 + rnd() * 0.08);
+    const sScale = radius / 118.0;
+    const s = (row === 0 ? (0.72 + rnd() * 0.35)
+            : row === 1 ? (0.44 + rnd() * 0.20)
+            : row === 2 ? (0.28 + rnd() * 0.14)
+            : (0.20 + rnd() * 0.10)) * sScale;
 
     const pad = 0.01;
     const u0 = col * 0.25 + pad, u1 = (col + 1) * 0.25 - pad;
@@ -1595,7 +1629,7 @@ function makeTerrainTex(env) {
 
 function buildColonyForeground(env) {
   const group = new THREE.Group();
-  const lit = lerp(0.26, 1.0, env.glow) + env.flash * 0.35;
+  const lit = lerp(0.24, 1.0, env.glow) + env.flash * 0.35;
 
   // 地面 (140m 半径圆盘)
   const groundGeo = new THREE.CircleGeometry(138, 64);
@@ -1605,40 +1639,191 @@ function buildColonyForeground(env) {
   ground.renderOrder = 100;
   group.add(ground);
 
-  // 实心殖民地建筑群与树木剪影（分布在四周 16m..55m，提供地平线空间深度参照）
-  const wallCol = new THREE.Color(0.52 * lit, 0.48 * lit, 0.42 * lit);
-  const roofCol = new THREE.Color(0.36 * lit, 0.33 * lit, 0.30 * lit);
-  const trunkCol = new THREE.Color(0.32 * lit, 0.22 * lit, 0.14 * lit);
-  const leafBase = env.snow > 0.5 ? [0.68, 0.76, 0.82] : env.sand > 0.5 ? [0.46, 0.44, 0.24] : [0.20, 0.38, 0.18];
-  const leafCol = new THREE.Color(leafBase[0] * lit, leafBase[1] * lit, leafBase[2] * lit);
+  // 太阳与月亮方向光矢量（驱动向阳面/背阳面着色与地面柔和投影）
+  const sunDir = env.sunDir.clone().normalize();
+  const moonDir = (env.moonDir || new THREE.Vector3(0, 1, 0)).clone().normalize();
+  const useSun = env.glow >= 0.22;
+  const lightDir = useSun ? sunDir : moonDir;
+  const shadowHoriz = new THREE.Vector2(-lightDir.x, -lightDir.z);
+  const shLen = shadowHoriz.length();
+  if (shLen > 0.001) shadowHoriz.divideScalar(shLen);
+  const shadowReach = clamp01(1.15 - lightDir.y) * (useSun ? (1.0 - env.cloudiness * 0.65) : 0.45);
+  const softShadowTex = makeRadialTex(64, 0.18, 1.45);
+  const shadowMat = new THREE.MeshBasicMaterial({
+    map: softShadowTex,
+    color: new THREE.Color(0.03, 0.04, 0.07),
+    transparent: true,
+    opacity: clamp01(0.46 * shadowReach),
+    depthWrite: false,
+    fog: true
+  });
 
-  const wallMat = new THREE.MeshBasicMaterial({ color: wallCol, fog: true });
-  const roofMat = new THREE.MeshBasicMaterial({ color: roofCol, fog: true });
-  const trunkMat = new THREE.MeshBasicMaterial({ color: trunkCol, fog: true });
-  const leafMat = new THREE.MeshBasicMaterial({ color: leafCol, fog: true });
+  // 前景生态池塘（反映天空天顶/地平线霞光与天体波光高光倒影带，展示 WaterLayer3D 天光反射染色）
+  const pondTexSize = 128;
+  const pondData = new Uint8Array(pondTexSize * pondTexSize * 4);
+  const skyReflect = cLerp(env.horizon, env.sky, 0.42);
+  let baseWater = cLerp([0.10, 0.28, 0.46], skyReflect, 0.55);
+  if (env.twilight > 0.04) baseWater = cLerp(baseWater, [0.95, 0.50, 0.26], env.twilight * 0.48);
+  baseWater = cScale(baseWater, lerp(0.28, 0.96, env.glow) + env.aurora * 0.22 + env.flash * 0.28);
+  const specCol = env.aurora > 0.1 ? [0.22, 0.95, 0.68]
+                : env.twilight > 0.05 ? [1.0, 0.68, 0.32]
+                : env.glow < 0.25 ? [0.75, 0.88, 1.0]
+                : [0.95, 0.98, 1.0];
+  for (let py = 0; py < pondTexSize; py++) {
+    const vz = (py + 0.5) / pondTexSize * 2 - 1;
+    for (let px = 0; px < pondTexSize; px++) {
+      const vx = (px + 0.5) / pondTexSize * 2 - 1;
+      const r = Math.hypot(vx, vz);
+      const edgeFade = smoothstep(1.0, 0.72, r);
+      const ripple = 0.5 + 0.5 * Math.sin(vz * 42.0 + Math.sin(vx * 9.0) * 1.8);
+      const envGrad = smoothstep(-0.8, 0.8, -vz);
+      const specEnv = Math.exp(-Math.pow(vx / 0.36, 2)) * Math.exp(-Math.pow((vz + 0.1) / 0.65, 2));
+      const spec = specEnv * (0.22 + 0.26 * ripple);
+      let wc = cLerp(cScale(baseWater, 0.78), baseWater, envGrad);
+      wc = cLerp(wc, specCol, spec);
+      const idx = (py * pondTexSize + px) * 4;
+      pondData[idx] = Math.round(clamp01(wc[0]) * 255);
+      pondData[idx + 1] = Math.round(clamp01(wc[1]) * 255);
+      pondData[idx + 2] = Math.round(clamp01(wc[2]) * 255);
+      pondData[idx + 3] = Math.round(edgeFade * 225);
+    }
+  }
+  const pondTex = new THREE.DataTexture(pondData, pondTexSize, pondTexSize, THREE.RGBAFormat);
+  pondTex.magFilter = THREE.LinearFilter; pondTex.minFilter = THREE.LinearFilter; pondTex.needsUpdate = true;
+  const pondGeo = new THREE.PlaneGeometry(18.0, 16.0);
+  pondGeo.rotateX(-Math.PI / 2);
+  const pondMat = new THREE.MeshBasicMaterial({
+    map: pondTex,
+    transparent: true,
+    depthWrite: false,
+    fog: true
+  });
+  const pond = new THREE.Mesh(pondGeo, pondMat);
+  pond.position.set(5.5, 0.025, -16.5);
+  pond.renderOrder = 102;
+  group.add(pond);
+
+  // 实心殖民地建筑群与树木剪影（带向阳/背阳立体着色、墙脚 AO、柔和半影与夜间壁炬暖光）
+  const sunTint = env.twilight > 0.05
+    ? cLerp([1.0, 0.96, 0.88], [1.0, 0.62, 0.34], env.twilight)
+    : [1.0, 0.98, 0.94];
+  const ambCol = cLerp([0.16, 0.20, 0.30], cLerp([0.62, 0.66, 0.72], env.horizon, 0.45), env.glow);
+
+  function makeLitBox(bw, bh, bd, baseRgb) {
+    const boxGeo = new THREE.BoxGeometry(bw, bh, bd).toNonIndexed();
+    const posAttr = boxGeo.getAttribute('position');
+    const normAttr = boxGeo.getAttribute('normal');
+    const cols = new Float32Array(posAttr.count * 3);
+    for (let v = 0; v < posAttr.count; v++) {
+      const nx = normAttr.getX(v), ny = normAttr.getY(v), nz = normAttr.getZ(v);
+      const vy = posAttr.getY(v) + bh * 0.5;
+      const ndotl = clamp01((nx * lightDir.x + ny * lightDir.y + nz * lightDir.z + 0.10) / 0.45);
+      const dirStrength = useSun ? (env.glow * (1.0 - env.cloudiness * 0.65) * 0.68) : 0.18;
+      // 墙根接触阴影 AO
+      const ao = ny < 0.5 ? lerp(0.66, 1.0, clamp01(vy / 1.1)) : 1.0;
+      const r = clamp01(baseRgb[0] * (ambCol[0] * 0.72 + sunTint[0] * ndotl * dirStrength) * ao);
+      const g = clamp01(baseRgb[1] * (ambCol[1] * 0.72 + sunTint[1] * ndotl * dirStrength) * ao);
+      const b = clamp01(baseRgb[2] * (ambCol[2] * 0.72 + sunTint[2] * ndotl * dirStrength) * ao);
+      cols[v * 3] = r; cols[v * 3 + 1] = g; cols[v * 3 + 2] = b;
+    }
+    boxGeo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return boxGeo;
+  }
+
+  const vColMat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: true });
+  const glowTex = makeRadialTex(64, 0.08, 1.6);
+  const lampPoolMat = new THREE.MeshBasicMaterial({
+    map: glowTex,
+    color: new THREE.Color(1.0, 0.68, 0.28),
+    transparent: true,
+    opacity: lerp(0.58, 0.22, env.glow),
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: true
+  });
+  const lampHaloMat = new THREE.MeshBasicMaterial({
+    map: glowTex,
+    color: new THREE.Color(1.0, 0.82, 0.48),
+    transparent: true,
+    opacity: lerp(0.88, 0.35, env.glow),
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    fog: true
+  });
 
   const rnd = mulberry32(888);
-  // 8 座远近高低错落的殖民地平房（高 2.70m = Metrics3D.CeilingHeight）
+  // 10 座远近高低错落的殖民地平房（高 2.70m = Metrics3D.CeilingHeight）
   for (let i = 0; i < 10; i++) {
     const ang = (i / 10) * Math.PI * 2 + 0.18;
     const dist = 20 + (i % 3) * 14;
     const bx = Math.cos(ang) * dist, bz = Math.sin(ang) * dist;
     const bw = 4 + (i % 3) * 2, bd = 4 + ((i + 1) % 2) * 2, bh = 2.70;
-    const bMesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), wallMat);
+    const bMesh = new THREE.Mesh(makeLitBox(bw, bh, bd, [0.74, 0.68, 0.60]), vColMat);
     bMesh.position.set(bx, bh / 2, bz);
     bMesh.renderOrder = 110;
     group.add(bMesh);
-    const rMesh = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.3, 0.25, bd + 0.3), roofMat);
+    const rMesh = new THREE.Mesh(makeLitBox(bw + 0.3, 0.25, bd + 0.3, [0.50, 0.46, 0.42]), vColMat);
     rMesh.position.set(bx, bh + 0.125, bz);
     rMesh.renderOrder = 111;
     group.add(rMesh);
+
+    // 地面建筑柔和半影
+    if (shadowReach > 0.05) {
+      const shPlane = new THREE.Mesh(new THREE.PlaneGeometry(bw * 1.45, bd * 1.55), shadowMat);
+      shPlane.rotation.x = -Math.PI / 2;
+      shPlane.position.set(bx + shadowHoriz.x * 2.1, 0.015, bz + shadowHoriz.y * 2.1);
+      shPlane.renderOrder = 101;
+      group.add(shPlane);
+    }
+
+    // 门前壁炬/立柱火把：实心木柱 + 双层暖金火舌 + 中心对齐纯白顶点色暖光晕 + 地面暖金光池
+    if (env.glow < 0.78 && i % 2 === 0) {
+      const toOrigin = new THREE.Vector2(-bx, -bz).normalize();
+      const lx = bx + toOrigin.x * (bw * 0.5 + 1.15);
+      const lz = bz + toOrigin.y * (bd * 0.5 + 1.15);
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.10, 1.35, 8),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(0.28, 0.18, 0.10), fog: true })
+      );
+      post.position.set(lx, 0.675, lz);
+      post.renderOrder = 113;
+      group.add(post);
+
+      const flameCore = new THREE.Mesh(
+        new THREE.ConeGeometry(0.18, 0.48, 8),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.86, 0.38), fog: true })
+      );
+      flameCore.position.set(lx, 1.52, lz);
+      flameCore.renderOrder = 114;
+      group.add(flameCore);
+
+      const pool = new THREE.Mesh(new THREE.PlaneGeometry(6.8, 6.8), lampPoolMat);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(lx, 0.032, lz);
+      pool.renderOrder = 114;
+      group.add(pool);
+
+      const halo = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.6), lampHaloMat);
+      halo.position.set(lx, 1.56, lz);
+      halo.lookAt(camera.position);
+      halo.renderOrder = 115;
+      group.add(halo);
+    }
   }
 
-  // 36 棵实心树冠与树干
+  // 36 棵实心树冠与树干（含地面柔和树冠投影）
+  const trunkCol = new THREE.Color(0.32 * lit, 0.22 * lit, 0.14 * lit);
+  const leafBase = env.snow > 0.5 ? [0.68, 0.76, 0.82] : env.sand > 0.5 ? [0.46, 0.44, 0.24] : [0.22, 0.42, 0.19];
+  const leafCol = new THREE.Color(leafBase[0] * lit, leafBase[1] * lit, leafBase[2] * lit);
+  const trunkMat = new THREE.MeshBasicMaterial({ color: trunkCol, fog: true });
+  const leafMat = new THREE.MeshBasicMaterial({ color: leafCol, fog: true });
+
   for (let i = 0; i < 36; i++) {
     const ang = rnd() * Math.PI * 2;
     const dist = 12 + rnd() * 52;
     const tx = Math.cos(ang) * dist, tz = Math.sin(ang) * dist;
+    if (Math.hypot(tx - 6.5, tz + 16.5) < 9.2) continue;
     const th = 2.6 + rnd() * 2.2;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.20, th * 0.45, 8), trunkMat);
     trunk.position.set(tx, th * 0.225, tz);
@@ -1649,6 +1834,15 @@ function buildColonyForeground(env) {
     crown.position.set(tx, th * 0.62, tz);
     crown.renderOrder = 113;
     group.add(crown);
+
+    if (shadowReach > 0.05) {
+      const shR = th * 0.95;
+      const tShadow = new THREE.Mesh(new THREE.PlaneGeometry(shR, shR), shadowMat);
+      tShadow.rotation.x = -Math.PI / 2;
+      tShadow.position.set(tx + shadowHoriz.x * (th * 0.38), 0.014, tz + shadowHoriz.y * (th * 0.38));
+      tShadow.renderOrder = 101;
+      group.add(tShadow);
+    }
   }
   return group;
 }
@@ -1672,9 +1866,10 @@ function buildScene(presetKey, mode) {
   );
   camera.lookAt(camera.position.clone().add(lookDir));
 
-  // 雾效
+  // 雾效（与 SkyScenery.cs ApplyWeatherFog 完全一致：按 env.glow 在深夜蓝与白昼大气雾之间平滑插值）
   const thick = clamp01(env.fog * 0.95 + env.rain * 0.28 + env.snow * 0.22 + env.sand * 0.6 + env.storm * 0.12);
-  let fogCol = cLerp(env.horizon, [0.78, 0.80, 0.82], 0.45);
+  const hazeBase = cLerp([0.04, 0.07, 0.14], [0.78, 0.82, 0.88], clamp01(env.glow));
+  let fogCol = cLerp(env.horizon, hazeBase, 0.45);
   if (env.sand > 0.15) fogCol = cLerp(fogCol, [0.72, 0.56, 0.34], env.sand);
   if (env.snow > 0.15) fogCol = cLerp(fogCol, [0.86, 0.89, 0.93], 0.55);
 
@@ -1730,8 +1925,9 @@ function buildScene(presetKey, mode) {
   }
 
   // 3. 太阳与月亮（固定在世界天球坐标 WORLD_ORIGIN + dir * 600m）
-  const isRefined = mode === 'v2' || mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6';
-  const isSmooth = mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6';
+  const isRefined = mode === 'v2' || mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6' || mode === 'v8';
+  const isSmooth = mode === 'v3' || mode === 'v4' || mode === 'v5' || mode === 'v6' || mode === 'v8';
+  const isWorld3D = mode === 'v6' || mode === 'v8';
   const skyDist = mode === 'old' ? 112 : 600;
   const distScale = skyDist / 112.0;
   const skyAnchor = mode === 'old' ? camera.position : WORLD_ORIGIN;
@@ -1836,10 +2032,10 @@ function buildScene(presetKey, mode) {
 
   const isClearNight = env.glow < 0.2 && env.rain < 0.1 && env.snow < 0.1 && env.storm < 0.1;
 
-  if (mode === 'v6') {
-    // 远空高积云/卷云衬底
-    const cTexFar = makeCloudTexDisk(256, 307, env.cloudiness * 0.65, 0.62, env.sunDir, 'v5');
-    const aFar = env.sand > 0.5 ? 0.05 : (isClearNight ? 0.12 : lerp(0.32, 0.65, env.cloudiness));
+  if (isWorld3D) {
+    // 远空高积云/卷云衬底（晴朗星夜大幅收低云层遮挡，让满天繁星、全彩银河与极光流光通透展现）
+    const cTexFar = makeCloudTexDisk(256, 307, env.cloudiness * (isClearNight ? 0.35 : 0.65), 0.62, env.sunDir, 'v5');
+    const aFar = env.sand > 0.5 ? 0.05 : (isClearNight ? 0.04 : lerp(0.32, 0.65, env.cloudiness));
     const cloudFarMat = new THREE.MeshBasicMaterial({
       map: cTexFar,
       color: new THREE.Color(Math.min(1, lit[0] + 0.04), Math.min(1, lit[1] + 0.04), Math.min(1, lit[2] + 0.06)),
@@ -1866,7 +2062,7 @@ function buildScene(presetKey, mode) {
         const hFrac = k / (slices - 1);
         const sliceY = lerp(baseAlt, topAlt, hFrac);
         const sliceTex = makeVolumetricCloudSliceTex(512, 101, env.cloudiness, hFrac, env.sunDir, env);
-        const sliceOp = isClearNight ? 0.22 : 1.0;
+        const sliceOp = isClearNight ? 0.08 : 1.0;
         const sliceMat = new THREE.MeshBasicMaterial({
           map: sliceTex,
           transparent: true,
@@ -1928,7 +2124,7 @@ function buildScene(presetKey, mode) {
   }
 
   // 5. 雷暴 3D 闪电束
-  if (mode === 'v6' && (env.flash > 0.05 || env.storm > 0.5)) {
+  if (isWorld3D && (env.flash > 0.05 || env.storm > 0.5)) {
     // v6：100% 固定在世界坐标 (wx, y, wz) 的 3D 等离子体分形闪电（绝不随 camera.position 移动或旋转！）
     const stormYawRad = (PRESETS.storm.defaultYaw || 230) * Math.PI / 180;
     const worldBoltDir = new THREE.Vector3(Math.sin(stormYawRad), 0, -Math.cos(stormYawRad));
@@ -1950,27 +2146,61 @@ function buildScene(presetKey, mode) {
       botW.y = 0.0;
 
       const inCloudGlowMat = new THREE.MeshBasicMaterial({
-        map: makeRadialTex(64, 0.0, 1.8),
+        map: makeRadialTex(64, 0.0, 1.6),
         color: new THREE.Color(0.55, 0.80, 1.0),
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
         depthWrite: false,
         fog: false
       });
-      const inCloudGlow = new THREE.Mesh(new THREE.PlaneGeometry(34, 24), inCloudGlowMat);
+      const inCloudGlow = new THREE.Mesh(new THREE.PlaneGeometry(46, 32), inCloudGlowMat);
       inCloudGlow.position.copy(topW).setY(cloudY - 2.0);
       inCloudGlow.lookAt(WORLD_ORIGIN);
-      inCloudGlow.renderOrder = 94;
+      inCloudGlow.renderOrder = 93;
       scene.add(inCloudGlow);
+
+      // 沿闪电主干的柔和体积电离光晕（无锯齿径向软发光）+ 锐利纤细等离子电弧芯
+      const midGlowMat = new THREE.MeshBasicMaterial({
+        map: makeRadialTex(64, 0.0, 1.8),
+        color: new THREE.Color(0.42, 0.70, 1.0),
+        transparent: true,
+        opacity: 0.48,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        fog: false
+      });
+      const midGlow = new THREE.Mesh(new THREE.PlaneGeometry(26, cloudY * 1.05), midGlowMat);
+      midGlow.position.lerpVectors(topW, botW, 0.5);
+      midGlow.lookAt(WORLD_ORIGIN);
+      midGlow.renderOrder = 94;
+      scene.add(midGlow);
 
       const boltMesh = new THREE.Mesh(build3DWorldLightningBolt(topW, botW, seed, radius), plasmaMat);
       boltMesh.renderOrder = 95;
       scene.add(boltMesh);
+
+      // 落雷点地面强光照射池
+      const strikeGroundMat = new THREE.MeshBasicMaterial({
+        map: makeRadialTex(64, 0.05, 1.5),
+        color: new THREE.Color(0.65, 0.85, 1.0),
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: true
+      });
+      const strikeGround = new THREE.Mesh(new THREE.PlaneGeometry(28, 28), strikeGroundMat);
+      strikeGround.rotation.x = -Math.PI / 2;
+      strikeGround.position.set(botW.x, 0.04, botW.z);
+      strikeGround.renderOrder = 103;
+      scene.add(strikeGround);
     };
 
-    spawnWorldBolt(-6.0, 52.0, 34.0, 404, 1.65);
-    spawnWorldBolt(14.0, 64.0, 36.0, 709, 1.45);
+    spawnWorldBolt(-6.0, 52.0, 34.0, 404, 0.92);
+    spawnWorldBolt(14.0, 64.0, 36.0, 709, 0.78);
   } else if (mode !== 'old' && (env.flash > 0.05 || env.storm > 0.5)) {
     const boltDir = lookDir.clone(); boltDir.y = 0; boltDir.normalize();
     const boltRight = new THREE.Vector3(-boltDir.z, 0, boltDir.x);
@@ -2067,8 +2297,8 @@ function buildScene(presetKey, mode) {
         mesh.renderOrder = 198 + idx;
         scene.add(mesh);
       });
-    } else if (mode === 'v6') {
-      // v6：100% 固定在世界坐标 WORLD_ORIGIN 的 3D 雨滴/雪花粒子体积晶格与地面水花
+    } else if (isWorld3D) {
+      // v6/v8：100% 固定在世界坐标 WORLD_ORIGIN 的 3D 雨滴/雪花粒子体积晶格与地面水花
       const windVec = new THREE.Vector2(Math.cos(env.windAngle), Math.sin(env.windAngle)).multiplyScalar(env.wind);
       if (snowing) {
         const snowVolMat = new THREE.MeshBasicMaterial({
@@ -2084,28 +2314,29 @@ function buildScene(presetKey, mode) {
         snowVol.renderOrder = 200;
         scene.add(snowVol);
       } else {
+        const rainSkyTint = cLerp(env.horizon, [0.76, 0.84, 0.92], 0.36);
         const rainVolMat = new THREE.MeshBasicMaterial({
           map: makeRainNeedleTex(32, 128),
-          color: new THREE.Color(0.84, 0.92, 1.0),
+          color: new THREE.Color(rainSkyTint[0], rainSkyTint[1], rainSkyTint[2]),
           transparent: true,
-          opacity: 0.72 * clamp01(rate),
+          opacity: 0.24 * clamp01(rate),
           side: THREE.DoubleSide,
           depthWrite: false
         });
-        const rainVol = new THREE.Mesh(build3DRainVolumeMesh(950, windVec, 20261018), rainVolMat);
+        const rainVol = new THREE.Mesh(build3DRainVolumeMesh(1500, windVec, 20261018), rainVolMat);
         rainVol.position.copy(WORLD_ORIGIN);
         rainVol.renderOrder = 200;
         scene.add(rainVol);
 
         const splashMat = new THREE.MeshBasicMaterial({
           map: makeRadialTex(32, 0.25, 1.4),
-          color: new THREE.Color(0.82, 0.90, 0.98),
+          color: new THREE.Color(rainSkyTint[0], rainSkyTint[1], rainSkyTint[2]),
           transparent: true,
-          opacity: 0.55 * clamp01(env.rain),
+          opacity: 0.18 * clamp01(env.rain),
           side: THREE.DoubleSide,
           depthWrite: false
         });
-        const splashes = new THREE.Mesh(buildRainSplashes(110, 901), splashMat);
+        const splashes = new THREE.Mesh(buildRainSplashes(85, 901), splashMat);
         splashes.position.copy(WORLD_ORIGIN);
         splashes.renderOrder = 195;
         scene.add(splashes);

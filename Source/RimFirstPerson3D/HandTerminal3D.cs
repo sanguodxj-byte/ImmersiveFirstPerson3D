@@ -13,12 +13,12 @@ namespace RimFirstPerson3D
     public static class HandTerminal3D
     {
         // 抬起动画两端位姿（相机局部空间）：画外下方沉没 -> 眼前。
-        // 到位后略放大、略抬高、更正对相机，屏幕占视野更大，边框不再压住画面中心。
+        // 到位后正对视线且贴近相机，让终端外壳完整落入画面（占高约 96%），屏幕内口清晰锐利且四周留出一圈第一人称背景。
         private static readonly Vector3 StartPos = new Vector3(0f, -0.50f, 0.46f);
-        private static readonly Vector3 EndPos = new Vector3(0f, -0.06f, 0.36f);
+        private static readonly Vector3 EndPos = new Vector3(0f, -0.008f, 0.305f);
         private const float StartPitch = 30f;
-        private const float EndPitch = 6f;
-        public const float PanelScale = 1.32f;
+        private const float EndPitch = 1.5f;
+        public const float PanelScale = 1.44f;
 
         private static bool loadTried;
         // 按材质组拆分的独立网格：Graphics.DrawMesh(mesh, mat) 只渲染 submesh 0，
@@ -26,10 +26,29 @@ namespace RimFirstPerson3D
         private static readonly List<Mesh> groupMeshes = new List<Mesh>();
         private static readonly List<string> groups = new List<string>();
         private static readonly List<Material> mats = new List<Material>();
+        // 数据域副本：拆组之后仍要按 uv 把 screen 面重定位到边框内口、并取它的外包与朝向。
+        // 一律吃这份数据，不再从 Mesh 读回（见 BuildGroupMeshes 注释）。
+        private static readonly List<List<Vector3>> groupVerts = new List<List<Vector3>>();
+        private static readonly List<List<Vector2>> groupUvs = new List<List<Vector2>>();
+        private static readonly List<List<Vector3>> groupNormals = new List<List<Vector3>>();
+
+        // 一份终端几何数据：顶点/UV/法线 + 每个材质组的三角索引（索引指向上面的顶点表）。
+        private class TermData
+        {
+            public List<Vector3> verts = new List<Vector3>();
+            public List<Vector2> uvs = new List<Vector2>();
+            public List<Vector3> normals = new List<Vector3>();
+            public List<string> names = new List<string>();
+            public List<List<int>> tris = new List<List<int>>();
+        }
         private static Material bodyMat, darkMat, metalMat, screenMat, scanMat, maskMat;
         private static Texture screenTex;
-        private static Mesh screenQuad, scanQuad, maskQuad;
-        // 真正露在外面的屏幕面（OBJ 的 screen 组）。射线打这块，不打后面那块程序四边形。
+        private static Mesh scanQuad, maskQuad;
+        // 边框内口。Z 取反后机身正面在 z=-0.0160，黑边框外表面在 z=-0.0180；
+        // 把屏幕嵌在 z=-0.0172（在机身正面之前、黑边框之内，朝向位于 z=0 的相机）。
+        const float OpeningZ = -0.0172f;
+        const float OpeningHalfW = 0.145f;
+        const float OpeningHalfH = 0.1025f;
         static bool screenPlaneReady;
         static float planeZ, planeMinX, planeMaxX, planeMinY, planeMaxY;
         static bool planeUGrowsX = true, planeVGrowsY = true;
@@ -45,30 +64,33 @@ namespace RimFirstPerson3D
             loadTried = true;
             try
             {
-                Mesh whole = null;
-                var wholeGroups = new List<string>();
+                TermData data = null;
                 var mod = ModLister.GetActiveModWithIdentifier(ModEntry.HarmonyId);
                 if (mod != null)
                 {
-                    string path = System.IO.Path.Combine(mod.RootDir.FullName, "1.6", "Assets", "hand_terminal.obj");
+                    string path = System.IO.Path.Combine(mod.RootDir.FullName, "1.7", "Assets", "hand_terminal.obj");
                     var imported = ObjImporter3D.Load(path);
-                    if (imported != null)
-                    {
-                        whole = imported.mesh;
-                        wholeGroups.AddRange(imported.groups);
-                        BakeVertexShading(whole, wholeGroups);
-                    }
+                    if (imported != null && imported.verts != null && imported.groupTris.Count > 0)
+                        data = new TermData
+                        {
+                            verts = imported.verts,
+                            uvs = imported.uvs,
+                            normals = imported.normals,
+                            names = imported.groups,
+                            tris = imported.groupTris,
+                        };
                 }
-                if (whole == null)
+                if (data == null)
                 {
-                    whole = BuildFallbackMesh();
-                    wholeGroups.Add("body");
-                    wholeGroups.Add("screen");
+                    data = BuildFallbackData();
                     Log.Warning(ModEntry.LogPrefix + "terminal OBJ missing, fallback box in use");
                 }
-                SplitByGroup(whole, wholeGroups);
+                BuildGroupMeshes(data);
+                FitScreenToOpening();
                 CaptureScreenPlane();
                 BuildMaterials();
+                Log.Message(ModEntry.LogPrefix + "terminal built: " + groupMeshes.Count + "grp/"
+                    + data.verts.Count + "v, screenPlane=" + (screenPlaneReady ? "ok" : "none"));
             }
             catch (System.Exception e)
             {
@@ -80,14 +102,12 @@ namespace RimFirstPerson3D
         public static bool ShowingMap { get; private set; }
 
         // 查看期把屏幕换成俯视 RT。传 null 恢复自绘 UI。
-        // Cutoff 降到 0：RT 里透明纹素的 alpha 不能把屏幕四边形抠穿。
         public static void SetScreenTexture(Texture tex)
         {
             EnsureLoaded();
             ShowingMap = tex != null;
             if (screenMat == null) return;
             screenMat.mainTexture = tex != null ? tex : screenTex;
-            screenMat.SetFloat("_Cutoff", tex != null ? 0f : 0.5f);
         }
 
         // 与 Draw 共用的相机空间矩阵。缩放写在矩阵里，逆变换回到未缩放的模型坐标。
@@ -110,7 +130,16 @@ namespace RimFirstPerson3D
             if (cam == null) return false;
             Matrix4x4 world = CameraPose(cam, raise, out _);
             Matrix4x4 inv = world.inverse;
-            Ray ray = cam.ScreenPointToRay(Input.mousePosition);
+            Ray ray;
+            CommandPanel3D.ReadingHardwareMouse = true;
+            try
+            {
+                ray = cam.ScreenPointToRay(Input.mousePosition);
+            }
+            finally
+            {
+                CommandPanel3D.ReadingHardwareMouse = false;
+            }
             Vector3 o = inv.MultiplyPoint(ray.origin);
             Vector3 d = inv.MultiplyVector(ray.direction);
             float z, x0, x1, y0, y1;
@@ -127,11 +156,11 @@ namespace RimFirstPerson3D
             }
             else
             {
-                z = 0.0184f;
-                x0 = -0.145f;
-                x1 = 0.145f;
-                y0 = -0.1025f;
-                y1 = 0.1025f;
+                z = OpeningZ;
+                x0 = -OpeningHalfW;
+                x1 = OpeningHalfW;
+                y0 = -OpeningHalfH;
+                y1 = OpeningHalfH;
                 uGrows = true;
                 vGrows = true;
             }
@@ -149,6 +178,37 @@ namespace RimFirstPerson3D
             return true;
         }
 
+        // 抬起到位时屏幕面四角的世界坐标。给俯视 RT 定分辨率用（见 GodView3D.EnsureTargetFor）：
+        // 屏幕面固定在相机空间，量它在画面上占多少像素，RT 就开多大，贴上去才 1:1。
+        public static bool TryScreenCornersWorld(Camera cam, Vector3[] dst)
+        {
+            EnsureLoaded();
+            if (cam == null || dst == null || dst.Length < 4 || groupMeshes.Count == 0) return false;
+            Matrix4x4 world = CameraPose(cam, 1f, out _);
+            float z, x0, x1, y0, y1;
+            if (screenPlaneReady)
+            {
+                z = planeZ;
+                x0 = planeMinX;
+                x1 = planeMaxX;
+                y0 = planeMinY;
+                y1 = planeMaxY;
+            }
+            else
+            {
+                z = OpeningZ;
+                x0 = -OpeningHalfW;
+                x1 = OpeningHalfW;
+                y0 = -OpeningHalfH;
+                y1 = OpeningHalfH;
+            }
+            dst[0] = world.MultiplyPoint3x4(new Vector3(x0, y0, z));
+            dst[1] = world.MultiplyPoint3x4(new Vector3(x1, y0, z));
+            dst[2] = world.MultiplyPoint3x4(new Vector3(x1, y1, z));
+            dst[3] = world.MultiplyPoint3x4(new Vector3(x0, y1, z));
+            return true;
+        }
+
         // raise: 0=画外下方 1=眼前；glow: 0=熄屏 1=全亮。
         public static void Draw(Camera cam, float raise, float glow)
         {
@@ -159,17 +219,16 @@ namespace RimFirstPerson3D
             for (int i = 0; i < groupMeshes.Count; i++)
                 if (mats[i] != null) Graphics.DrawMesh(groupMeshes[i], world, mats[i], 0);
 
-            // 屏幕三层均由程序 quad 承载（OBJ 不含屏幕面）：
-            // 主屏幕（终端 UI 纹理）-> 扫描亮带滚动 -> 启动渐亮遮罩
-            if (screenQuad != null && glow > 0f)
+            // 主屏幕是贴到边框内口上的 screen 组，已经在上面的循环里画过。
+            // 再画一块程序四边形会在同一深度上叠出第二张界面。
+            if (glow > 0f)
             {
-                if (screenMat != null) Graphics.DrawMesh(screenQuad, world, screenMat, 0);
                 if (scanQuad != null && scanMat != null)
                 {
                     scanMat.mainTextureOffset = new Vector2(0f, (Time.time * 0.26f) % 1f);
                     Color c = scanMat.color;
-                    // 地图和原版界面叠在屏幕上时，扫描带只留一层薄光，避免罩住文字。
-                    c.a = (ShowingMap ? 0.12f : 0.55f) * glow;
+                    // 地图和原版界面叠在屏幕上时，只保留极微弱的屏幕光泽，不遮挡原版文字与色彩。
+                    c.a = (ShowingMap ? 0.03f : 0.55f) * glow;
                     scanMat.color = c;
                     Graphics.DrawMesh(scanQuad, world, scanMat, 0);
                 }
@@ -181,67 +240,66 @@ namespace RimFirstPerson3D
             }
         }
 
-        // ---- 顶点明暗烘焙：固定光向的 diffuse+ambient 写进顶点色，
-        //      RimWorld 无光照 shader 下以此保住体积感；screen 组恒白。----
-        private static void BakeVertexShading(Mesh src, List<string> grp)
+        // 由导入数据直接按材质组拆独立 Mesh：每个 Mesh 只有 1 个 submesh，三角用 triangles 属性写入。
+        // 这里刻意不做任何 Mesh 回读（subMeshCount / GetTriangles(List,int) / vertices / uv / normals / colors）：
+        // 1.7（Waylith/UnityStubs）下多 submesh 网格的读写不可靠，曾导致 M 键指挥面板整块静默失效。
+        // 顶点色明暗沿用原实现：固定光向 diffuse+ambient，screen 组恒白，按组序先到先得。
+        private static void BuildGroupMeshes(TermData d)
         {
-            var lightDir = new Vector3(0.25f, 0.7f, 0.65f).normalized;
-            var colors = new Color[src.vertexCount];
-            for (int i = 0; i < colors.Length; i++) colors[i] = Color.white;
-            var claimed = new int[src.vertexCount];
-            var normals = src.normals;
-
-            for (int s = 0; s < src.subMeshCount; s++)
-            {
-                bool isScreen = s < grp.Count && grp[s] == "screen";
-                var tris = src.GetTriangles(s);
-                foreach (int vi in tris)
-                {
-                    if (claimed[vi] == 1) continue;
-                    claimed[vi] = 1;
-                    if (isScreen) { colors[vi] = Color.white; continue; }
-                    float n = Mathf.Max(0f, Vector3.Dot(normals[vi], lightDir));
-                    float b = 0.52f + 0.48f * n;
-                    colors[vi] = new Color(b, b, b, 1f);
-                }
-            }
-            src.colors = colors;
-        }
-
-        // 多 submesh 整网按材质组拆独立 Mesh（顶点重映射，仅保留组内使用的顶点）。
-        private static void SplitByGroup(Mesh src, List<string> grp)
-        {
-            var v = src.vertices;
-            var uv = src.uv;
-            var nrm = src.normals;
-            var col = src.colors;
             groupMeshes.Clear();
             groups.Clear();
-            for (int s = 0; s < src.subMeshCount; s++)
+            groupVerts.Clear();
+            groupUvs.Clear();
+            groupNormals.Clear();
+
+            var lightDir = new Vector3(0.25f, 0.7f, -0.65f).normalized;
+            var colors = new Color[d.verts.Count];
+            for (int i = 0; i < colors.Length; i++) colors[i] = Color.white;
+            var claimed = new byte[d.verts.Count];
+
+            for (int s = 0; s < d.tris.Count; s++)
             {
-                var tris = src.GetTriangles(s);
-                if (tris.Length == 0) continue;
-                var map = new Dictionary<int, int>(tris.Length);
-                var nv = new List<Vector3>(tris.Length);
-                var nuv = new List<Vector2>(tris.Length);
-                var nn = new List<Vector3>(tris.Length);
-                var nc = new List<Color>(tris.Length);
-                var nt = new int[tris.Length];
-                for (int i = 0; i < tris.Length; i++)
+                var tris = d.tris[s];
+                if (tris == null || tris.Count == 0) continue;
+                bool sane = true;
+                for (int i = 0; i < tris.Count; i++)
+                    if (tris[i] < 0 || tris[i] >= d.verts.Count) { sane = false; break; }
+                if (!sane) continue;
+
+                bool isScreen = s < d.names.Count && d.names[s] == "screen";
+                var map = new Dictionary<int, int>(tris.Count);
+                var nv = new List<Vector3>(tris.Count);
+                var nuv = new List<Vector2>(tris.Count);
+                var nn = new List<Vector3>(tris.Count);
+                var nc = new List<Color>(tris.Count);
+                var nt = new int[tris.Count];
+                for (int i = 0; i < tris.Count; i++)
                 {
                     int old = tris[i];
                     if (!map.TryGetValue(old, out int ni))
                     {
                         ni = nv.Count;
                         map[old] = ni;
-                        nv.Add(v[old]);
-                        nuv.Add(uv.Length > old ? uv[old] : Vector2.zero);
-                        nn.Add(nrm.Length > old ? nrm[old] : Vector3.up);
-                        nc.Add(col.Length > old ? col[old] : Color.white);
+                        var n = d.normals != null && old < d.normals.Count ? d.normals[old] : Vector3.up;
+                        nv.Add(d.verts[old]);
+                        nuv.Add(d.uvs != null && old < d.uvs.Count ? d.uvs[old] : Vector2.zero);
+                        nn.Add(n);
+                        if (claimed[old] == 0)
+                        {
+                            claimed[old] = 1;
+                            if (!isScreen)
+                            {
+                                float k = Mathf.Max(0f, Vector3.Dot(n, lightDir));
+                                float b = 0.52f + 0.48f * k;
+                                colors[old] = new Color(b, b, b, 1f);
+                            }
+                        }
+                        nc.Add(colors[old]);
                     }
                     nt[i] = ni;
                 }
-                var m = new Mesh { name = "Fps3D_Term_" + (s < grp.Count ? grp[s] : s.ToString()) };
+
+                var m = new Mesh { name = "Fps3D_Term_" + (s < d.names.Count ? d.names[s] : s.ToString()) };
                 m.SetVertices(nv);
                 m.SetUVs(0, nuv);
                 m.SetNormals(nn);
@@ -249,32 +307,60 @@ namespace RimFirstPerson3D
                 m.triangles = nt;
                 m.RecalculateBounds();
                 groupMeshes.Add(m);
-                groups.Add(s < grp.Count ? grp[s] : "");
+                groups.Add(s < d.names.Count ? d.names[s] : "");
+                groupVerts.Add(nv);
+                groupUvs.Add(nuv);
+                groupNormals.Add(nn);
             }
         }
 
-        // 取 screen 组的实际外包和 UV 朝向。这块面在壳体之前，界面画在上面。
+        // OBJ 的 screen 与边框内口不是同一块矩形：内口 x±0.145、y±0.1025、z=0.0184，
+        // 网格却在 z=0、y[-0.1203, 0.0847]。它更靠近相机，会盖住内口里的界面，点击也打在偏掉的那块上。
+        static void FitScreenToOpening()
+        {
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (groups[i] != "screen") continue;
+                var v = groupVerts[i];
+                var uv = groupUvs[i];
+                if (uv == null || v == null || uv.Count != v.Count || v.Count == 0) return;
+                for (int k = 0; k < v.Count; k++)
+                {
+                    v[k] = new Vector3(
+                        Mathf.Lerp(-OpeningHalfW, OpeningHalfW, uv[k].x),
+                        Mathf.Lerp(-OpeningHalfH, OpeningHalfH, uv[k].y),
+                        OpeningZ);
+                }
+                var mesh = groupMeshes[i];
+                mesh.SetVertices(v);
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                Log.Message(ModEntry.LogPrefix + "terminal screen fit to bezel opening");
+                return;
+            }
+        }
+
+        // 取 screen 组的实际外包和 UV 朝向。FitScreenToOpening 已经把它对齐到边框内口。
         static void CaptureScreenPlane()
         {
             screenPlaneReady = false;
             for (int i = 0; i < groups.Count; i++)
             {
                 if (groups[i] != "screen") continue;
-                var mesh = groupMeshes[i];
-                var v = mesh.vertices;
-                var uv = mesh.uv;
-                if (v == null || v.Length == 0) return;
+                var v = groupVerts[i];
+                var uv = groupUvs[i];
+                if (v == null || v.Count == 0) return;
                 planeMinX = planeMaxX = v[0].x;
                 planeMinY = planeMaxY = v[0].y;
                 planeZ = v[0].z;
                 float uAtMinX = 0f, uAtMaxX = 1f, vAtMinY = 0f, vAtMaxY = 1f;
-                bool haveUv = uv != null && uv.Length == v.Length;
+                bool haveUv = uv != null && uv.Count == v.Count;
                 if (haveUv)
                 {
                     uAtMinX = uAtMaxX = uv[0].x;
                     vAtMinY = vAtMaxY = uv[0].y;
                 }
-                for (int k = 1; k < v.Length; k++)
+                for (int k = 1; k < v.Count; k++)
                 {
                     planeZ += v[k].z;
                     if (v[k].x < planeMinX)
@@ -298,7 +384,7 @@ namespace RimFirstPerson3D
                         if (haveUv) vAtMaxY = uv[k].y;
                     }
                 }
-                planeZ /= v.Length;
+                planeZ /= v.Count;
                 planeUGrowsX = uAtMaxX >= uAtMinX;
                 planeVGrowsY = vAtMaxY >= vAtMinY;
                 screenPlaneReady = planeMaxX - planeMinX > 0.01f && planeMaxY - planeMinY > 0.01f;
@@ -311,13 +397,20 @@ namespace RimFirstPerson3D
             bodyMat = MakePartMat(BuildNoiseTex(new Color32(148, 126, 100, 255), 8, "Fps3D_TermBody"));
             darkMat = MakePartMat(BuildNoiseTex(new Color32(28, 30, 36, 255), 5, "Fps3D_TermDark"));
             metalMat = MakePartMat(BuildBrushedTex(new Color32(184, 174, 140, 255), "Fps3D_TermMetal"));
-            screenMat = MakePartMat(BuildScreenTex());
+            screenMat = new Material(ShaderDatabase.Transparent)
+            {
+                name = "Fps3D_TermScreen",
+                mainTexture = BuildScreenTex(),
+                renderQueue = 2905
+            };
             screenTex = screenMat.mainTexture;
 
             mats.Clear();
             foreach (var g in groups)
                 mats.Add(g == "body" ? bodyMat : g == "metal" ? metalMat
                      : g == "screen" ? screenMat : darkMat);
+
+            Shader overlayShader = ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent;
 
             // 扫描亮带：竖向渐变亮条，Repeat 纵向滚动
             var scanTex = new Texture2D(4, 128, TextureFormat.RGBA32, false)
@@ -330,21 +423,19 @@ namespace RimFirstPerson3D
                 for (int x = 0; x < 4; x++) scanTex.SetPixel(x, y, c);
             }
             scanTex.Apply(false, false);
-            scanMat = new Material(ShaderDatabase.Transparent) { name = "Fps3D_TermScanMat" };
+            scanMat = new Material(overlayShader) { name = "Fps3D_TermScanMat", renderQueue = 3110 };
             scanMat.mainTexture = scanTex;
 
             // 启动渐亮遮罩：全黑面片按 1-glow 淡出
             var blackTex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "Fps3D_TermBlack" };
             blackTex.SetPixel(0, 0, Color.black);
             blackTex.Apply(false, false);
-            maskMat = new Material(ShaderDatabase.Transparent) { name = "Fps3D_TermMaskMat" };
+            maskMat = new Material(overlayShader) { name = "Fps3D_TermMaskMat", renderQueue = 3115 };
             maskMat.mainTexture = blackTex;
 
-            // 屏幕三层 quad（贴边框内口，z 递增 0.6mm 防层间穿插）：
-            // 主屏幕 0.0184 / 扫描带 0.0190 / 渐亮遮罩 0.0196
-            screenQuad = MakeQuad(0.29f, 0.205f, 0.0184f);
-            scanQuad = MakeQuad(0.288f, 0.202f, 0.0190f);
-            maskQuad = MakeQuad(0.294f, 0.209f, 0.0196f);
+            // 主屏幕是 screen 组（已贴到内口 z=-0.0172）。扫描带和遮罩贴在它朝向相机的一侧（z 更负）。
+            scanQuad = MakeQuad(0.288f, 0.202f, -0.0176f);
+            maskQuad = MakeQuad(0.294f, 0.209f, -0.0182f);
         }
 
         private static Material MakePartMat(Texture2D tex)
@@ -364,7 +455,7 @@ namespace RimFirstPerson3D
                 new Vector3(-hw, hh, z), new Vector3(hw, hh, z)
             };
             m.uv = new[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f) };
-            m.triangles = new[] { 0, 2, 1, 1, 2, 3 }; // 法线 +Z 朝相机
+            m.triangles = new[] { 0, 2, 1, 1, 2, 3 }; // 顺时针绕序，法线 -Z 朝向相机
             m.RecalculateNormals();
             m.RecalculateBounds();
             return m;
@@ -515,75 +606,59 @@ namespace RimFirstPerson3D
             FillRect(t, vx, vy, thick, len, c);
         }
 
-        // ---- 回退盒体：OBJ 不可用时保底可用（机身盒 + 屏幕面） ----
-        private static Mesh BuildFallbackMesh()
+        // ---- 回退盒体：OBJ 不可用时保底可用（机身盒 + 屏幕面）。
+        //      产出与导入数据同构的 TermData，后续走同一条 BuildGroupMeshes 路径。 ----
+        private static TermData BuildFallbackData()
         {
-            var b = new List<Vector3>();
-            var n = new List<Vector3>();
-            var tris = new List<int>();
-            var uvsList = new List<Vector2>();
+            var d = new TermData();
 
-            void Quad(Vector3 a, Vector3 b2, Vector3 c, Vector3 d)
+            int V(Vector3 p, Vector3 normal, Vector2 uv)
             {
-                int i0 = b.Count;
-                b.AddRange(new[] { a, b2, c, d });
-                var normal = Vector3.Cross(b2 - a, d - a).normalized;
-                for (int k = 0; k < 4; k++) n.Add(normal);
-                uvsList.AddRange(new[] { new Vector2(0f, 0f), new Vector2(1f, 0f),
-                    new Vector2(0f, 1f), new Vector2(1f, 1f) });
-                tris.AddRange(new[] { i0, i0 + 2, i0 + 1, i0 + 1, i0 + 2, i0 + 3 });
+                d.verts.Add(p);
+                d.normals.Add(normal);
+                d.uvs.Add(uv);
+                return d.verts.Count - 1;
+            }
+            var bodyTris = new List<int>();
+            void Quad(Vector3 a, Vector3 b2, Vector3 c, Vector3 e)
+            {
+                var normal = Vector3.Cross(b2 - a, c - a).normalized;
+                int i0 = V(a, normal, new Vector2(0f, 0f));
+                V(b2, normal, new Vector2(1f, 0f));
+                V(c, normal, new Vector2(1f, 1f));
+                V(e, normal, new Vector2(0f, 1f));
+                bodyTris.AddRange(new[] { i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3 });
             }
             void Box(Vector3 min, Vector3 max)
             {
-                Quad(new Vector3(min.x, min.y, min.z), new Vector3(max.x, min.y, min.z),
-                     new Vector3(max.x, max.y, min.z), new Vector3(min.x, max.y, min.z)); // -Z
-                Quad(new Vector3(max.x, min.y, max.z), new Vector3(min.x, min.y, max.z),
-                     new Vector3(min.x, max.y, max.z), new Vector3(max.x, max.y, max.z)); // +Z
-                Quad(new Vector3(min.x, min.y, max.z), new Vector3(min.x, min.y, min.z),
-                     new Vector3(min.x, max.y, min.z), new Vector3(min.x, max.y, max.z)); // -X
-                Quad(new Vector3(max.x, min.y, min.z), new Vector3(max.x, min.y, max.z),
-                     new Vector3(max.x, max.y, max.z), new Vector3(max.x, max.y, min.z)); // +X
-                Quad(new Vector3(min.x, max.y, min.z), new Vector3(max.x, max.y, min.z),
-                     new Vector3(max.x, max.y, max.z), new Vector3(min.x, max.y, max.z)); // +Y
+                Quad(new Vector3(max.x, min.y, min.z), new Vector3(min.x, min.y, min.z),
+                     new Vector3(min.x, max.y, min.z), new Vector3(max.x, max.y, min.z)); // -Z
                 Quad(new Vector3(min.x, min.y, max.z), new Vector3(max.x, min.y, max.z),
-                     new Vector3(max.x, min.y, min.z), new Vector3(min.x, min.y, min.z)); // -Y
+                     new Vector3(max.x, max.y, max.z), new Vector3(min.x, max.y, max.z)); // +Z
+                Quad(new Vector3(min.x, min.y, min.z), new Vector3(min.x, min.y, max.z),
+                     new Vector3(min.x, max.y, max.z), new Vector3(min.x, max.y, min.z)); // -X
+                Quad(new Vector3(max.x, min.y, max.z), new Vector3(max.x, min.y, min.z),
+                     new Vector3(max.x, max.y, min.z), new Vector3(max.x, max.y, max.z)); // +X
+                Quad(new Vector3(min.x, max.y, max.z), new Vector3(max.x, max.y, max.z),
+                     new Vector3(max.x, max.y, min.z), new Vector3(min.x, max.y, min.z)); // +Y
+                Quad(new Vector3(min.x, min.y, min.z), new Vector3(max.x, min.y, min.z),
+                     new Vector3(max.x, min.y, max.z), new Vector3(min.x, min.y, max.z)); // -Y
             }
 
             Box(new Vector3(-0.18f, -0.135f, -0.016f), new Vector3(0.18f, 0.135f, 0.016f));
-            int bodyCount = tris.Count;
-            // 屏幕面（法线 +Z）
-            int s0 = b.Count;
-            b.AddRange(new[]
-            {
-                new Vector3(-0.145f, -0.1025f, 0.0165f), new Vector3(0.145f, -0.1025f, 0.0165f),
-                new Vector3(-0.145f, 0.1025f, 0.0165f), new Vector3(0.145f, 0.1025f, 0.0165f)
-            });
-            for (int k = 0; k < 4; k++) n.Add(Vector3.forward);
-            uvsList.AddRange(new[] { new Vector2(0f, 0f), new Vector2(1f, 0f),
-                new Vector2(0f, 1f), new Vector2(1f, 1f) });
-            tris.AddRange(new[] { s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3 });
+            d.names.Add("body");
+            d.tris.Add(bodyTris);
 
-            var m = new Mesh { name = "Fps3D_TermFallback" };
-            m.SetVertices(b);
-            m.SetNormals(n);
-            m.SetUVs(0, uvsList);
-            m.subMeshCount = 2;
-            var bodyArr = new int[bodyCount]; tris.CopyTo(0, bodyArr, 0, bodyCount);
-            m.SetTriangles(bodyArr, 0);
-            m.SetTriangles(new[] { s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3 }, 1);
-            m.RecalculateBounds();
-            // 顶点色明暗（屏幕组恒白）
-            var lightDir = new Vector3(0.25f, 0.7f, 0.65f).normalized;
-            var colors = new Color[b.Count];
-            for (int i = 0; i < b.Count; i++)
-            {
-                if (i >= s0) { colors[i] = Color.white; continue; }
-                float d = Mathf.Max(0f, Vector3.Dot(n[i], lightDir));
-                float br = 0.52f + 0.48f * d;
-                colors[i] = new Color(br, br, br, 1f);
-            }
-            m.colors = colors;
-            return m;
+            // 屏幕面（法线 -Z 朝向相机）
+            var screenTris = new List<int>();
+            int s0 = V(new Vector3(-0.145f, -0.1025f, -0.0165f), Vector3.back, new Vector2(0f, 0f));
+            V(new Vector3(0.145f, -0.1025f, -0.0165f), Vector3.back, new Vector2(1f, 0f));
+            V(new Vector3(-0.145f, 0.1025f, -0.0165f), Vector3.back, new Vector2(0f, 1f));
+            V(new Vector3(0.145f, 0.1025f, -0.0165f), Vector3.back, new Vector2(1f, 1f));
+            screenTris.AddRange(new[] { s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3 });
+            d.names.Add("screen");
+            d.tris.Add(screenTris);
+            return d;
         }
     }
 }

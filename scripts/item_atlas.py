@@ -13,7 +13,7 @@
        · detail (uv=3) : 标志性局部细节（钢铁红锈斑、原木年轮截面、玻璃钢孔洞槽口、零部件铜线圈、
                          高级零部件蓝光核、医药十字标、中性胺瓶盖、燃料桶盖等）
   3. 打包输出：
-       -> 1.6/Textures/FPS3D/ItemAtlas.png（同步到 viewer/item_atlas.png 与游戏模组目录）
+       -> Textures/FPS3D/ItemAtlas.png（同步到 viewer/item_atlas.png 与游戏模组目录）
        -> Source/RimFirstPerson3D/ItemUVGen.cs（C# UV 常量表，勿手改）
        -> viewer/item_uv.json（前端审核台与守卫同源数据）
        -> docs/items/sampling.png（原版贴图 + 4 区取样色块可视化对照表）
@@ -29,7 +29,7 @@ VAN = r"D:\rim mod\RimWorld_Vanilla_Textures_1.6"
 MOD = r"D:\rim mod\FirstPerson3D"
 GAME_MOD = r"D:\Steam\steamapps\common\RimWorld\Mods\FirstPerson3D"
 
-ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "ItemAtlas.png")
+ATLAS_OUT = os.path.join(MOD, "Textures", "FPS3D", "ItemAtlas.png")
 VIEW_ATLAS = os.path.join(MOD, "viewer", "item_atlas.png")
 CS_OUT = os.path.join(MOD, "Source", "RimFirstPerson3D", "ItemUVGen.cs")
 JSON_OUT = os.path.join(MOD, "viewer", "item_uv.json")
@@ -349,7 +349,7 @@ def build_all():
     atlas_img = Image.fromarray(atlas, mode="RGBA")
     atlas_img.save(ATLAS_OUT)
     shutil.copy2(ATLAS_OUT, VIEW_ATLAS)
-    game_atlas = os.path.join(GAME_MOD, "1.6", "Textures", "FPS3D", "ItemAtlas.png")
+    game_atlas = os.path.join(GAME_MOD, "Textures", "FPS3D", "ItemAtlas.png")
     if os.path.exists(os.path.dirname(game_atlas)):
         shutil.copy2(ATLAS_OUT, game_atlas)
 

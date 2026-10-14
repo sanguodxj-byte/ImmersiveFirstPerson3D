@@ -8,8 +8,8 @@
  "arch": [
   {
    "name": "oak",
-   "height": 3.0,
-   "diameter": 2.0,
+   "height": 2.86,
+   "diameter": 2.52,
    "obj": "plants/oak.obj",
    "build": "oak",
    "regions": {
@@ -35,8 +35,8 @@
   },
   {
    "name": "maple",
-   "height": 3.0,
-   "diameter": 1.9,
+   "height": 2.59,
+   "diameter": 2.08,
    "obj": "plants/maple.obj",
    "build": "maple",
    "regions": {
@@ -62,8 +62,8 @@
   },
   {
    "name": "poplar",
-   "height": 3.0,
-   "diameter": 1.1,
+   "height": 2.84,
+   "diameter": 1.34,
    "obj": "plants/poplar.obj",
    "build": "poplar",
    "regions": {
@@ -89,8 +89,8 @@
   },
   {
    "name": "pine",
-   "height": 3.0,
-   "diameter": 1.7,
+   "height": 4.26,
+   "diameter": 2.7,
    "obj": "plants/pine.obj",
    "build": "pine",
    "regions": {
@@ -116,8 +116,8 @@
   },
   {
    "name": "cypress",
-   "height": 3.0,
-   "diameter": 1.6,
+   "height": 3.35,
+   "diameter": 2.55,
    "obj": "plants/cypress.obj",
    "build": "cypress",
    "regions": {
@@ -143,8 +143,8 @@
   },
   {
    "name": "birch",
-   "height": 3.0,
-   "diameter": 1.5,
+   "height": 2.79,
+   "diameter": 2.19,
    "obj": "plants/birch.obj",
    "build": "birch",
    "regions": {
@@ -170,8 +170,8 @@
   },
   {
    "name": "palm",
-   "height": 3.0,
-   "diameter": 3.2,
+   "height": 2.84,
+   "diameter": 2.96,
    "obj": "plants/palm.obj",
    "build": "palm",
    "regions": {
@@ -197,8 +197,8 @@
   },
   {
    "name": "drago",
-   "height": 2.8,
-   "diameter": 2.5,
+   "height": 2.47,
+   "diameter": 2.89,
    "obj": "plants/drago.obj",
    "build": "drago",
    "regions": {
@@ -224,8 +224,8 @@
   },
   {
    "name": "teak",
-   "height": 3.0,
-   "diameter": 2.1,
+   "height": 3.49,
+   "diameter": 3.13,
    "obj": "plants/teak.obj",
    "build": "teak",
    "regions": {
@@ -251,8 +251,8 @@
   },
   {
    "name": "willow",
-   "height": 3.0,
-   "diameter": 2.1,
+   "height": 2.56,
+   "diameter": 2.58,
    "obj": "plants/willow.obj",
    "build": "willow",
    "regions": {
@@ -278,8 +278,8 @@
   },
   {
    "name": "bamboo",
-   "height": 3.0,
-   "diameter": 1.2,
+   "height": 2.79,
+   "diameter": 2.7,
    "obj": "plants/bamboo.obj",
    "build": "bamboo",
    "regions": {
@@ -305,8 +305,8 @@
   },
   {
    "name": "cocoa",
-   "height": 3.0,
-   "diameter": 1.9,
+   "height": 2.86,
+   "diameter": 2.86,
    "obj": "plants/cocoa.obj",
    "build": "cocoa",
    "regions": {
@@ -338,8 +338,8 @@
   },
   {
    "name": "cecropia",
-   "height": 3.0,
-   "diameter": 1.9,
+   "height": 2.79,
+   "diameter": 2.91,
    "obj": "plants/cecropia.obj",
    "build": "cecropia",
    "regions": {
@@ -365,8 +365,8 @@
   },
   {
    "name": "anima",
-   "height": 3.5,
-   "diameter": 1.6,
+   "height": 3.51,
+   "diameter": 3.49,
    "obj": "plants/anima.obj",
    "build": "anima",
    "regions": {
@@ -397,9 +397,30 @@
    }
   },
   {
+   "name": "saguaro",
+   "height": 2.96,
+   "diameter": 2.22,
+   "obj": "plants/saguaro.obj",
+   "build": "saguaro",
+   "regions": {
+    "leaf": [
+     0.185546875,
+     0.13191489361702124,
+     0.220703125,
+     0.25106382978723407
+    ],
+    "leaf2": [
+     0.224609375,
+     0.13191489361702124,
+     0.26171875,
+     0.25106382978723407
+    ]
+   }
+  },
+  {
    "name": "bush",
    "height": 0.55,
-   "diameter": 0.9,
+   "diameter": 0.68,
    "obj": "plants/bush.obj",
    "build": "bush",
    "regions": {
@@ -420,7 +441,7 @@
   {
    "name": "berry",
    "height": 0.5,
-   "diameter": 0.9,
+   "diameter": 0.58,
    "obj": "plants/berry.obj",
    "build": "berry",
    "regions": {
@@ -447,7 +468,7 @@
   {
    "name": "brambles",
    "height": 0.45,
-   "diameter": 1.1,
+   "diameter": 0.53,
    "obj": "plants/brambles.obj",
    "build": "brambles",
    "regions": {
@@ -474,7 +495,7 @@
   {
    "name": "agave",
    "height": 0.8,
-   "diameter": 1.0,
+   "diameter": 0.84,
    "obj": "plants/agave.obj",
    "build": "agave",
    "regions": {
@@ -485,9 +506,9 @@
      0.25106382978723407
     ],
     "leaf2": [
-     0.185546875,
+     0.265625,
      0.13191489361702124,
-     0.232421875,
+     0.3125,
      0.25106382978723407
     ]
    }
@@ -516,7 +537,7 @@
   {
    "name": "shrublow",
    "height": 0.32,
-   "diameter": 0.8,
+   "diameter": 0.34,
    "obj": "plants/shrublow.obj",
    "build": "shrublow",
    "regions": {
@@ -537,7 +558,7 @@
   {
    "name": "pincushion",
    "height": 0.38,
-   "diameter": 0.6,
+   "diameter": 0.46,
    "obj": "plants/pincushion.obj",
    "build": "pincushion",
    "regions": {
@@ -556,30 +577,9 @@
    }
   },
   {
-   "name": "saguaro",
-   "height": 1.5,
-   "diameter": 0.7,
-   "obj": "plants/saguaro.obj",
-   "build": "saguaro",
-   "regions": {
-    "leaf": [
-     0.236328125,
-     0.13191489361702124,
-     0.271484375,
-     0.25106382978723407
-    ],
-    "leaf2": [
-     0.275390625,
-     0.13191489361702124,
-     0.3125,
-     0.25106382978723407
-    ]
-   }
-  },
-  {
    "name": "healroot",
    "height": 0.32,
-   "diameter": 0.6,
+   "diameter": 0.36,
    "obj": "plants/healroot.obj",
    "build": "healroot",
    "regions": {
@@ -606,7 +606,7 @@
   {
    "name": "devilstrand",
    "height": 0.36,
-   "diameter": 0.5,
+   "diameter": 0.38,
    "obj": "plants/devilstrand.obj",
    "build": "devilstrand",
    "regions": {

@@ -40,6 +40,7 @@ namespace RimFirstPerson3D
         private readonly byte[] skyVis;
         private readonly float[] topH;
         private readonly float[] bottomH;
+        private readonly float[] selfTreeH;
         private readonly float[] treeTopH;
         private readonly byte[] sunLo;
         private readonly byte[] sunHi;
@@ -66,6 +67,7 @@ namespace RimFirstPerson3D
             skyVis = new byte[n];
             topH = new float[n];
             bottomH = new float[n];
+            selfTreeH = new float[n];
             treeTopH = new float[n];
             sunLo = new byte[n];
             sunHi = new byte[n];
@@ -91,9 +93,19 @@ namespace RimFirstPerson3D
             int rows = Mathf.Clamp(Mathf.RoundToInt(Lighting3D.SweepRows), 1, 32);
             int z0 = sweepZ;
             int z1 = Mathf.Min(sizeZ, z0 + rows);
+            var rg = map.roofGrid;
+            var eg = map.edificeGrid;
+            var gg = map.glowGrid;
             for (int z = z0; z < z1; z++)
                 for (int x = 0; x < sizeX; x++)
-                    UpdateCell(x, z, env);
+                    UpdateCellSelf(x, z, rg, eg, gg);
+            for (int z = z0; z < z1; z++)
+                for (int x = 0; x < sizeX; x++)
+                {
+                    bool slDirty = FinalizeCellStruct(x, z);
+                    bool shDirty = UpdateCellShadow(x, z);
+                    if (slDirty || shDirty) AddChanged(x, z, slDirty);
+                }
             sweepZ = z1 >= sizeZ ? 0 : z1;
             if (sweepZ == 0) primed = true;
             PerfCounters.LastLightSweepMs = (float)sw.Elapsed.TotalMilliseconds;
@@ -115,10 +127,18 @@ namespace RimFirstPerson3D
             if (!Lighting3D.Enabled) { primed = true; return; }
             ComputeSunBasis(env);
             dirtyTrack = false;
-            // 先把整图高度场 (topH/bottomH) 与天光/灯具铺满，再算射线投影，保证 RayLit 读到的高度表完整。
+            var rg = map.roofGrid;
+            var eg = map.edificeGrid;
+            var gg = map.glowGrid;
+            // 第一遍：单格自身高度场 (topH/bottomH/selfTreeH) 与天光/灯具（每格仅 1 次植物查询，不扫 8 邻）
             for (int z = 0; z < sizeZ; z++)
                 for (int x = 0; x < sizeX; x++)
-                    UpdateCellStructAndLamp(x, z);
+                    UpdateCellSelf(x, z, rg, eg, gg);
+            // 第二遍：由平坦数组 selfTreeH 合成 8 邻域树冠遮蔽（O(1) 内存读取，零 GetPlant 开销）
+            for (int z = 0; z < sizeZ; z++)
+                for (int x = 0; x < sizeX; x++)
+                    FinalizeCellStruct(x, z);
+            // 第三遍：完整高度表就位后计算体素与树冠射线投影
             for (int z = 0; z < sizeZ; z++)
                 for (int x = 0; x < sizeX; x++)
                     UpdateCellShadow(x, z);
@@ -128,6 +148,7 @@ namespace RimFirstPerson3D
         }
 
         private int sweepZ;
+        private readonly bool[] tempSlDirty = new bool[262144]; // 最大支持 512x512 图的无分配脏标记缓冲
 
         private void ComputeSunBasis(SkyScenery.Env env)
         {
@@ -144,10 +165,11 @@ namespace RimFirstPerson3D
             if (!sunActive) return;
             hsx = d.x / hl;
             hsz = d.z / hl;
-            slope = d.y / hl;
+            // 限制低仰角（晨昏）射线最小坡度为 0.45，避免矮墙与小丘在晨昏投出横贯全图的 24 米死黑长影
+            slope = Mathf.Max(0.45f, d.y / hl);
         }
 
-        private bool UpdateCellStructAndLamp(int x, int z)
+        private void UpdateCellSelf(int x, int z, RoofGrid rg, EdificeGrid eg, GlowGrid gg)
         {
             int i = z * sizeX + x;
             bool structOrLampDirty = false;
@@ -155,13 +177,10 @@ namespace RimFirstPerson3D
             // ---- 天空遮蔽 + 实心高度场 ----
             byte sv = 255;
             float th = 0f, bh = 0f;
-            RoofDef rd = null;
-            try { rd = map.roofGrid != null ? map.roofGrid.RoofAt(x, z) : null; } catch { }
+            RoofDef rd = rg != null ? rg.RoofAt(i) : null;
             if (rd != null)
                 sv = rd.isThickRoof ? (byte)0 : (byte)Mathf.RoundToInt(Lighting3D.ThinRoofSkyThrough * 255f);
-            var c = new IntVec3(x, 0, z);
-            Building ed = null;
-            try { ed = c.GetEdifice(map); } catch { }
+            Building ed = eg != null ? eg[i] : null;
             if (mountain != null && mountain.TryInterval(x + 0.5f, z + 0.5f, out float low, out float high))
             {
                 th = high;
@@ -178,57 +197,50 @@ namespace RimFirstPerson3D
                 th = Fps3DState.StoryHeight;
                 bh = Fps3DState.WallHeight;
             }
-            float trH = 0f;
+            float selfTr = 0f;
             if (th == 0f)
             {
-                try
+                var c = new IntVec3(x, 0, z);
+                var plant = c.GetPlant(map);
+                // 仅成株乔木（IsTree）参与柔和树荫，小草/灌木/矮家具绝不投射长距离体素黑影
+                if (plant != null && plant.Spawned && plant.def != null && plant.def.plant != null
+                    && plant.def.plant.IsTree && plant.Growth >= 0.35f)
                 {
-                    var plant = c.GetPlant(map);
-                    if (plant != null && plant.Spawned && plant.def != null && plant.def.plant != null)
-                    {
-                        if (plant.def.plant.IsTree)
-                            trH = 2.8f * Mathf.Clamp(plant.Growth, 0.55f, 1.0f);
-                        else if (plant.Growth > 0.25f)
-                            trH = 0.85f * Mathf.Clamp(plant.Growth, 0.5f, 1.0f);
-                    }
-                    else if (ed != null && ed.def != null && ed.def.fillPercent >= 0.35f)
-                    {
-                        trH = 1.45f;
-                    }
-                    if (trH < 2.0f)
-                    {
-                        for (int d = 0; d < 8; d++)
-                        {
-                            var nc = c + GenAdj.AdjacentCells[d];
-                            if (!nc.InBounds(map)) continue;
-                            var np = nc.GetPlant(map);
-                            if (np != null && np.Spawned && np.def != null && np.def.plant != null && np.def.plant.IsTree)
-                            {
-                                float ntr = 2.6f * Mathf.Clamp(np.Growth, 0.55f, 1.0f);
-                                bool cardinal = (nc.x == x || nc.z == z);
-                                float crownH = ntr * (cardinal ? 0.88f : 0.72f);
-                                if (crownH > trH) trH = crownH;
-                            }
-                        }
-                    }
+                    float gr = plant.Growth;
+                    selfTr = 2.4f * (gr < 0.55f ? 0.55f : (gr > 1f ? 1f : gr));
                 }
-                catch { }
             }
+            selfTreeH[i] = selfTr;
             if (skyVis[i] != sv) { skyVis[i] = sv; structOrLampDirty = true; }
-            if (topH[i] != th || bottomH[i] != bh || treeTopH[i] != trH)
+            if (topH[i] != th || bottomH[i] != bh)
             {
                 topH[i] = th;
                 bottomH[i] = bh;
-                treeTopH[i] = trH;
                 structOrLampDirty = true;
             }
-            float absTop = baseY + Mathf.Max(th, trH);
-            if (absTop > maxOccY) maxOccY = absTop;
 
             // ---- 灯具彩色辉光（原版数值，含断电与挡光板） ----
-            var g = QuantGlow(SampleGlow(i));
+            Color32 rawGlow = gg != null ? gg.VisualGlowAt(i) : default(Color32);
+            var g = QuantGlow(rawGlow);
             if (!g.Equals(lamp[i])) { lamp[i] = g; structOrLampDirty = true; }
-            return structOrLampDirty;
+            if (i < tempSlDirty.Length) tempSlDirty[i] = structOrLampDirty;
+        }
+
+        // 树冠高度仅作用于树木本格（不再向 8 邻域膨胀成 3x3 实心挡光墙，柔和过渡由 Bilinear 插值完成）
+        private bool FinalizeCellStruct(int x, int z)
+        {
+            int i = z * sizeX + x;
+            bool dirty = i < tempSlDirty.Length && tempSlDirty[i];
+            float th = topH[i];
+            float trH = th == 0f ? selfTreeH[i] : 0f;
+            if (treeTopH[i] != trH)
+            {
+                treeTopH[i] = trH;
+                dirty = true;
+            }
+            float absTop = baseY + (th >= trH ? th : trH);
+            if (absTop > maxOccY) maxOccY = absTop;
+            return dirty;
         }
 
         private bool UpdateCellShadow(int x, int z)
@@ -243,7 +255,7 @@ namespace RimFirstPerson3D
                     // 射线高度用世界绝对 Y：TopY 也是绝对的（baseY + 顶高），上层图的 baseY 不为 0，
                     // 拿「离地高度」去比「绝对 Y」会把整图判成全阴影。
                     lo = RayLitLow(x, z, baseY + ShadowSampleLow);
-                    hi = RayLit(x, z, baseY + ShadowSampleHigh()) ? (byte)255 : (byte)0;
+                    hi = RayLitHi(x, z, baseY + ShadowSampleHigh());
                 }
             }
             else if (sv == 0) { lo = 0; hi = 0; }
@@ -251,13 +263,6 @@ namespace RimFirstPerson3D
             if (sunLo[i] != lo) { sunLo[i] = lo; shadowDirty = true; }
             if (sunHi[i] != hi) { sunHi[i] = hi; shadowDirty = true; }
             return shadowDirty;
-        }
-
-        private void UpdateCell(int x, int z, SkyScenery.Env env)
-        {
-            bool slDirty = UpdateCellStructAndLamp(x, z);
-            bool shDirty = UpdateCellShadow(x, z);
-            if (slDirty || shDirty) AddChanged(x, z, slDirty);
         }
 
         private static float ShadowSampleHigh()
@@ -273,17 +278,6 @@ namespace RimFirstPerson3D
                 (byte)(g.r & 0xF8), (byte)(g.g & 0xF8), (byte)(g.b & 0xF8), g.a);
         }
 
-        private Color32 SampleGlow(int index)
-        {
-            try
-            {
-                var gg = map.glowGrid;
-                if (gg == null) return default(Color32);
-                return gg.VisualGlowAt(index);
-            }
-            catch { return default(Color32); }
-        }
-
         private void AddChanged(int x, int z, bool slDirty = false)
         {
             if (!dirtyTrack) return;          // 一次铺满时不记变化，避免把整图 chunk 全标脏
@@ -295,48 +289,89 @@ namespace RimFirstPerson3D
         // 铺满阶段关掉变化登记（Prime 里切）
         private bool dirtyTrack = true;
 
-        // 从本格的 (x+0.5, y, z+0.5) 朝太阳方向走格子，撞到比 y 高的实心就判定为阴影。
-        //
+        // 高带立面投影：从本格的 (x+0.5, y, z+0.5) 朝太阳方向步进。
         // 起点必须抬到本格自身顶面之上：墙顶的顶点在 2.70 m，而带高按 0.9×墙高算只有 2.43 m，
-        // 不抬的话旁边同样高的墙就把自己的墙顶挡成阴影（机检实测白天朝上面 58.5 < 朝下面 114.6）。
-        private bool RayLit(int x, int z, float y)
+        // 不抬的话旁边同样高的墙就把自己的墙顶挡成阴影。
+        // 掠过遮挡体顶沿 (penDepth < 0.26m) 时产出柔和半影，消除立面阴影分界线的锯齿台阶。
+        private byte RayLitHi(int x, int z, float y)
         {
             float rx = x + 0.5f, rz = z + 0.5f;
-            if (OccAt(rx, y, rz)) y = TopY(z * sizeX + x) + 0.05f;
+            int selfIdx = z * sizeX + x;
+            if (y >= baseY + bottomH[selfIdx] && baseY + topH[selfIdx] > y)
+                y = baseY + topH[selfIdx] + 0.05f;
             float ceilY = maxOccY > baseY ? maxOccY : baseY + Metrics3D.MountainMaxHeight + Fps3DState.StoryHeight;
-            int maxSteps = mountain != null && mountain.Ready ? 24 : ShadowMaxSteps;
+            int maxSteps = mountain != null && mountain.Ready ? 12 : 9;
+            byte res = 255;
             for (int k = 1; k <= maxSteps; k++)
             {
                 rx += hsx; rz += hsz; y += slope;
-                int cx = Mathf.FloorToInt(rx), cz = Mathf.FloorToInt(rz);
-                if (cx < 0 || cz < 0 || cx >= sizeX || cz >= sizeZ) return true;
-                if (y > ceilY) return true;
-                if (OccAt(rx, y, rz)) return false;
+                int cx = (int)rx, cz = (int)rz;
+                if (rx < 0f || rz < 0f || cx >= sizeX || cz >= sizeZ) return res;
+                if (y > ceilY) return res;
+                int idx = cz * sizeX + cx;
+                float occTop = baseY + topH[idx];
+                if (y >= baseY + bottomH[idx] && occTop > y)
+                {
+                    float pen = occTop - y;
+                    if (pen < 0.42f && k >= 2)
+                    {
+                        byte soft = (byte)Mathf.RoundToInt((1f - pen / 0.42f) * 145f);
+                        if (soft < res) res = soft;
+                        continue;
+                    }
+                    if (k >= 5)
+                    {
+                        byte farSoft = (byte)Mathf.RoundToInt(Mathf.Clamp01((k - 4f) / 7f) * 205f);
+                        if (farSoft < res) res = farSoft;
+                        return res;
+                    }
+                    return 0;
+                }
             }
-            return true;
+            return res;
         }
 
-        // 低带地面投影：实心墙/山体全遮挡(0)，树冠中心全遮挡(0)，树冠外缘/灌木投下深半影(24)。
+        // 低带地面投影：实心墙/山体近距遮挡(0)，超过 4 米的远距山影平滑衰减，树木仅在近距离(<=3步)产生通透斑驳半影(165..185)。
         private byte RayLitLow(int x, int z, float y)
         {
             float rx = x + 0.5f, rz = z + 0.5f;
             int selfIdx = z * sizeX + x;
-            if (OccAt(rx, y, rz)) y = TopY(selfIdx) + 0.05f;
-            byte res = treeTopH[selfIdx] > 1.8f ? (byte)0 : (treeTopH[selfIdx] > 1.0f ? (byte)24 : (byte)255);
+            if (y >= baseY + bottomH[selfIdx] && baseY + topH[selfIdx] > y)
+                y = baseY + topH[selfIdx] + 0.05f;
+            float selfTree = treeTopH[selfIdx];
+            byte res = selfTree > 1.2f ? (byte)165 : (byte)255;
             float ceilY = maxOccY > baseY ? maxOccY : baseY + Metrics3D.MountainMaxHeight + Fps3DState.StoryHeight;
-            int maxSteps = mountain != null && mountain.Ready ? 24 : ShadowMaxSteps;
+            int maxSteps = mountain != null && mountain.Ready ? 10 : 8;
             for (int k = 1; k <= maxSteps; k++)
             {
                 rx += hsx; rz += hsz; y += slope;
-                int cx = Mathf.FloorToInt(rx), cz = Mathf.FloorToInt(rz);
-                if (cx < 0 || cz < 0 || cx >= sizeX || cz >= sizeZ) return res;
+                int cx = (int)rx, cz = (int)rz;
+                if (rx < 0f || rz < 0f || cx >= sizeX || cz >= sizeZ) return res;
                 if (y > ceilY) return res;
                 int idx = cz * sizeX + cx;
-                if (y >= baseY + bottomH[idx] && TopY(idx) > y) return 0;
-                if (treeTopH[idx] > 0.1f && baseY + treeTopH[idx] > y)
+                float occTop = baseY + topH[idx];
+                if (y >= baseY + bottomH[idx] && occTop > y)
                 {
-                    if (treeTopH[idx] > 1.8f) return 0;
-                    if (res > 24) res = 24;
+                    float pen = occTop - y;
+                    if (pen < 0.45f && k >= 2)
+                    {
+                        byte soft = (byte)Mathf.RoundToInt((1f - pen / 0.45f) * 145f);
+                        if (soft < res) res = soft;
+                        continue;
+                    }
+                    if (k >= 5)
+                    {
+                        byte farSoft = (byte)Mathf.RoundToInt(Mathf.Clamp01((k - 4f) / 6f) * 210f);
+                        if (farSoft < res) res = farSoft;
+                        return res;
+                    }
+                    return 0;
+                }
+                if (k <= 3)
+                {
+                    float tr = treeTopH[idx];
+                    if (tr > 1.2f && baseY + tr > y && res > 185)
+                        res = 185;
                 }
             }
             return res;
@@ -348,16 +383,19 @@ namespace RimFirstPerson3D
         // 采样
         // ------------------------------------------------------------
 
-        // 格心 (i+0.5) 双线性：顶点落在格角上时正好取四邻平均，灯下不会出现硬边。
+        // 格心 (i+0.5) 双线性（Hermite C1 平滑）：格角 (rx=0.5) 处严格等于四邻算术均值，
+        // 次网格顶点（山体斜面/门框/壁挂）过渡消除 C0 马赫带折痕。
         private void Bilinear(float x, float z, out int i00, out int i10, out int i01, out int i11,
             out float tx, out float tz)
         {
             float fx = Mathf.Clamp(x - 0.5f, 0f, sizeX - 1f);
             float fz = Mathf.Clamp(z - 0.5f, 0f, sizeZ - 1f);
-            int bx = Mathf.Min(Mathf.FloorToInt(fx), sizeX - 2 > 0 ? sizeX - 2 : 0);
-            int bz = Mathf.Min(Mathf.FloorToInt(fz), sizeZ - 2 > 0 ? sizeZ - 2 : 0);
-            tx = Mathf.Clamp01(fx - bx);
-            tz = Mathf.Clamp01(fz - bz);
+            int bx = Mathf.Min((int)fx, sizeX - 2 > 0 ? sizeX - 2 : 0);
+            int bz = Mathf.Min((int)fz, sizeZ - 2 > 0 ? sizeZ - 2 : 0);
+            float rx = Mathf.Clamp01(fx - bx);
+            float rz = Mathf.Clamp01(fz - bz);
+            tx = rx * rx * (3f - 2f * rx);
+            tz = rz * rz * (3f - 2f * rz);
             i00 = bz * sizeX + bx;
             i10 = i00 + 1;
             i01 = i00 + sizeX;
@@ -444,30 +482,40 @@ namespace RimFirstPerson3D
             }
 
             var env = Lighting3D.Current;
-            float hemi = 0.5f + 0.5f * n.y;
-            // Subtle foot contact darkening + high-ridge relief + geological strata banding
-            float footAo = Mathf.Lerp(0.84f, 1.0f, Mathf.Clamp01(localY / 1.4f));
-            float elevLift = Mathf.Lerp(0.96f, 1.08f, Mathf.Clamp01(localY / Metrics3D.MountainMaxHeight));
-            float strata = 1.0f + 0.045f * Mathf.Sin(localY * 2.4f + p.x * 0.18f + p.z * 0.14f);
-            float rockMod = footAo * elevLift * strata * aoK;
+            float hemi = 0.50f + 0.50f * n.y;
+            // 山脚泥石过渡压暗 + 高海拔山脊透亮 + 3D 岩体块面微起伏（无斑马等高线）
+            float footAo = Mathf.Lerp(0.80f, 1.0f, Mathf.Clamp01(localY / 2.0f));
+            float elevLift = Mathf.Lerp(0.95f, 1.28f, Mathf.Clamp01(localY / Metrics3D.MountainMaxHeight));
+            float rockVariation = 1.0f + 0.03f * Mathf.Sin(p.x * 0.27f + p.z * 0.21f + localY * 0.65f);
+            float rockMod = footAo * elevLift * rockVariation * aoK;
 
-            var color = Lighting3D.AmbientColor(hemi) * (env.glow * vis * rockMod);
-            float direct = Lighting3D.SunShape(Vector3.Dot(n, env.sunDir));
+            // 低多边形山石块面立体反差：即使在背阳面，不同倾角与方位的岩面也有鲜明的受光/背光分明感
+            var styleDir = new Vector3(-env.sunDir.x * 0.55f + 0.35f, 0.70f, -env.sunDir.z * 0.55f - 0.30f).normalized;
+            var crossDir = new Vector3(-env.sunDir.z, 0.25f, env.sunDir.x).normalized;
+            float facetForm = Mathf.Lerp(0.66f, 1.42f, Mathf.Clamp01(0.45f + 0.55f * Vector3.Dot(n, styleDir)))
+                            * (0.88f + 0.24f * Mathf.Abs(Vector3.Dot(n, crossDir)));
+            var color = Lighting3D.AmbientColor(hemi) * (env.glow * vis * rockMod * facetForm * 1.12f);
+            float ndl = Vector3.Dot(n, env.sunDir);
+            float direct = Mathf.Max(Lighting3D.SunShape(ndl), Mathf.Clamp01((ndl + 0.35f) / 1.15f) * 0.72f);
             if (env.glow > 0.001f && direct > 0f && vis > 0.01f)
             {
-                var q = p + n * 0.18f + Vector3.up * 0.12f;
-                bool lit = true;
+                // 抬高起点并直接跨过前 2 步本坡体素，3 步覆盖远距山峰遮挡
+                float litFactor = 1f;
                 if (Lighting3D.ShadowsOn && sunActive)
                 {
+                    float rx = p.x + n.x * 0.65f + hsx * 2f;
+                    float ry = p.y + n.y * 0.65f + 0.48f + slope * 2f;
+                    float rz = p.z + n.z * 0.65f + hsz * 2f;
+                    float dx2 = hsx * 2f, dy2 = slope * 2f, dz2 = hsz * 2f;
                     float ceilY = maxOccY > baseY ? maxOccY : baseY + Metrics3D.MountainMaxHeight + Fps3DState.StoryHeight;
-                    for (int k = 1; k <= 24; k++)
+                    for (int k = 0; k < 3; k++)
                     {
-                        q.x += hsx; q.z += hsz; q.y += slope;
-                        if (q.x < 0f || q.z < 0f || q.x >= sizeX || q.z >= sizeZ || q.y > ceilY) break;
-                        if (OccAt(q.x, q.y, q.z)) { lit = false; break; }
+                        rx += dx2; rz += dz2; ry += dy2;
+                        if (rx < 0f || rz < 0f || rx >= sizeX || rz >= sizeZ || ry > ceilY) break;
+                        if (OccAt(rx, ry, rz)) { litFactor = 0.48f; break; }
                     }
                 }
-                if (lit) color += Lighting3D.SunColor() * (direct * env.glow * Lighting3D.SunStrength * vis * rockMod);
+                color += Lighting3D.SunColor() * (direct * litFactor * env.glow * Lighting3D.SunStrength * vis * rockMod);
             }
             if (env.glow < 0.5f && vis > 0.01f)
                 color += Lighting3D.MoonColor() * (Mathf.Max(0f, Vector3.Dot(n, env.moonDir))

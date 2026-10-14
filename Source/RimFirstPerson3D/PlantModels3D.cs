@@ -12,10 +12,10 @@ namespace RimFirstPerson3D
     // ============================================================
     //
     // 【几何】外部构建（scripts/plant_build.py 单一真源）：24 个原型
-    //         （14 树 + 10 小株）参数化生成，落盘 1.6/Assets/plants/<原型>.obj，
+    //         （14 树 + 10 小株）参数化生成，落盘 1.7\Assets/plants/<原型>.obj，
     //         本类经 ObjImporter3D 运行时导入并按原型缓存。审核页
     //         viewer/plants.html 加载的就是同一批 OBJ 文件，零第二份口径。
-    // 【材质】1.6/Textures/FPS3D/PlantAtlas.png（取样自原版植物贴图，无光照
+    // 【材质】Textures/FPS3D/PlantAtlas.png（取样自原版植物贴图，无光照
     //         Cutout 平涂 —— 与家具/残骸同一套做法）。三档色调派生自同一
     //         材质，按 thingIDNumber 哈希分档，打破大片同色。
     // 【朝向】模型自身无朝向语义，按 thingIDNumber 哈希给 0-360° 随机朝向
@@ -50,7 +50,7 @@ namespace RimFirstPerson3D
         public static bool Enabled = true;
 
         /// <summary>defName -> 原型名（原型清单见 scripts/plant_build.py SPEC）。</summary>
-        private static readonly Dictionary<string, string> Types = new Dictionary<string, string>(30)
+        private static readonly Dictionary<string, string> Types = new Dictionary<string, string>(30, System.StringComparer.OrdinalIgnoreCase)
         {
             { "plant_treeoak", "oak" },
             { "plant_treemaple", "maple" },
@@ -88,7 +88,7 @@ namespace RimFirstPerson3D
         {
             if (!Enabled || p == null || p.def == null || string.IsNullOrEmpty(p.def.defName))
                 return null;
-            return Types.TryGetValue(p.def.defName.ToLowerInvariant(), out var a) ? a : null;
+            return Types.TryGetValue(p.def.defName, out var a) ? a : null;
         }
 
         public static bool IsTreeArch(string arch)
@@ -166,7 +166,7 @@ namespace RimFirstPerson3D
         {
             var mod = ModLister.GetActiveModWithIdentifier(ModEntry.HarmonyId);
             if (mod == null) return null;
-            return Path.Combine(mod.RootDir.FullName, "1.6", "Assets", "plants", arch + ".obj");
+            return Path.Combine(mod.RootDir.FullName, "1.7", "Assets", "plants", arch + ".obj");
         }
 
         /// <summary>取原型网格（本体+描边壳）；OBJ 缺失返回 body == null 的空哨兵。</summary>
@@ -239,8 +239,8 @@ namespace RimFirstPerson3D
                     ? nors[i].normalized : Vector3.up;
                 float ndl = Mathf.Clamp01(0.5f + 0.5f * Vector3.Dot(n, dir));
                 float hy = Mathf.Clamp01((verts[i].y - yMin) / ySpan);
-                // 树冠顶亮、背阴侧柔暗、树干根部带轻微地面遮蔽，均值围绕 0.90~1.00
-                float shade = Mathf.Lerp(0.76f, 1.00f, ndl) * Mathf.Lerp(0.84f, 1.04f, hy);
+                // 树冠顶亮、背阴侧柔和通透、树干根部带轻微地面遮蔽，保持叶片鲜亮
+                float shade = Mathf.Lerp(0.88f, 1.02f, ndl) * Mathf.Lerp(0.90f, 1.03f, hy);
                 byte v = (byte)Mathf.RoundToInt(Mathf.Clamp01(shade) * 255f);
                 cols[i] = new Color32(v, v, v, 255);
             }
@@ -287,11 +287,13 @@ namespace RimFirstPerson3D
                 acc[localOf[t + 2]] += n;
             }
 
+            Vector3 center = src.bounds.center;
             var hv = new Vector3[uniq.Count];
             for (int i = 0; i < uniq.Count; i++)
             {
                 var n = acc[i];
-                hv[i] = uniq[i] + (n.sqrMagnitude > 1e-8f ? n.normalized : Vector3.up) * width;
+                Vector3 dir = n.sqrMagnitude > 1e-8f ? n.normalized : (uniq[i] - center).normalized;
+                hv[i] = uniq[i] + dir * width;
             }
             var ht = new int[tris.Length];
             for (int t = 0; t + 2 < tris.Length; t += 3)

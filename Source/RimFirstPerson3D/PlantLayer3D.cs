@@ -48,6 +48,7 @@ namespace RimFirstPerson3D
             public Mesh mesh;
             public Vector3[] positions;
             public Color32[] colors;
+            public byte[] tints;
         }
 
         private class ModelBatch
@@ -57,8 +58,15 @@ namespace RimFirstPerson3D
             public Mesh hull;
             public Vector3[] positions;
             public Color32[] colors;
+            public byte[] tints;
             public int tint;
             public int count;
+        }
+
+        private class InstGroup
+        {
+            public readonly List<Matrix4x4> mats = new List<Matrix4x4>(32);
+            public readonly List<byte> tints = new List<byte>(32);
         }
 
         private class PlantChunk
@@ -143,11 +151,12 @@ namespace RimFirstPerson3D
             get
             {
                 if (shadowMat != null) return shadowMat;
-                shadowMat = new Material(ShaderDatabase.Transparent)
+                shadowMat = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
                 {
                     name = "Fps3D_PlantShadow",
-                    mainTexture = ProcTex3D.Radial(64, 0.25f, 1.25f),
-                    color = new Color(0f, 0f, 0f, 0.56f)
+                    mainTexture = ProcTex3D.Radial(64, 0.25f, 1.35f),
+                    color = new Color(0f, 0f, 0f, 0.22f),
+                    renderQueue = 2915
                 };
                 return shadowMat;
             }
@@ -239,7 +248,8 @@ namespace RimFirstPerson3D
             if (g == null) return null;
             Material m = null;
             try { m = g.MatAt(t.Rotation, t); } catch { }
-            if (m == null) { try { m = g.MatSingle; } catch { } }
+            if (m == null || m.NullOrBad()) { try { m = g.MatSingle; } catch { } }
+            if (m != null && m.NullOrBad()) return null;
             return m;
         }
 
@@ -287,11 +297,11 @@ namespace RimFirstPerson3D
             int z1 = Mathf.Min(z0 + ChunkSize, map.Size.z);
             if (x0 >= x1 || z0 >= z1) return;
 
-            var starByMat = new Dictionary<Material, List<Matrix4x4>>();
-            var crossByMat = new Dictionary<Material, List<Matrix4x4>>();
+            var starByMat = new Dictionary<Material, InstGroup>();
+            var crossByMat = new Dictionary<Material, InstGroup>();
             var shadowList = new List<Matrix4x4>();
-            var byArchTint = PlantModels3D.TintMat(0) != null
-                ? new Dictionary<string, List<Matrix4x4>>()
+            var byArch = PlantModels3D.TintMat(0) != null
+                ? new Dictionary<string, InstGroup>()
                 : null;
 
             var st = FirstPerson3DMod.settings;
@@ -311,7 +321,7 @@ namespace RimFirstPerson3D
                     {
                         var arch = PlantModels3D.ArchOf(plant);
                         var proto = arch != null ? PlantModels3D.Prototype(arch) : null;
-                        if (proto != null && proto.body != null && byArchTint != null)
+                        if (proto != null && proto.body != null && byArch != null)
                         {
                             int h = plant.thingIDNumber;
                             int tint = ((h * 7919) % 3 + 3) % 3;
@@ -322,30 +332,33 @@ namespace RimFirstPerson3D
                                 new Vector3(dp.x + worldOffset.x, baseY, dp.z + worldOffset.z),
                                 Quaternion.AngleAxis(yaw, Vector3.up),
                                 new Vector3(scale, scale, scale));
-                            string key = arch + "#" + tint;
-                            if (!byArchTint.TryGetValue(key, out var list))
+                            if (!byArch.TryGetValue(arch, out var grp))
                             {
-                                list = new List<Matrix4x4>(16);
-                                byArchTint[key] = list;
+                                grp = new InstGroup();
+                                byArch[arch] = grp;
                             }
-                            list.Add(m);
+                            grp.mats.Add(m);
+                            grp.tints.Add((byte)tint);
 
                             var size = SizeOf(plant);
                             bool isTreeModel = plant.def.plant != null && plant.def.plant.IsTree;
-                            float shRadius = isTreeModel ? Mathf.Max(1.85f, size.x * 1.45f) : Mathf.Max(0.80f, size.x * 0.90f);
-                            shadowList.Add(Matrix4x4.TRS(
-                                new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
-                                Quaternion.identity,
-                                new Vector3(shRadius, 1f, shRadius)));
+                            if (isTreeModel)
+                            {
+                                float shRadius = Mathf.Clamp(size.x * 0.85f, 1.05f, 1.55f);
+                                shadowList.Add(Matrix4x4.TRS(
+                                    new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
+                                    Quaternion.identity,
+                                    new Vector3(shRadius, 1f, shRadius)));
+                            }
                             continue;
                         }
 
                         var src = MatFor(plant);
-                        if (src == null || src.mainTexture == null) continue;
+                        if (src == null || src.mainTexture == null || src.NullOrBad() || src.mainTexture == BaseContent.BadTex) continue;
                         var plantDp = plant.DrawPos;
                         int tintIdx = (plant.thingIDNumber * 7919) % 3;
                         if (tintIdx < 0) tintIdx += 3;
-                        var mat = TintOf(src, tintIdx);
+                        var mat = TintOf(src, 0);
                         if (mat == null) continue;
 
                         var visualSize = SizeOf(plant);
@@ -355,19 +368,23 @@ namespace RimFirstPerson3D
                         float worldH = height > 0.01f ? height : 1f;
 
                         var pos = new Vector3(plantDp.x + worldOffset.x, baseY, plantDp.z + worldOffset.z);
-                        float shR = isTree ? Mathf.Max(1.85f, visualSize.x * 1.45f) : Mathf.Max(0.72f, visualSize.x * 0.85f);
-                        shadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
-                            new Vector3(shR, 1f, shR)));
+                        if (isTree)
+                        {
+                            float shR = Mathf.Clamp(visualSize.x * 0.85f, 1.05f, 1.55f);
+                            shadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
+                                new Vector3(shR, 1f, shR)));
+                        }
 
                         var target = isTree ? starByMat : crossByMat;
                         var pMatrix = Matrix4x4.TRS(pos, Quaternion.identity,
                             new Vector3(visualSize.x, Mathf.Max(0.05f, worldH * hScale), visualSize.x));
-                        if (!target.TryGetValue(mat, out var pList))
+                        if (!target.TryGetValue(mat, out var pGrp))
                         {
-                            pList = new List<Matrix4x4>(32);
-                            target[mat] = pList;
+                            pGrp = new InstGroup();
+                            target[mat] = pGrp;
                         }
-                        pList.Add(pMatrix);
+                        pGrp.mats.Add(pMatrix);
+                        pGrp.tints.Add((byte)tintIdx);
                     }
                     catch { }
                 }
@@ -379,36 +396,39 @@ namespace RimFirstPerson3D
                 var lf = LF;
                 foreach (var kv in starByMat)
                 {
-                    var mesh = Util3D.BuildInstancedMesh(Util3D.StarMesh, kv.Value, lf, worldOffset, out var posArr, out var colBuf, 2.2f);
-                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.StarMesh, mesh = mesh, positions = posArr, colors = colBuf });
+                    var tintsArr = kv.Value.tints.ToArray();
+                    var mesh = Util3D.BuildInstancedMesh(Util3D.StarMesh, kv.Value.mats, lf, worldOffset, out var posArr, out var colBuf, 2.2f, tintsArr);
+                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.StarMesh, mesh = mesh, positions = posArr, colors = colBuf, tints = tintsArr });
                 }
                 foreach (var kv in crossByMat)
                 {
-                    var mesh = Util3D.BuildInstancedMesh(Util3D.CrossMesh, kv.Value, lf, worldOffset, out var posArr, out var colBuf, 0f);
-                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.CrossMesh, mesh = mesh, positions = posArr, colors = colBuf });
+                    var tintsArr = kv.Value.tints.ToArray();
+                    var mesh = Util3D.BuildInstancedMesh(Util3D.CrossMesh, kv.Value.mats, lf, worldOffset, out var posArr, out var colBuf, 1.45f, tintsArr);
+                    if (mesh != null) chunk.batches.Add(new Batch { mat = kv.Key, srcMesh = Util3D.CrossMesh, mesh = mesh, positions = posArr, colors = colBuf, tints = tintsArr });
                 }
                 if (shadowList.Count > 0)
                     chunk.shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowList);
 
-                if (byArchTint != null)
+                if (byArch != null)
                 {
-                    foreach (var kv in byArchTint)
+                    foreach (var kv in byArch)
                     {
-                        string arch = kv.Key.Substring(0, kv.Key.IndexOf('#'));
-                        int tint = int.Parse(kv.Key.Substring(kv.Key.IndexOf('#') + 1));
+                        string arch = kv.Key;
                         var proto = PlantModels3D.Prototype(arch);
                         if (proto == null || proto.body == null) continue;
-                        float sampleOffY = PlantModels3D.IsTreeArch(arch) ? 2.2f : 0f;
-                        var bodyMesh = Util3D.BuildInstancedMesh(proto.body, kv.Value, lf, worldOffset, out var posArr, out var colBuf, sampleOffY);
+                        float sampleOffY = PlantModels3D.IsTreeArch(arch) ? 2.2f : 1.45f;
+                        var tintsArr = kv.Value.tints.ToArray();
+                        var bodyMesh = Util3D.BuildInstancedMesh(proto.body, kv.Value.mats, lf, worldOffset, out var posArr, out var colBuf, sampleOffY, tintsArr);
                         var mb = new ModelBatch
                         {
                             srcBody = proto.body,
                             body = bodyMesh,
-                            hull = Fps3DState.DrawOutlines ? Util3D.BuildInstancedMesh(proto.hull, kv.Value) : null,
+                            hull = Fps3DState.DrawOutlines ? Util3D.BuildInstancedMesh(proto.hull, kv.Value.mats) : null,
                             positions = posArr,
                             colors = colBuf,
-                            tint = tint,
-                            count = kv.Value.Count
+                            tints = tintsArr,
+                            tint = 0,
+                            count = kv.Value.mats.Count
                         };
                         if (mb.body != null) chunk.modelBatches.Add(mb);
                     }
@@ -427,12 +447,12 @@ namespace RimFirstPerson3D
             for (int i = 0; i < chunk.batches.Count; i++)
             {
                 var b = chunk.batches[i];
-                Util3D.RecolorInstancedMesh(b.mesh, b.srcMesh, b.positions, b.colors, lf);
+                Util3D.RecolorInstancedMesh(b.mesh, b.srcMesh, b.positions, b.colors, lf, b.tints);
             }
             for (int i = 0; i < chunk.modelBatches.Count; i++)
             {
                 var mb = chunk.modelBatches[i];
-                Util3D.RecolorInstancedMesh(mb.body, mb.srcBody, mb.positions, mb.colors, lf);
+                Util3D.RecolorInstancedMesh(mb.body, mb.srcBody, mb.positions, mb.colors, lf, mb.tints);
             }
         }
 
@@ -489,15 +509,17 @@ namespace RimFirstPerson3D
                         budget--;
                     }
                 }
-                int colorBudget = budget * 2 + 2;
-                for (int i = 0; i < colorDirtyKeys.Count && colorBudget > 0; i++)
+                // 时间预算见 Fps3DState.ChunkColorBudgetMs：太阳在动时光场每帧标脏的是
+                // 全图扫描带，其中绝大多数块不在视野里 —— 屏幕外的直接不刷。
+                float colorMs = Fps3DState.ChunkColorBudgetMs;
+                for (int i = 0; i < colorDirtyKeys.Count && colorMs > 0f; i++)
                 {
                     int k = colorDirtyKeys[i];
-                    if (chunks.TryGetValue(k, out var ch) && ch.colorDirty && !ch.dirty)
-                    {
-                        RecolorChunk(ch);
-                        colorBudget--;
-                    }
+                    if (!chunks.TryGetValue(k, out var ch) || !ch.colorDirty || ch.dirty) continue;
+                    if (!Frustum3D.Visible(ch.bounds)) continue;
+                    double before = sw.Elapsed.TotalMilliseconds;
+                    RecolorChunk(ch);
+                    colorMs -= (float)(sw.Elapsed.TotalMilliseconds - before);
                 }
                 PerfCounters.LastPlantBuildMs = (float)sw.Elapsed.TotalMilliseconds;
             }
@@ -514,11 +536,18 @@ namespace RimFirstPerson3D
             var shadowM = ShadowMat;
             Matrix4x4 shadowMatrix = Matrix4x4.identity;
             var env = Lighting3D.Current;
+            if (shadowM != null)
+                shadowM.color = new Color(0f, 0f, 0f, 0.20f * Mathf.Clamp01(env.glow));
             if (env.glow > 0.05f && env.sunDir.y > 0.05f)
             {
                 float offScale = Mathf.Clamp(0.28f / Mathf.Max(0.25f, env.sunDir.y), 0.12f, 0.55f);
                 shadowMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * offScale, 0f, -env.sunDir.z * offScale));
             }
+
+            var modelBaseMat = PlantModels3D.TintMat(0);
+            var outlineMat = Util3D.OutlineMat;
+            bool allowOutline = Fps3DState.DrawOutlines && outlineMat != null;
+            const float MaxPlantHullDistSq = 48f * 48f;
 
             foreach (var kv in chunks)
             {
@@ -526,6 +555,10 @@ namespace RimFirstPerson3D
                 if (ch.plantCount == 0 || ch.batches.Count == 0 && ch.modelBatches.Count == 0) continue;
 
                 if (!Frustum3D.Visible(ch.bounds)) continue;
+
+                float dx = ch.bounds.center.x - camPos.x;
+                float dz = ch.bounds.center.z - camPos.z;
+                bool drawHullHere = allowOutline && (dx * dx + dz * dz <= MaxPlantHullDistSq);
 
                 for (int i = 0; i < ch.batches.Count; i++)
                 {
@@ -536,9 +569,9 @@ namespace RimFirstPerson3D
                 for (int i = 0; i < ch.modelBatches.Count; i++)
                 {
                     var mb = ch.modelBatches[i];
-                    Graphics.DrawMesh(mb.body, Matrix4x4.identity, PlantModels3D.TintMat(mb.tint), 0);
-                    if (mb.hull != null && Fps3DState.DrawOutlines)
-                        Graphics.DrawMesh(mb.hull, Matrix4x4.identity, Util3D.OutlineMat, 0);
+                    Graphics.DrawMesh(mb.body, Matrix4x4.identity, modelBaseMat, 0);
+                    if (drawHullHere && mb.hull != null)
+                        Graphics.DrawMesh(mb.hull, Matrix4x4.identity, outlineMat, 0);
                     batchesCount++;
                     PerfCounters.PlantMeshesDrawn++;
                 }

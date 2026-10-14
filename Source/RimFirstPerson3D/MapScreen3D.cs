@@ -1,6 +1,6 @@
 // AI生成
 using System;
-using System.Reflection;
+using HarmonyLib;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -8,8 +8,8 @@ using Verse;
 namespace RimFirstPerson3D
 {
     // 指挥面板（M 键）：终端抬到眼前。俯视地图画进屏幕，原版 UI 再贴到这块纹理上。
-    // 主相机始终留在第一人称。原版没用掉的左键拖拽平移焦点，点一下沿用原版点选。
-    // Open 恒为 false，避免旧的「全屏接管 → Leave3D」短路再次生效。
+    // 主相机始终留在第一人称。左键点选/框选、右键下令均走原版 Selector；
+    // WASD/方向键、鼠标中键拖拽（或 Alt+左键拖拽）平移地图，滚轮缩放视野，点击头像或信件自动跳转焦点。
     public static class MapScreen3D
     {
         enum Phase { Closed, Rising, Viewing, Lowering }
@@ -19,24 +19,61 @@ namespace RimFirstPerson3D
         static Vector3 focus;
         static bool focusReady;
         static bool dragging;
-        static bool dragMoved;
+        static int dragButton = -1;
         static Vector2 dragUv;
         static Vector3 dragFocus;
         static Pawn pickedPawn;
-        static MethodInfo selectUnderMouse;
-        static MethodInfo selectAllMatching;
-        static bool selectLookup;
-        static bool loggedSelect;
+        static Pawn initialPawn;
 
         const float RiseDur = 0.55f;
         const float FallDur = 0.45f;
-        const float DragSlop = 0.02f;
 
-        public static bool Open => false;
+        public static bool Open => phase != Phase.Closed;
         public static bool Viewing => phase == Phase.Viewing;
         public static bool Animating => phase == Phase.Rising || phase == Phase.Lowering;
         // 抬起、查看、放下期间第一人称移动让位。环视在查看期另由 CameraRig 停掉。
         public static bool BlocksGameplay => phase != Phase.Closed;
+
+        public static void Patch(Harmony harmony)
+        {
+            var jumpVec = AccessTools.Method(typeof(CameraDriver), nameof(CameraDriver.JumpToCurrentMapLoc), new[] { typeof(Vector3) });
+            if (jumpVec != null)
+                harmony.Patch(jumpVec, postfix: new HarmonyMethod(typeof(MapScreen3D), nameof(OnCameraJumpVec)));
+
+            var panCell = AccessTools.Method(typeof(CameraDriver), nameof(CameraDriver.PanToMapLoc), new[] { typeof(IntVec3) });
+            if (panCell != null)
+                harmony.Patch(panCell, postfix: new HarmonyMethod(typeof(MapScreen3D), nameof(OnCameraPanCell)));
+
+            var panSize = AccessTools.Method(typeof(CameraDriver), nameof(CameraDriver.PanToMapLocAndSize));
+            if (panSize != null)
+                harmony.Patch(panSize, postfix: new HarmonyMethod(typeof(MapScreen3D), nameof(OnCameraPanSize)));
+        }
+
+        static void OnCameraJumpVec(Vector3 loc)
+        {
+            if (!Viewing) return;
+            focus = new Vector3(loc.x, 0f, loc.z);
+            focusReady = true;
+            if (Find.CurrentMap != null) ClampFocus(Find.CurrentMap);
+        }
+
+        static void OnCameraPanCell(IntVec3 cell)
+        {
+            if (!Viewing) return;
+            Vector3 loc = cell.ToVector3Shifted();
+            focus = new Vector3(loc.x, 0f, loc.z);
+            focusReady = true;
+            if (Find.CurrentMap != null) ClampFocus(Find.CurrentMap);
+        }
+
+        static void OnCameraPanSize(Vector3 loc, float size)
+        {
+            if (!Viewing) return;
+            focus = new Vector3(loc.x, 0f, loc.z);
+            focusReady = true;
+            GodView3D.SetOrthoSize(size);
+            if (Find.CurrentMap != null) ClampFocus(Find.CurrentMap);
+        }
 
         public static void Toggle()
         {
@@ -48,16 +85,23 @@ namespace RimFirstPerson3D
         static void Show()
         {
             if (!Fps3DState.Active || Find.CurrentMap == null) return;
-            if (!HandTerminal3D.Ready) return;
+            if (!HandTerminal3D.Ready)
+            {
+                Log.Warning(ModEntry.LogPrefix + "map screen suppressed: terminal mesh not ready");
+                return;
+            }
+            // 先量出这块屏在画面上占多少像素，把俯视 RT 开到同样大：1:1 贴上去，界面文字才不糊。
+            GodView3D.EnsureTargetFor(CameraRig3D.Cam);
             phase = Phase.Rising;
             animT = 0f;
             focusReady = false;
             dragging = false;
-            dragMoved = false;
+            dragButton = -1;
+            initialPawn = CameraRig3D.Possessed;
             pickedPawn = null;
             CommandPanel3D.Clear();
-            PanelUi3D.Reset();
             HandTerminal3D.SetScreenTexture(null);
+            CameraRig3D.NotifyScreenShown();
         }
 
         static void Close()
@@ -65,8 +109,11 @@ namespace RimFirstPerson3D
             phase = Phase.Lowering;
             animT = 0f;
             dragging = false;
+            dragButton = -1;
+            SyncSelectedColonist();
             RememberPickedPawn();
             pickedPawn = null;
+            CameraRig3D.ReengageAfterScreen();
         }
 
         public static void ForceClose()
@@ -75,10 +122,11 @@ namespace RimFirstPerson3D
             animT = 0f;
             focusReady = false;
             dragging = false;
+            dragButton = -1;
             pickedPawn = null;
             CommandPanel3D.Clear();
-            PanelUi3D.Reset();
             HandTerminal3D.SetScreenTexture(null);
+            CameraRig3D.ReengageAfterScreen();
         }
 
         public static void Tick(float dt)
@@ -100,6 +148,15 @@ namespace RimFirstPerson3D
                 }
                 case Phase.Viewing:
                 {
+                    if (Input.GetKeyDown(KeyCode.Escape))
+                    {
+                        var stack = Find.WindowStack;
+                        if (stack == null || (!stack.NonImmediateDialogWindowOpen && stack.FloatMenu == null))
+                        {
+                            Close();
+                            break;
+                        }
+                    }
                     CommandPanel3D.HoldVirtualScreen();
                     EnsureFocus();
                     var map = Find.CurrentMap;
@@ -108,6 +165,8 @@ namespace RimFirstPerson3D
                         Close();
                         break;
                     }
+                    UpdateKeyboardNavigation(dt, map);
+                    SyncSelectedColonist();
                     // 先摆相机再读指针，点击打在已经画过的那一帧位姿上。
                     GodView3D.Pose(focus);
                     UpdatePointer();
@@ -127,10 +186,40 @@ namespace RimFirstPerson3D
                         phase = Phase.Closed;
                         animT = 0f;
                         CommandPanel3D.Clear();
-                        PanelUi3D.Reset();
                         HandTerminal3D.SetScreenTexture(null);
                     }
                     break;
+                }
+            }
+        }
+
+        static void UpdateKeyboardNavigation(float dt, Map map)
+        {
+            if (GUIUtility.keyboardControl != 0) return;
+            float dx = 0f, dz = 0f;
+            if (KeyBindingDefOf.MapDolly_Left != null && KeyBindingDefOf.MapDolly_Left.IsDown) dx -= 1f;
+            if (KeyBindingDefOf.MapDolly_Right != null && KeyBindingDefOf.MapDolly_Right.IsDown) dx += 1f;
+            if (KeyBindingDefOf.MapDolly_Up != null && KeyBindingDefOf.MapDolly_Up.IsDown) dz += 1f;
+            if (KeyBindingDefOf.MapDolly_Down != null && KeyBindingDefOf.MapDolly_Down.IsDown) dz -= 1f;
+            if (dx != 0f || dz != 0f)
+            {
+                float speed = Mathf.Max(14f, GodView3D.OrthoSize * 1.45f);
+                focus.x += dx * speed * dt;
+                focus.z += dz * speed * dt;
+                ClampFocus(map);
+            }
+        }
+
+        static void SyncSelectedColonist()
+        {
+            var sel = Find.Selector?.SelectedObjects;
+            if (sel == null) return;
+            for (int i = 0; i < sel.Count; i++)
+            {
+                if (sel[i] is Pawn p && !p.Destroyed && p.Spawned && p.IsColonist && !p.Dead)
+                {
+                    pickedPawn = p;
+                    return;
                 }
             }
         }
@@ -162,69 +251,71 @@ namespace RimFirstPerson3D
             var cam = CameraRig3D.Cam;
             Vector2 uv = Vector2.zero;
             bool hit = cam != null && HandTerminal3D.TryScreenUV(cam, 1f, out uv);
-            // 点击交给本帧稍后的原版 OnGUI。这里只记住打中屏幕的 UV。
             CommandPanel3D.NotePointer(hit, uv);
         }
 
-        // 原版按钮、窗口、设计器没吃掉的左键才平移。判断用 Event.type，被 Use 过的不再算。
+        // 处理终端地图手势：中键拖拽或 Alt+左键拖拽平移焦点，滚轮与缩放热键调整视野。
+        // 普通左键点击、双击、拖框多选与右键指令全部走原版 Selector。
         public static void OnGuiGesture(bool onScreen, Vector2 uv)
         {
             if (!Viewing) return;
             var e = Event.current;
             if (e == null) return;
-            // 设计器或目标选取武装时，左键留给铺设。这里再选人会把设计器取消掉。
-            if (MapToolArmed())
-            {
-                if (e.rawType == EventType.MouseUp && e.button == 0) dragging = false;
-                return;
-            }
             var map = Find.CurrentMap;
 
-            if (e.type == EventType.MouseDown && e.button == 0 && onScreen && GUIUtility.hotControl == 0)
+            if (KeyBindingDefOf.MapZoom_In != null && KeyBindingDefOf.MapZoom_In.KeyDownEvent)
             {
-                if (e.clickCount >= 2)
-                {
-                    dragging = false;
-                    SelectUnderPointer(true);
-                    return;
-                }
-                dragging = true;
-                dragMoved = false;
-                dragUv = uv;
-                dragFocus = focus;
+                GodView3D.AdjustZoom(4f);
+                e.Use();
                 return;
             }
-            if (e.type == EventType.MouseDrag && e.button == 0 && dragging)
+            if (KeyBindingDefOf.MapZoom_Out != null && KeyBindingDefOf.MapZoom_Out.KeyDownEvent)
             {
-                if (GUIUtility.hotControl != 0)
+                GodView3D.AdjustZoom(-4f);
+                e.Use();
+                return;
+            }
+
+            if (e.type == EventType.ScrollWheel && onScreen)
+            {
+                bool overWindow = Find.WindowStack != null && Find.WindowStack.MouseObscuredNow;
+                if (!overWindow)
                 {
-                    dragging = false;
+                    GodView3D.AdjustZoom(-e.delta.y * 0.35f);
+                    e.Use();
                     return;
                 }
+            }
+
+            bool isPanButton = e.button == 2 || (e.button == 0 && e.alt);
+            if (e.type == EventType.MouseDown && isPanButton && onScreen && GUIUtility.hotControl == 0)
+            {
+                dragging = true;
+                dragButton = e.button;
+                dragUv = uv;
+                dragFocus = focus;
+                e.Use();
+                return;
+            }
+            if (e.type == EventType.MouseDrag && dragging && e.button == dragButton)
+            {
                 if (!onScreen || map == null) return;
                 float du = uv.x - dragUv.x;
                 float dv = uv.y - dragUv.y;
-                if (du * du + dv * dv > DragSlop * DragSlop) dragMoved = true;
                 float size = GodView3D.OrthoSize;
                 float aspect = GodView3D.Aspect;
                 focus.x = dragFocus.x - du * 2f * size * aspect;
                 focus.z = dragFocus.z - dv * 2f * size;
                 ClampFocus(map);
+                e.Use();
                 return;
             }
-            if (e.rawType == EventType.MouseUp && e.button == 0)
+            if (e.rawType == EventType.MouseUp && dragging && e.button == dragButton)
             {
-                if (dragging && e.type == EventType.MouseUp && !dragMoved && onScreen)
-                    SelectUnderPointer(false);
                 dragging = false;
+                dragButton = -1;
+                if (e.type == EventType.MouseUp) e.Use();
             }
-        }
-
-        static bool MapToolArmed()
-        {
-            if (Find.DesignatorManager != null && Find.DesignatorManager.SelectedDesignator != null)
-                return true;
-            return Find.Targeter != null && Find.Targeter.IsTargeting;
         }
 
         static void ClampFocus(Map map)
@@ -253,78 +344,12 @@ namespace RimFirstPerson3D
             pickedPawn = pawn;
         }
 
-        static void SelectUnderPointer(bool all)
-        {
-            if (!selectLookup)
-            {
-                selectLookup = true;
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-                selectUnderMouse = typeof(Selector).GetMethod("SelectUnderMouse", flags);
-                selectAllMatching = typeof(Selector).GetMethod("SelectAllMatchingObjectUnderMouseOnScreen", flags);
-            }
-            var selector = Find.Selector;
-            if (selector == null) return;
-            var method = all ? selectAllMatching : selectUnderMouse;
-            if (method == null)
-            {
-                var map = Find.CurrentMap;
-                if (!all && map != null) TryPickPawn(map, pointerFallback());
-                return;
-            }
-            try
-            {
-                method.Invoke(selector, null);
-            }
-            catch (Exception e)
-            {
-                if (!loggedSelect)
-                {
-                    loggedSelect = true;
-                    Log.Warning(ModEntry.LogPrefix + "terminal select failed: " + e.GetType().Name + ": " + e.Message);
-                }
-                return;
-            }
-            var selected = selector.SelectedObjects;
-            for (int i = 0; i < selected.Count; i++)
-            {
-                if (selected[i] is Pawn pawn)
-                {
-                    NotePawn(pawn);
-                    break;
-                }
-            }
-        }
-
-        static Vector2 pointerFallback()
-        {
-            var cam = CameraRig3D.Cam;
-            if (cam != null && HandTerminal3D.TryScreenUV(cam, 1f, out var uv)) return uv;
-            return Vector2.zero;
-        }
-
-        static void TryPickPawn(Map map, Vector2 uv)
-        {
-            if (!TryMapPoint(uv, out var point)) return;
-            IntVec3 cell = point.ToIntVec3();
-            if (!cell.InBounds(map)) return;
-
-            var list = map.thingGrid.ThingsListAtFast(cell);
-            for (int i = list.Count - 1; i >= 0; i--)
-            {
-                var pawn = list[i] as Pawn;
-                if (pawn == null || !pawn.Spawned || pawn.Dead) continue;
-                Find.Selector.Select(pawn, false, true);
-                pickedPawn = pawn;
-                return;
-            }
-        }
-
         // 放下后由 CameraRig3D.TryPossessByName 消费。同一人不再走一遍解除再附身。
         static void RememberPickedPawn()
         {
             var pawn = pickedPawn;
             if (pawn == null || pawn.Destroyed || !pawn.Spawned) return;
-            if (pawn == CameraRig3D.Possessed) return;
+            if (pawn == initialPawn || pawn == CameraRig3D.Possessed) return;
             var s = FirstPerson3DMod.settings;
             if (s == null) return;
             s.possessName = pawn.Name != null ? pawn.Name.ToString() : pawn.def.defName;

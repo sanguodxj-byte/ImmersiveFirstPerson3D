@@ -16,8 +16,9 @@ namespace RimFirstPerson3D
         private readonly int chunksX;
         private readonly Chunk[] chunks;
         private readonly List<MountainTriangle3D> triangles = new List<MountainTriangle3D>(64);
-        private readonly Dictionary<ThingDef, Material> materials = new Dictionary<ThingDef, Material>();
+        private readonly Dictionary<string, Material> materials = new Dictionary<string, Material>();
         private readonly List<Texture2D> textures = new List<Texture2D>();
+        private static float[] roughStoneGrain;
         private int nextChunk;
         private int lastQGlow = -999;
         private int lastQSunX = -999;
@@ -115,7 +116,7 @@ namespace RimFirstPerson3D
                 lastQGlow = qg;
                 lastQSunX = qsx; lastQSunY = qsy; lastQSunZ = qsz;
             }
-            else if (colorRebakeTimer >= 0.45f && (
+            else if (colorRebakeTimer >= 2.0f && (
                 Mathf.Abs(qg - lastQGlow) >= 2 ||
                 Mathf.Abs(qsx - lastQSunX) + Mathf.Abs(qsy - lastQSunY) + Mathf.Abs(qsz - lastQSunZ) >= 2))
             {
@@ -126,13 +127,21 @@ namespace RimFirstPerson3D
             }
             LastChunksBuilt = 0;
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            double freqMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             int budget = Mathf.Max(1, Fps3DState.ChunkRebuildBudget);
-            int colorBudget = budget * 2;
-            for (int visited = 0; visited < chunks.Length && (LastChunksBuilt < budget || colorBudget > 0); visited++)
+            int colorBudget = budget + 1;
+            float colorMs = Fps3DState.ChunkColorBudgetMs;
+            // 第一轮：仅处理相机视锥内的山体 chunk；视锥外的 colorDirty 留到进入视野时再刷
+            for (int i = 0; i < chunks.Length && (LastChunksBuilt < budget || (colorBudget > 0 && colorMs > 0f)); i++)
             {
-                int i = nextChunk;
-                nextChunk = (nextChunk + 1) % chunks.Length;
                 var ch = chunks[i];
+                if (!ch.dirty && !ch.colorDirty) continue;
+                if (ch.surfaces.Count > 0)
+                {
+                    var wb = ch.bounds;
+                    wb.center += offset;
+                    if (!Frustum3D.Visible(wb)) continue;
+                }
                 if (ch.dirty)
                 {
                     if (LastChunksBuilt < budget)
@@ -141,10 +150,24 @@ namespace RimFirstPerson3D
                         LastChunksBuilt++;
                     }
                 }
-                else if (ch.colorDirty && colorBudget > 0)
+                else if (ch.colorDirty && colorBudget > 0 && colorMs > 0f)
                 {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     Recolor(ch);
+                    colorMs -= (float)((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * freqMs);
                     colorBudget--;
+                }
+            }
+            // 第二轮：仅利用剩余预算后台推进视锥外几何脏块（dirty），不刷视锥外的 colorDirty
+            for (int visited = 0; visited < chunks.Length && LastChunksBuilt < budget; visited++)
+            {
+                int i = nextChunk;
+                nextChunk = (nextChunk + 1) % chunks.Length;
+                var ch = chunks[i];
+                if (ch.dirty)
+                {
+                    Rebuild(i, ch);
+                    LastChunksBuilt++;
                 }
             }
             PendingChunks = 0;
@@ -188,17 +211,27 @@ namespace RimFirstPerson3D
                 for (int x = x0; x < x1; x++)
                 {
                     if (mountain.Cells[z * map.Size.x + x] == 0) continue;
-                    var material = MaterialFor(mountain.RockDefAt(x, z));
-                    if (material == null) continue;
+                    var rockDef = mountain.RockDefAt(x, z);
+                    var hostDef = mountain.HostRockDefAt(x, z) ?? rockDef;
+                    var cliffMat = MaterialFor(rockDef, hostDef);
+                    var slopeMat = MaterialFor(hostDef, hostDef) ?? cliffMat;
+                    if (cliffMat == null) continue;
                     triangles.Clear();
                     MountainMesh3D.BuildCell(mountain.Shape, x, z, mountain.Cells, mountain.Ceilings, triangles);
                     if (triangles.Count == 0) continue;
-                    if (!builders.TryGetValue(material, out var builder))
+                    for (int j = 0; j < triangles.Count; j++)
                     {
-                        builder = new Builder(baseY, light);
-                        builders.Add(material, builder);
+                        var tri = triangles[j];
+                        float minY = Mathf.Min(tri.a.y, Mathf.Min(tri.b.y, tri.c.y));
+                        // 矿脉只暴露在下半部陡壁与山脚（<= 3.6m），高处山坡与山脊统一使用母岩材质，避免山峰顶出现突兀方块矿斑
+                        var mat = (tri.surface && minY > 3.6f) ? slopeMat : cliffMat;
+                        if (!builders.TryGetValue(mat, out var builder))
+                        {
+                            builder = new Builder(baseY, light);
+                            builders.Add(mat, builder);
+                        }
+                        builder.Add(tri);
                     }
-                    for (int j = 0; j < triangles.Count; j++) builder.Add(triangles[j]);
                 }
             Clear(chunk);
             var bounds = new Bounds();
@@ -217,60 +250,284 @@ namespace RimFirstPerson3D
             chunk.colorDirty = false;
         }
 
-        private Material MaterialFor(ThingDef def)
+        private Material MaterialFor(ThingDef def, ThingDef hostDef)
         {
             if (def == null) return null;
-            if (materials.TryGetValue(def, out var cached)) return cached;
-            var src = def.graphic?.MatSingle;
-            if (src == null || src.mainTexture == null) return null;
-            Texture2D tex = ExtractInterior(src.mainTexture, def, false);
+            if (hostDef == null) hostDef = def;
+            string key = def.defName + "|" + hostDef.defName;
+            if (materials.TryGetValue(key, out var cached)) return cached;
+            Texture2D tex = BuildMountainTexture(def, hostDef);
             if (tex == null) return null;
-            var material = new Material(src)
+            var src = def.graphic?.MatSingle;
+            var material = new Material(ShaderDatabase.Cutout)
             {
                 mainTexture = tex,
                 mainTextureScale = Vector2.one,
-                mainTextureOffset = Vector2.zero
+                mainTextureOffset = Vector2.zero,
+                color = Color.white
             };
-            if (src.HasProperty("_MaskTex"))
-            {
-                var mask = src.GetTexture("_MaskTex");
-                if (mask != null) material.SetTexture("_MaskTex", ExtractInterior(mask, def, true));
-            }
-            materials.Add(def, material);
+            if (src != null) material.renderQueue = src.renderQueue;
+            materials.Add(key, material);
             return material;
         }
 
-        private Texture2D ExtractInterior(Texture source, ThingDef def, bool mask)
+        private static float[] GetRoughStoneGrain(int size)
         {
-            // 原图集内格必须独立成 Repeat 纹理；对图集整体取模会串到其它连接格。
-            int left = Mathf.RoundToInt(source.width * 0.78125f);
-            int bottom = Mathf.RoundToInt(source.height * 0.78125f);
-            int width = Mathf.Max(1, Mathf.RoundToInt(source.width * 0.1875f));
-            int height = Mathf.Max(1, Mathf.RoundToInt(source.height * 0.1875f));
-            var rt = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGB32,
-                mask ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.Default);
-            var previous = RenderTexture.active;
-            try
+            if (roughStoneGrain != null && roughStoneGrain.Length == size * size)
+                return roughStoneGrain;
+            roughStoneGrain = new float[size * size];
+            Texture src = null;
+            try { src = ContentFinder<Texture2D>.Get("Terrain/Surfaces/RoughStone", reportFailure: false); }
+            catch { src = null; }
+            if (src != null)
             {
-                Graphics.Blit(source, rt);
-                RenderTexture.active = rt;
-                var tex = new Texture2D(width, height, TextureFormat.RGBA32, true, mask)
+                var rt = RenderTexture.GetTemporary(size, size, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+                var prev = RenderTexture.active;
+                try
                 {
-                    name = "FP3D_Mountain_" + def.defName,
-                    filterMode = FilterMode.Bilinear,
-                    wrapMode = TextureWrapMode.Repeat,
-                    anisoLevel = 4
-                };
-                tex.ReadPixels(new Rect(left, bottom, width, height), 0, 0);
-                tex.Apply(true, true);
-                textures.Add(tex);
-                return tex;
+                    Graphics.Blit(src, rt);
+                    RenderTexture.active = rt;
+                    var tmp = new Texture2D(size, size, TextureFormat.RGBA32, false);
+                    tmp.ReadPixels(new Rect(0, 0, size, size), 0, 0);
+                    var px = tmp.GetPixels32();
+                    Object.Destroy(tmp);
+                    float sum = 0f;
+                    for (int i = 0; i < px.Length; i++)
+                    {
+                        float l = (px[i].r * 0.299f + px[i].g * 0.587f + px[i].b * 0.114f) / 255f;
+                        roughStoneGrain[i] = l;
+                        sum += l;
+                    }
+                    float avg = sum / Mathf.Max(1, px.Length);
+                    for (int i = 0; i < roughStoneGrain.Length; i++)
+                        roughStoneGrain[i] = Mathf.Clamp((roughStoneGrain[i] - avg) * 0.85f, -0.14f, 0.14f);
+                    return roughStoneGrain;
+                }
+                catch { }
+                finally
+                {
+                    RenderTexture.active = prev;
+                    RenderTexture.ReleaseTemporary(rt);
+                }
             }
-            finally
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                    roughStoneGrain[y * size + x] = PeriodicNoise(x / (float)size, y / (float)size, 16, 16, 0x33A19u) * 0.08f;
+            return roughStoneGrain;
+        }
+
+        private static Color CalibrateStoneColor(ThingDef hostDef)
+        {
+            string name = hostDef != null ? (hostDef.defName ?? "") : "";
+            if (name.IndexOf("Slate", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Color(0.50f, 0.53f, 0.58f, 1f);
+            if (name.IndexOf("Granite", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Color(0.62f, 0.57f, 0.58f, 1f);
+            if (name.IndexOf("Sandstone", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Color(0.72f, 0.60f, 0.49f, 1f);
+            if (name.IndexOf("Limestone", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Color(0.76f, 0.72f, 0.63f, 1f);
+            if (name.IndexOf("Marble", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Color(0.80f, 0.82f, 0.80f, 1f);
+
+            Color raw = new Color(0.62f, 0.59f, 0.55f, 1f);
+            if (hostDef?.graphicData != null && hostDef.graphicData.color != Color.white)
+                raw = hostDef.graphicData.color;
+            else if (hostDef?.graphic?.MatSingle != null)
+                raw = hostDef.graphic.MatSingle.color;
+
+            float luma = 0.299f * raw.r + 0.587f * raw.g + 0.114f * raw.b;
+            float targetLuma = Mathf.Lerp(0.52f, 0.80f, Mathf.Clamp01((luma - 0.20f) / 0.55f));
+            float scale = luma > 0.01f ? (targetLuma / luma) : 1f;
+            return new Color(
+                Mathf.Clamp01(raw.r * scale),
+                Mathf.Clamp01(raw.g * scale),
+                Mathf.Clamp01(raw.b * scale),
+                1f);
+        }
+
+        private static Color CalibrateOreColor(ThingDef oreDef, Color hostColor)
+        {
+            Color raw = hostColor;
+            if (oreDef?.graphicData != null)
+                raw = oreDef.graphicData.color;
+            else if (oreDef?.graphic?.MatSingle != null)
+                raw = oreDef.graphic.MatSingle.color;
+
+            float luma = 0.299f * raw.r + 0.587f * raw.g + 0.114f * raw.b;
+            float target = Mathf.Clamp(luma * 1.25f + 0.15f, 0.48f, 0.92f);
+            float scale = luma > 0.01f ? (target / luma) : 1f;
+            return new Color(
+                Mathf.Clamp01(raw.r * scale),
+                Mathf.Clamp01(raw.g * scale),
+                Mathf.Clamp01(raw.b * scale),
+                1f);
+        }
+
+        private static uint HashGrid(int x, int y, int px, int py, uint seed)
+        {
+            int wx = ((x % px) + px) % px;
+            int wy = ((y % py) + py) % py;
+            uint h = seed ^ ((uint)wx * 374761393u) ^ ((uint)wy * 668265263u);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return h ^ (h >> 16);
+        }
+
+        private static float PeriodicNoise(float u, float v, int px, int py, uint seed)
+        {
+            float x = u * px;
+            float y = v * py;
+            int ix = Mathf.FloorToInt(x);
+            int iy = Mathf.FloorToInt(y);
+            float fx = x - ix;
+            float fy = y - iy;
+            float su = fx * fx * (3f - 2f * fx);
+            float sv = fy * fy * (3f - 2f * fy);
+
+            float n00 = (HashGrid(ix, iy, px, py, seed) & 0xFFFF) / 32767.5f - 1f;
+            float n10 = (HashGrid(ix + 1, iy, px, py, seed) & 0xFFFF) / 32767.5f - 1f;
+            float n01 = (HashGrid(ix, iy + 1, px, py, seed) & 0xFFFF) / 32767.5f - 1f;
+            float n11 = (HashGrid(ix + 1, iy + 1, px, py, seed) & 0xFFFF) / 32767.5f - 1f;
+
+            return Mathf.Lerp(Mathf.Lerp(n00, n10, su), Mathf.Lerp(n01, n11, su), sv);
+        }
+
+        private static void CellularRock(
+            float u, float v, int gx, int gy, uint seed,
+            out float d1, out float d2, out float bevel, out uint cellHash)
+        {
+            float x = u * gx;
+            float y = v * gy;
+            int ix = Mathf.FloorToInt(x);
+            int iy = Mathf.FloorToInt(y);
+            d1 = 99f;
+            d2 = 99f;
+            bevel = 0f;
+            cellHash = 0u;
+
+            for (int dy = -1; dy <= 1; dy++)
             {
-                RenderTexture.active = previous;
-                RenderTexture.ReleaseTemporary(rt);
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int cx = ix + dx;
+                    int cy = iy + dy;
+                    uint h = HashGrid(cx, cy, gx, gy, seed);
+                    float jx = ((h & 0x3FF) / 1023f) * 0.78f + 0.11f;
+                    float jy = (((h >> 10) & 0x3FF) / 1023f) * 0.78f + 0.11f;
+                    float px = cx + jx - x;
+                    float py = (cy + jy - y) * 1.35f; // 横向块状岩体比例
+                    float dist = Mathf.Sqrt(px * px + py * py);
+                    if (dist < d1)
+                    {
+                        d2 = d1;
+                        d1 = dist;
+                        cellHash = h;
+                        // 块面内左上受光、右下背光的岩石凿面斜率
+                        bevel = Mathf.Clamp((-py * 0.85f + px * 0.35f) * 0.55f, -0.45f, 0.45f);
+                    }
+                    else if (dist < d2)
+                    {
+                        d2 = dist;
+                    }
+                }
             }
+        }
+
+        private Texture2D BuildMountainTexture(ThingDef def, ThingDef hostDef)
+        {
+            const int Size = 256;
+            var grain = GetRoughStoneGrain(Size);
+            Color baseStone = CalibrateStoneColor(hostDef);
+            bool isOre = def != null && def.building != null && def.building.isResourceRock;
+            Color oreColor = isOre ? CalibrateOreColor(def, baseStone) : baseStone;
+
+            uint seed = (uint)((hostDef != null ? hostDef.shortHash : 17) * 2654435761u);
+            var px = new Color32[Size * Size];
+
+            for (int y = 0; y < Size; y++)
+            {
+                float v = y / (float)Size;
+                int row = y * Size;
+                for (int x = 0; x < Size; x++)
+                {
+                    float u = x / (float)Size;
+
+                    // 1. 各向同性周期坐标扭曲（形成自然岩石节理与块面走势，无单一方向条带）
+                    float warpU = u + 0.055f * PeriodicNoise(u, v, 3, 3, seed ^ 0x11A3u)
+                                    + 0.025f * PeriodicNoise(u, v, 7, 7, seed ^ 0x22B7u);
+                    float warpV = v + 0.055f * PeriodicNoise(u, v, 3, 3, seed ^ 0x33C9u)
+                                    + 0.025f * PeriodicNoise(u, v, 7, 7, seed ^ 0x44DFu);
+
+                    // 2. 多尺度天然岩体色块与冷暖风化斑块（各向同性，消除斑马纹/等高线波纹）
+                    float macroPatch = PeriodicNoise(warpU, warpV, 2, 2, seed ^ 0x55E1u) * 0.10f
+                                     + PeriodicNoise(warpU, warpV, 4, 4, seed ^ 0x59F2u) * 0.08f;
+                    float warmShift = PeriodicNoise(warpU, warpV, 3, 3, seed ^ 0xA147u) * 0.045f
+                                    + PeriodicNoise(u, v, 8, 8, seed ^ 0xA981u) * 0.025f;
+
+                    // 3. 正交交错岩石劈理棱线（Ridged Multifractal：提供粗粝山石块面感，无封闭多边形网格）
+                    float r1 = 1f - Mathf.Abs(PeriodicNoise(warpU, warpV, 4, 4, seed ^ 0x66F3u));
+                    float r2 = 1f - Mathf.Abs(PeriodicNoise(warpU + 0.37f, warpV + 0.61f, 8, 8, seed ^ 0x7711u));
+                    float r3 = 1f - Mathf.Abs(PeriodicNoise(u + 0.19f, v + 0.43f, 16, 16, seed ^ 0x7B29u));
+                    float ridgeRelief = (r1 * r1 * r1 - 0.44f) * 0.22f
+                                      + (r2 * r2 - 0.48f) * 0.14f
+                                      + (r3 * r3 - 0.48f) * 0.08f;
+
+                    // 4. 稀疏短促的天然岩体节理暗缝（仅局部断续出现，不连成贯穿条纹）
+                    float cleftA = Mathf.Abs(PeriodicNoise(warpU + warpV * 0.4f, warpV - warpU * 0.4f, 5, 5, seed ^ 0x8823u));
+                    float cleftB = Mathf.Abs(PeriodicNoise(warpU - warpV * 0.5f, warpV + warpU * 0.5f, 6, 6, seed ^ 0x8D41u));
+                    float cleftGate = PeriodicNoise(u, v, 4, 4, seed ^ 0x9935u);
+                    float cleft = 1.0f;
+                    if (cleftGate > 0.22f)
+                    {
+                        float minCleft = Mathf.Min(cleftA, cleftB);
+                        if (minCleft < 0.045f)
+                            cleft = Mathf.Lerp(0.68f, 1.0f, minCleft / 0.045f);
+                    }
+
+                    // 5. 叠加原版 RoughStone 自然岩石表面颗粒度与细微晶粒
+                    float fineSpeckle = PeriodicNoise(u, v, 24, 24, seed ^ 0x9F17u) * 0.045f;
+                    float micro = grain[row + x] * 1.55f + fineSpeckle;
+                    float shade = (1.0f + macroPatch + ridgeRelief + micro) * cleft;
+                    shade = Mathf.Clamp(shade, 0.66f, 1.26f);
+
+                    float r = baseStone.r * (shade + warmShift * 0.60f);
+                    float g = baseStone.g * shade;
+                    float b = baseStone.b * (shade - warmShift * 0.60f);
+
+                    // 6. 矿脉格：沿天然岩层裂隙嵌入金属/矿物脉络（全实心填充）
+                    if (isOre)
+                    {
+                        float veinPath = Mathf.Abs(PeriodicNoise(warpU, warpV, 5, 5, seed ^ 0xAA47u));
+                        float veinGate = PeriodicNoise(u, v, 4, 4, seed ^ 0xBB59u);
+                        if (veinPath < 0.11f && veinGate > -0.10f)
+                        {
+                            float core = 1f - (veinPath / 0.11f);
+                            float glint = 0.96f + 0.28f * core + 0.14f * PeriodicNoise(u, v, 16, 16, seed ^ 0xCC6Bu);
+                            r = Mathf.Lerp(r * 0.80f, oreColor.r * glint, Mathf.Clamp01(core * 1.4f));
+                            g = Mathf.Lerp(g * 0.80f, oreColor.g * glint, Mathf.Clamp01(core * 1.4f));
+                            b = Mathf.Lerp(b * 0.80f, oreColor.b * glint, Mathf.Clamp01(core * 1.4f));
+                        }
+                    }
+
+                    px[row + x] = new Color32(
+                        (byte)Mathf.Clamp(Mathf.RoundToInt(r * 255f), 0, 255),
+                        (byte)Mathf.Clamp(Mathf.RoundToInt(g * 255f), 0, 255),
+                        (byte)Mathf.Clamp(Mathf.RoundToInt(b * 255f), 0, 255),
+                        255);
+                }
+            }
+
+            var tex = new Texture2D(Size, Size, TextureFormat.RGBA32, true, false)
+            {
+                name = "FP3D_Mountain_" + def.defName,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Repeat,
+                anisoLevel = 4
+            };
+            tex.SetPixels32(px);
+            tex.Apply(true, true);
+            textures.Add(tex);
+            return tex;
         }
 
         public void Draw()
@@ -383,17 +640,22 @@ namespace RimFirstPerson3D
                 if (face.sqrMagnitude < 1e-12f) return;
                 face.Normalize();
                 int projection = t.surface ? 3 : Mathf.Abs(face.y) > 0.5f ? 1 : Mathf.Abs(face.x) > 0.5f ? 0 : 2;
-                int ia = GetOrAddVertex(a, ResolveNormal(V(t.na), face), projection);
-                int ib = GetOrAddVertex(b, ResolveNormal(V(t.nb), face), projection);
-                int ic = GetOrAddVertex(c, ResolveNormal(V(t.nc), face), projection);
+                int ia = GetOrAddVertex(a, ResolveNormal(V(t.na), face, t.surface), projection);
+                int ib = GetOrAddVertex(b, ResolveNormal(V(t.nb), face, t.surface), projection);
+                int ic = GetOrAddVertex(c, ResolveNormal(V(t.nc), face, t.surface), projection);
                 indices.Add(ia); indices.Add(ib); indices.Add(ic);
             }
 
-            private static Vector3 ResolveNormal(Vector3 n, Vector3 face)
+            private static Vector3 ResolveNormal(Vector3 n, Vector3 face, bool surface)
             {
                 if (n.sqrMagnitude < 1e-8f) return face;
                 n.Normalize();
                 if (Vector3.Dot(n, face) < 0f) n = -n;
+                if (surface)
+                {
+                    // Blend triangle facet normal (82%) with smooth terrain normal (18%) for crisp chiseled rock planes
+                    n = (n * 0.18f + face * 0.82f).normalized;
+                }
                 return n;
             }
 
@@ -406,9 +668,11 @@ namespace RimFirstPerson3D
                 Vector2 uv;
                 if (projection == 3)
                 {
-                    // Continuous slope-aware UV: incorporates elevation y so steep slopes on all 4 aspects
-                    // don't stretch texels, while remaining 100% seamless across shared vertices.
-                    uv = new Vector2(p.x + p.y * 0.22f, p.z + p.y * 0.52f);
+                    // Orthogonal horizontal basis (0.80, 0.35) x (-0.35, 0.80) coupled with elevation y
+                    // so rock slabs and strata never stretch or degenerate on any compass slope.
+                    uv = new Vector2(
+                        p.x * 0.80f + p.z * 0.35f + p.y * 0.22f,
+                        -p.x * 0.35f + p.z * 0.80f + p.y * 0.55f);
                 }
                 else if (projection == 1)
                 {

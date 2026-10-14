@@ -49,14 +49,28 @@ if (tex) {
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.flipY = false;
 }
-const matHull = new THREE.MeshBasicMaterial({ color: 0x12131a, side: THREE.FrontSide });
+const matHull = new THREE.MeshBasicMaterial({
+  color: 0x12131a,
+  side: THREE.FrontSide,
+  stencilWrite: true,
+  stencilRef: 1,
+  stencilFunc: THREE.NotEqualStencilFunc,
+});
 const matCache = new Map();
 
 function getTintedMat(rgb) {
   const k = rgb.join(',');
   if (matCache.has(k)) return matCache.get(k);
   const c = new THREE.Color(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
-  const m = new THREE.MeshLambertMaterial({ map: tex, color: c, side: THREE.FrontSide });
+  const m = new THREE.MeshLambertMaterial({
+    map: tex,
+    color: c,
+    side: THREE.FrontSide,
+    stencilWrite: true,
+    stencilRef: 1,
+    stencilFunc: THREE.AlwaysStencilFunc,
+    stencilZPass: THREE.ReplaceStencilOp,
+  });
   matCache.set(k, m);
   return m;
 }
@@ -108,7 +122,7 @@ function getUvRect(prefix, slot) {
   const k = `${prefix}.${slot}`;
   let a = uvJson.uv[k];
   if (!a && slot === 'detail') a = uvJson.uv[`${prefix}.cold`] || uvJson.uv[`${prefix}.top`];
-  if (!a && slot === 'extra')  a = uvJson.uv[`${prefix}.hot`]  || uvJson.uv[`${prefix}.detail`] || uvJson.uv[`${prefix}.top`];
+  if (!a && slot === 'extra')  a = uvJson.uv[`${prefix}.hot`]  || uvJson.uv[`${prefix}.top`];
   if (!a) {
     MISSING.add(k);
     return [0.42, 0.42, 0.58, 0.58];
@@ -157,34 +171,34 @@ function addExposedFaceRelief(m, arch, d, wallH, cellHash = 0) {
 
   switch (arch) {
     case 'WallBricks':
-      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.20, 0.028], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(0, 0.00, 0.010), [0.98, 0.14, 0.024], { yaw, noOutline: true, uv: UV_EXTRA });
       break;
     case 'WallPlanks':
-      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.18, 0.028], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(-0.43, 0.18, 0.010), [0.10, wallH - 0.34, 0.024], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos( 0.43, 0.18, 0.010), [0.10, wallH - 0.34, 0.024], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.16, 0.014), [0.98, 0.16, 0.032], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(0, 0.00, 0.010), [0.98, 0.14, 0.024], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(-0.43, 0.14, 0.010), [0.10, wallH - 0.30, 0.024], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos( 0.43, 0.14, 0.010), [0.10, wallH - 0.30, 0.024], { yaw, noOutline: true, uv: UV_EXTRA });
       break;
     case 'WallSmooth':
-      m.add('box', facePos(0, wallH - 0.14, 0.012), [0.98, 0.14, 0.028], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(0, 0.00, 0.010), [0.98, 0.14, 0.024], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.14, 0.012), [0.98, 0.14, 0.028], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(0, 0.00, 0.010), [0.98, 0.14, 0.024], { yaw, noOutline: true, uv: UV_EXTRA });
       break;
     case 'RockSmooth':
-      m.add('box', facePos(0, wallH - 0.18, 0.018), [0.98, 0.18, 0.040], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(0, wallH - 0.42, 0.012), [0.96, 0.20, 0.028], { yaw, noOutline: true, uv: UV_DETAIL });
-      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.22, 0.032], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(0, wallH - 0.18, 0.018), [0.98, 0.18, 0.040], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(0, wallH - 0.36, 0.011), [0.96, 0.16, 0.026], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.20, 0.032], { yaw, noOutline: true, uv: UV_DETAIL });
       break;
     case 'FortifiedWall':
-      m.add('box', facePos(0, wallH - 0.28, 0.024), [0.98, 0.28, 0.052], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.28, 0.024), [0.98, 0.28, 0.052], { yaw, noOutline: true, uv: UV_EXTRA });
       m.add('box', facePos(0, 0.00, 0.028), [0.84, 1.08, 0.060], { yaw, noOutline: true, uv: UV_DETAIL });
       m.add('wedge', facePos(0, 1.07, 0.028), [0.84, 0.26, 0.060], { yaw: yaw + 180, noOutline: true, uv: UV_DETAIL });
-      m.add('box', facePos(-0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos( 0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(-0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos( 0.41, 0.00, 0.018), [0.14, wallH - 0.26, 0.040], { yaw, noOutline: true, uv: UV_SIDE });
       break;
     case 'GravshipHull':
-      m.add('box', facePos(-0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos( 0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(-0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos( 0.26, wallH - 0.26, 0.020), [0.42, 0.26, 0.044], { yaw, noOutline: true, uv: UV_EXTRA });
       m.add('box', facePos( 0.00, wallH - 0.24, 0.010), [0.12, 0.22, 0.024], { yaw, noOutline: true, uv: UV_DETAIL });
       m.add('box', facePos( 0.00, 1.28, 0.010), [0.96, 0.16, 0.024], { yaw, noOutline: true, uv: UV_DETAIL });
       m.add('box', facePos(-0.25, 1.46, 0.018), [0.42, 0.88, 0.040], { yaw, noOutline: true, uv: UV_SIDE });
@@ -192,30 +206,26 @@ function addExposedFaceRelief(m, arch, d, wallH, cellHash = 0) {
       m.add('box', facePos(-0.25, 0.14, 0.020), [0.42, 1.12, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
       m.add('box', facePos( 0.25, 0.14, 0.020), [0.42, 1.12, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
       break;
-    case 'BurrowWall': {
-      const s = ((cellHash + d) & 1) === 0 ? 1 : -1;
-      m.add('box', facePos(-0.06 * s, 0.22, 0.020), [0.84, 0.34, 0.044], { yaw, roll: 3 * s, noOutline: true, uv: UV_DETAIL });
-      m.add('box', facePos( 0.05 * s, 1.06, 0.022), [0.86, 0.32, 0.048], { yaw, roll: -4 * s, noOutline: true, uv: UV_SIDE });
-      m.add('box', facePos(-0.04 * s, 1.88, 0.018), [0.82, 0.30, 0.040], { yaw, roll: 2 * s, noOutline: true, uv: UV_DETAIL });
+    case 'BurrowWall':
+      // 虫穴岩土墙：浑然一体的天然有机巢穴墙体，整幅完整展现深黑褐泥冠、浅黄钙化波浪与暗橄榄夯土基底，无生硬横切盒子
       break;
-    }
     case 'SmoothedIce':
-      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_EXTRA });
       m.add('box', facePos(0, wallH - 0.40, 0.011), [0.96, 0.18, 0.026], { yaw, noOutline: true, uv: UV_DETAIL });
       m.add('box', facePos(0, 0.00, 0.012), [0.98, 0.18, 0.028], { yaw, noOutline: true, uv: UV_DETAIL });
       break;
     case 'SolidIce':
-      m.add('box', facePos(0, wallH - 0.34, 0.022), [0.94, 0.34, 0.050], { yaw, noOutline: true, uv: UV_TOP });
-      m.add('box', facePos(-0.18, 0.30, 0.020), [0.52, 1.45, 0.044], { yaw, roll: 4, noOutline: true, uv: UV_DETAIL });
-      m.add('box', facePos( 0.20, 0.65, 0.018), [0.46, 1.35, 0.040], { yaw, roll: -5, noOutline: true, uv: UV_SIDE });
+      m.add('box', facePos(0, wallH - 0.32, 0.020), [0.96, 0.32, 0.044], { yaw, noOutline: true, uv: UV_EXTRA });
+      m.add('box', facePos(-0.22, 0.00, 0.016), [0.46, wallH - 0.30, 0.036], { yaw, noOutline: true, uv: UV_DETAIL });
+      m.add('box', facePos( 0.22, 0.00, 0.012), [0.44, wallH - 0.30, 0.028], { yaw, noOutline: true, uv: UV_SIDE });
       break;
     case 'GrayWall':
-      m.add('box', facePos(0, wallH - 0.20, 0.016), [0.98, 0.20, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.20, 0.016), [0.98, 0.20, 0.036], { yaw, noOutline: true, uv: UV_EXTRA });
       m.add('box', facePos(0, wallH - 0.32, 0.020), [0.98, 0.12, 0.044], { yaw, noOutline: true, uv: UV_DETAIL });
-      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.20, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, 0.00, 0.014), [0.98, 0.20, 0.032], { yaw, noOutline: true, uv: UV_EXTRA });
       break;
     case 'VoidmetalWall':
-      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', facePos(0, wallH - 0.22, 0.016), [0.98, 0.22, 0.036], { yaw, noOutline: true, uv: UV_EXTRA });
       m.add('cone', facePos(-0.28, 0.04, 0.035), [0.22, 0.78, 0.12], { yaw, pitch: 12, roll: -8, taper: 0.06, noOutline: true, uv: UV_DETAIL });
       m.add('cone', facePos( 0.02, 0.02, 0.040), [0.26, 0.96, 0.14], { yaw, pitch: 14, roll: 4, taper: 0.05, noOutline: true, uv: UV_DETAIL });
       m.add('cone', facePos( 0.30, 0.06, 0.032), [0.20, 0.68, 0.11], { yaw, pitch: 10, roll: 10, taper: 0.06, noOutline: true, uv: UV_DETAIL });
@@ -229,7 +239,7 @@ function addExposedFaceRelief(m, arch, d, wallH, cellHash = 0) {
   }
 }
 
-function addInWallDeviceRelief(m, arch, wallH, exp = [true, true, true, true]) {
+function addInWallDeviceRelief(m, arch, devH, exp = [true, true, true, true]) {
   const frontDir = 1, backDir = 0; // 预览中默认南面(+Z)为正面，北面(-Z)为背面
   for (let d = 0; d < 4; d++) {
     if (!exp[d]) continue;
@@ -237,18 +247,18 @@ function addInWallDeviceRelief(m, arch, wallH, exp = [true, true, true, true]) {
     const FP = (u, y, outD) => rotVec([u, y, 0.5 + outD], 0, yaw, 0);
     if (arch === 'Vent') {
       if (d === frontDir || d === backDir) {
-        m.add('box', FP(0, 0.36, 0.016), [0.78, 1.44, 0.036], { yaw, noOutline: true, uv: UV_TOP });
-        for (let i = 0; i < 5; i++) {
-          m.add('box', FP(0, 0.48 + i * 0.24, 0.032), [0.68, 0.13, 0.042], { yaw, pitch: 14, noOutline: true, uv: UV_DETAIL });
+        m.add('box', FP(0, 0.12, 0.016), [0.80, 0.76, 0.036], { yaw, noOutline: true, uv: UV_TOP });
+        for (let i = 0; i < 4; i++) {
+          m.add('box', FP(0, 0.18 + i * 0.16, 0.032), [0.68, 0.09, 0.042], { yaw, pitch: 14, noOutline: true, uv: UV_DETAIL });
         }
       }
     } else if (arch === 'Cooler') {
-      m.add('box', FP(0, wallH - 0.18, 0.014), [0.96, 0.18, 0.032], { yaw, noOutline: true, uv: UV_TOP });
+      m.add('box', FP(0, devH - 0.10, 0.014), [0.96, 0.10, 0.032], { yaw, noOutline: true, uv: UV_TOP });
       if (d === frontDir || d === backDir) {
-        m.add('box', FP(0, 0.28, 0.020), [0.80, 1.36, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
-        m.add('box', FP(0, 1.72, 0.024), [0.82, 0.42, 0.052], { yaw, noOutline: true, uv: UV_TOP });
+        m.add('box', FP(0, 0.08, 0.020), [0.82, 0.48, 0.044], { yaw, noOutline: true, uv: UV_SIDE });
+        m.add('box', FP(0, 0.60, 0.024), [0.82, 0.24, 0.052], { yaw, noOutline: true, uv: UV_TOP });
         const indUv = d === frontDir ? UV_DETAIL : UV_EXTRA;
-        m.add('box', FP(0, 1.80, 0.042), [0.34, 0.26, 0.036], { yaw, noOutline: true, uv: indUv });
+        m.add('box', FP(0, 0.64, 0.042), [0.30, 0.16, 0.036], { yaw, noOutline: true, uv: indUv });
       }
     }
   }
@@ -258,21 +268,25 @@ export function buildWallModel(arch, linkMask = 0) {
   const m = new Model3D();
   const n = !!(linkMask & 1), s = !!(linkMask & 2), w = !!(linkMask & 4), e = !!(linkMask & 8);
 
+  if (arch === 'Vent' || arch === 'Cooler') {
+    const devH = 1.00;
+    m.add('box', [0, 0, 0], [1.00, devH, 1.00], { uv: UV_TOP });
+    const exp = [!n, !s, !w, !e];
+    addInWallDeviceRelief(m, arch, devH, exp);
+    return m;
+  }
+
   const fullWalls = new Set([
     'WallBricks', 'WallPlanks', 'WallSmooth', 'RockSmooth', 'FortifiedWall',
     'GravshipHull', 'BurrowWall', 'SmoothedIce', 'SolidIce', 'GrayWall',
-    'VoidmetalWall', 'FleshmassWall', 'Vent', 'Cooler'
+    'VoidmetalWall', 'FleshmassWall'
   ]);
   if (fullWalls.has(arch)) {
     const h = arch === 'SolidIce' ? 2.92 : 2.70;
     m.add('box', [0, 0, 0], [1.00, h, 1.00], { uv: UV_TOP });
     const exp = [!n, !s, !w, !e];
-    if (arch === 'Vent' || arch === 'Cooler') {
-      addInWallDeviceRelief(m, arch, h, exp);
-    } else {
-      for (let d = 0; d < 4; d++) {
-        if (exp[d]) addExposedFaceRelief(m, arch, d, h, 0);
-      }
+    for (let d = 0; d < 4; d++) {
+      if (exp[d]) addExposedFaceRelief(m, arch, d, h, 0);
     }
     return m;
   }
@@ -281,13 +295,13 @@ export function buildWallModel(arch, linkMask = 0) {
     case 'Sandbags': {
       let ln = n, ls = s, lw = w, le = e;
       if (!ln && !ls && !lw && !le) { lw = true; le = true; }
-      m.add('box', [0, 0.00, 0], [0.48, 0.20, 0.46], { uv: UV_SIDE });
-      m.add('box', [0, 0.18, 0], [0.46, 0.20, 0.48], { yaw: 8, uv: UV_DETAIL });
-      m.add('box', [0, 0.36, 0], [0.44, 0.19, 0.44], { yaw: -6, uv: UV_TOP });
+      m.add('box', [0, 0.00, 0], [0.48, 0.20, 0.46], { uv: UV_DETAIL });
+      m.add('box', [0, 0.18, 0], [0.46, 0.20, 0.48], { yaw: 8, uv: UV_SIDE });
+      m.add('box', [0, 0.36, 0], [0.44, 0.19, 0.44], { yaw: -6, uv: UV_EXTRA });
       const addArm = dirYaw => {
-        m.add('box', rotVec([0, 0.00, 0.31], 0, dirYaw, 0), [0.46, 0.20, 0.38], { yaw: dirYaw, uv: UV_SIDE });
-        m.add('box', rotVec([0, 0.18, 0.28], 0, dirYaw, 0), [0.44, 0.20, 0.38], { yaw: dirYaw + 4, uv: UV_DETAIL });
-        m.add('box', rotVec([0, 0.36, 0.30], 0, dirYaw, 0), [0.42, 0.19, 0.38], { yaw: dirYaw - 3, uv: UV_TOP });
+        m.add('box', rotVec([0, 0.00, 0.31], 0, dirYaw, 0), [0.46, 0.20, 0.38], { yaw: dirYaw, uv: UV_DETAIL });
+        m.add('box', rotVec([0, 0.18, 0.28], 0, dirYaw, 0), [0.44, 0.20, 0.38], { yaw: dirYaw + 4, uv: UV_SIDE });
+        m.add('box', rotVec([0, 0.36, 0.30], 0, dirYaw, 0), [0.42, 0.19, 0.38], { yaw: dirYaw - 3, uv: UV_EXTRA });
       };
       if (ls) addArm(0);
       if (ln) addArm(180);
@@ -312,21 +326,34 @@ export function buildWallModel(arch, linkMask = 0) {
     }
     case 'FenceSmooth':
     case 'FenceMetal': {
+      const isMetal = arch === 'FenceMetal';
       if (!n && !s && !w && !e) {
         m.add('box', [-0.30, 0.00, 0], [0.16, 0.96, 0.16], { uv: UV_SIDE });
         m.add('box', [-0.30, 0.94, 0], [0.19, 0.06, 0.19], { noOutline: true, uv: UV_DETAIL });
         m.add('box', [ 0.30, 0.00, 0], [0.16, 0.96, 0.16], { uv: UV_SIDE });
         m.add('box', [ 0.30, 0.94, 0], [0.19, 0.06, 0.19], { noOutline: true, uv: UV_DETAIL });
-        m.add('box', [ 0.00, 0.64, 0], [0.88, 0.16, 0.10], { uv: UV_TOP });
-        m.add('box', [ 0.00, 0.26, 0], [0.88, 0.16, 0.10], { uv: UV_SIDE });
+        if (isMetal) {
+          m.add('box', [0.00, 0.68, 0], [0.88, 0.12, 0.10], { uv: UV_TOP });
+          m.add('box', [0.00, 0.44, 0], [0.88, 0.12, 0.10], { uv: UV_SIDE });
+          m.add('box', [0.00, 0.20, 0], [0.88, 0.12, 0.10], { uv: UV_SIDE });
+        } else {
+          m.add('box', [0.00, 0.64, 0], [0.88, 0.16, 0.10], { uv: UV_TOP });
+          m.add('box', [0.00, 0.26, 0], [0.88, 0.16, 0.10], { uv: UV_SIDE });
+        }
         m.add('box', [ 0.00, 0.00, 0], [0.64, 0.04, 0.08], { noOutline: true, uv: UV_SIDE });
         break;
       }
       m.add('box', [0, 0.00, 0], [0.18, 0.96, 0.18], { uv: UV_SIDE });
       m.add('box', [0, 0.94, 0], [0.21, 0.06, 0.21], { noOutline: true, uv: UV_DETAIL });
       const addRail = dirYaw => {
-        m.add('box', rotVec([0, 0.64, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_TOP });
-        m.add('box', rotVec([0, 0.26, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_SIDE });
+        if (isMetal) {
+          m.add('box', rotVec([0, 0.68, 0.27], 0, dirYaw, 0), [0.10, 0.12, 0.46], { yaw: dirYaw, uv: UV_TOP });
+          m.add('box', rotVec([0, 0.44, 0.27], 0, dirYaw, 0), [0.10, 0.12, 0.46], { yaw: dirYaw, uv: UV_SIDE });
+          m.add('box', rotVec([0, 0.20, 0.27], 0, dirYaw, 0), [0.10, 0.12, 0.46], { yaw: dirYaw, uv: UV_SIDE });
+        } else {
+          m.add('box', rotVec([0, 0.64, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_TOP });
+          m.add('box', rotVec([0, 0.26, 0.27], 0, dirYaw, 0), [0.10, 0.16, 0.46], { yaw: dirYaw, uv: UV_SIDE });
+        }
       };
       if (s) addRail(0);
       if (n) addRail(180);
@@ -357,18 +384,20 @@ export function buildWallModel(arch, linkMask = 0) {
       break;
     }
     case 'WallLamp': {
-      // 局部地面基准 (y=0)，面向 +Z
-      m.add('box', [0, 0.00, 0.00], [0.46, 0.16, 0.10], { uv: UV_TOP });
-      m.add('box', [0, 0.02, 0.06], [0.40, 0.12, 0.10], { uv: UV_SIDE });
-      m.add('box', [0, 0.03, 0.09], [0.36, 0.09, 0.06], { noOutline: true, uv: UV_DETAIL });
+      // 1x1 格内离地高度统一为 Y = 2.00m，贴靠北侧墙面 (z = -0.44)，面向 +Z
+      const y0 = 2.00;
+      m.add('box', [0, y0 + 0.00, -0.44], [0.46, 0.16, 0.10], { uv: UV_TOP });
+      m.add('box', [0, y0 + 0.02, -0.38], [0.40, 0.12, 0.10], { uv: UV_SIDE });
+      m.add('box', [0, y0 + 0.03, -0.35], [0.36, 0.09, 0.06], { noOutline: true, uv: UV_DETAIL });
       break;
     }
     case 'WallTorch': {
-      m.add('box', [0, 0.00, -0.02], [0.16, 0.18, 0.10], { uv: UV_SIDE });
-      m.add('box', [0, 0.05,  0.06], [0.14, 0.08, 0.16], { noOutline: true, uv: UV_SIDE });
-      m.add('cyl', [0, 0.02,  0.08], [0.11, 0.34, 0.11], { pitch: 24, taper: 1.25, uv: UV_SIDE });
-      m.add('sph', [0, 0.30,  0.20], [0.20, 0.22, 0.20], { noOutline: true, uv: UV_TOP });
-      m.add('cone',[0, 0.42,  0.20], [0.16, 0.18, 0.16], { taper: 0.15, noOutline: true, uv: UV_DETAIL });
+      // 1x1 格内离地高度统一为 Y = 2.00m，仅构建托架与斜插木柄（火焰由 Shader 渲染）
+      const y0 = 2.00;
+      m.add('box', [0, y0 + 0.00, -0.44], [0.16, 0.18, 0.10], { uv: UV_DETAIL });
+      m.add('box', [0, y0 + 0.05, -0.36], [0.12, 0.08, 0.16], { noOutline: true, uv: UV_DETAIL });
+      m.add('cyl', [0, y0 + 0.02, -0.34], [0.11, 0.30, 0.11], { pitch: 24, taper: 1.25, uv: UV_SIDE });
+      m.add('cyl', [0, y0 + 0.24, -0.24], [0.14, 0.08, 0.14], { pitch: 24, taper: 1.12, noOutline: true, uv: UV_TOP });
       break;
     }
   }
@@ -384,9 +413,10 @@ function compileMesh(prefix, m, outlineW) {
   const rSide = getUvRect(prefix, 'side');
   const rDet  = getUvRect(prefix, 'detail');
   const rExt  = getUvRect(prefix, 'extra');
+  const mainSide = prefix === 'cooler' ? rTop : rSide;
 
   for (const p of m.parts) {
-    let topRect = rTop, sideRect = rSide;
+    let topRect = rTop, sideRect = mainSide;
     if (p.uv === UV_SIDE) { topRect = rSide; sideRect = rSide; }
     else if (p.uv === UV_DETAIL) { topRect = rDet; sideRect = rDet; }
     else if (p.uv === UV_EXTRA)  { topRect = rExt; sideRect = rExt; }
@@ -552,7 +582,7 @@ function compileMesh(prefix, m, outlineW) {
 }
 
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(1);
 renderer.setClearColor(0x20242c, 1);
@@ -574,10 +604,11 @@ grid.position.y = -0.002;
 scene.add(grid);
 
 const q = new URLSearchParams(location.search);
-const STILL   = q.get('still') === '1';
-const GALLERY = q.get('gallery') === '1';
-const PARTS   = q.get('parts') === '1';
-const SHEET   = q.get('sheet');
+const STILL    = q.get('still') === '1';
+const GALLERY  = q.get('gallery') === '1';
+const PARTS    = q.get('parts') === '1';
+const TRIPTYCH = q.get('triptych') === '1';
+const SHEET    = q.get('sheet');
 
 const AUDIT_GROUPS = [
   [
@@ -595,7 +626,7 @@ const AUDIT_GROUPS = [
 ];
 
 function hideChrome() {
-  if (!STILL && !GALLERY && !PARTS && SHEET === null) return;
+  if (!STILL && !GALLERY && !PARTS && !TRIPTYCH && SHEET === null) return;
   for (const id of ['hud', 'sp', 'vw']) {
     const e = document.getElementById(id);
     if (e) e.style.display = 'none';
@@ -605,11 +636,97 @@ function hideChrome() {
 let root = null, curKey = q.get('item') || 'fortified_wall', curV = q.get('view') || '45°';
 
 const VIEWS = {
-  '45°':     { off: [ 0.78, 0.58,  0.82] },
-  '侧视·东': { off: [-1.05, 0.26,  0.00] },
-  '主视·南': { off: [ 0.00, 0.28,  1.08] },
+  '45°':     { off: [ 0.78, 0.42,  0.82] },
+  '侧视·东': { off: [-1.05, 0.15,  0.00] },
+  '主视·南': { off: [ 0.00, 0.16,  1.08] },
   '俯视':    { off: [ 0.02, 1.25,  0.18] },
 };
+
+// 程序化 GLSL 火焰 Shader（用于火把木柄顶端的火焰渲染，对应 C# 端 GlowLayer3D 火焰 Shader）
+const flameShaderMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 1.35 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    uniform float uTime;
+    void main() {
+      vUv = uv;
+      vec3 p = position;
+      float sway = sin(uTime * 6.0 + p.y * 5.0) * 0.035 * p.y;
+      p.x += sway;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform float uTime;
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                 mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm(vec2 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 4; i++) {
+        v += a * noise(p);
+        p *= 2.03;
+        a *= 0.5;
+      }
+      return v;
+    }
+    void main() {
+      float v = vUv.y;
+      float u = vUv.x;
+      float baseGrow = smoothstep(0.0, 0.20, v);
+      float tipTaper = pow(clamp(1.0 - v, 0.0, 1.0), 0.72);
+      float maxHalfW = 0.44 * baseGrow * tipTaper;
+      float n = fbm(vec2(u * 4.2 + 1.7, v * 5.2 - uTime * 2.4)) - 0.5;
+      float dx = abs(u - 0.5 - n * 0.15 * v);
+      float d = maxHalfW > 0.001 ? dx / maxHalfW : 2.0;
+      float a = clamp(1.0 - d * d, 0.0, 1.0);
+      a = a * a * (3.0 - 2.0 * a);
+      a *= smoothstep(0.0, 0.08, v) * smoothstep(0.0, 0.10, 1.0 - v);
+      if (a < 0.04) discard;
+      float core = a * clamp(1.0 - d * 1.30, 0.0, 1.0) * clamp(1.15 - v * 0.85, 0.0, 1.0);
+      vec3 outerCol = vec3(0.95, 0.24, 0.04);
+      vec3 midCol   = vec3(1.00, 0.64, 0.14);
+      vec3 coreCol  = vec3(1.00, 0.97, 0.80);
+      vec3 col = mix(outerCol, midCol, pow(a, 0.55));
+      col = mix(col, coreCol, clamp(core * 1.35, 0.0, 1.0));
+      gl_FragColor = vec4(col, a * 0.94);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
+
+function createFlameShaderMesh() {
+  const pos = [], uvs = [], idx = [];
+  const angles = [0, 60, 120];
+  const w = 0.28, h = 0.42;
+  for (let i = 0; i < angles.length; i++) {
+    const rad = angles[i] * Math.PI / 180;
+    const cx = Math.cos(rad) * w * 0.5;
+    const cz = Math.sin(rad) * w * 0.5;
+    const b = pos.length / 3;
+    pos.push(-cx, 0, -cz, -cx, h, -cz, cx, h, cz, cx, 0, cz);
+    uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  const mesh = new THREE.Mesh(geo, flameShaderMat);
+  mesh.position.set(0, 2.28, -0.22);
+  return mesh;
+}
 
 function buildOneGroup(key, linkMask = 0) {
   const item = ITEM_MAP[key] || WALL_ITEMS[0];
@@ -619,9 +736,16 @@ function buildOneGroup(key, linkMask = 0) {
   const grp = new THREE.Group();
   const bodyMesh = new THREE.Mesh(bodyGeo, getTintedMat(item.tint));
   const hullMesh = new THREE.Mesh(hullGeo, matHull);
+  bodyMesh.renderOrder = 1;
+  hullMesh.renderOrder = 2;
   bodyMesh.castShadow = true; bodyMesh.receiveShadow = true;
-  grp.add(hullMesh);
   grp.add(bodyMesh);
+  grp.add(hullMesh);
+  if (item.arch === 'WallTorch') {
+    const fl = createFlameShaderMesh();
+    fl.renderOrder = 3;
+    grp.add(fl);
+  }
   return { grp, item, partBoxes, bodyGeo };
 }
 
@@ -743,9 +867,9 @@ if (PARTS) {
     x += w + 0.42;
   }
   const midX = (x - 0.42) * 0.5;
-  const dist = Math.max(4.5, x * 0.64);
+  const dist = Math.max(4.5, x * 0.68);
   camera.position.set(midX, 1.62, dist);
-  controls.target.set(midX, rowIdx === 2 ? 0.45 : 1.15, 0);
+  controls.target.set(midX, rowIdx === 2 ? 1.05 : 1.15, 0);
   controls.update();
   renderer.render(scene, camera);
 } else if (SHEET !== null) {
@@ -767,8 +891,8 @@ if (PARTS) {
     const box = new THREE.Box3().setFromObject(grp);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const span = Math.max(size.x, size.y * 0.90, size.z, 0.38);
-    const dist = span * 1.48;
+    const span = Math.max(size.x, size.y * 1.12, size.z, 0.38);
+    const dist = span * 1.66;
     const wy = (list.length - 1 - r) * CH;
     for (let c = 0; c < viewKeys.length; c++) {
       const o = VIEWS[viewKeys[c]].off;
@@ -784,10 +908,54 @@ if (PARTS) {
     scene.remove(grp);
     grp.traverse(o => { o.geometry?.dispose?.(); });
   }
+} else if (TRIPTYCH) {
+  hideChrome();
+  grid.visible = false;
+  const item = ITEM_MAP[curKey] || WALL_ITEMS[0];
+  const isBarrier = ['Sandbags', 'Barricade', 'FenceSmooth', 'FenceMetal', 'AncientFence'].includes(item.arch);
+  const shots = isBarrier
+    ? [
+        { mask: 0,  view: '45°' },
+        { mask: 0,  view: '主视·南' },
+        { mask: 15, view: '45°' },
+        { mask: 0,  view: '俯视' },
+      ]
+    : [
+        { mask: 0, view: '45°' },
+        { mask: 0, view: '主视·南' },
+        { mask: 0, view: '侧视·东' },
+        { mask: 0, view: '俯视' },
+      ];
+
+  const W = innerWidth, H = innerHeight, cw = Math.floor(W / shots.length);
+  renderer.setScissorTest(true);
+  camera.aspect = cw / H;
+  camera.updateProjectionMatrix();
+
+  shots.forEach((s, i) => {
+    const { grp } = buildOneGroup(curKey, s.mask);
+    scene.add(grp);
+    const box = new THREE.Box3().setFromObject(grp);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y * 1.05, size.z, 0.40);
+    const dist = span * 1.62;
+    const o = (VIEWS[s.view] || VIEWS['45°']).off;
+    camera.position.set(center.x + o[0] * dist, center.y + o[1] * dist, center.z + o[2] * dist);
+    L1.position.set(o[0] * 5 + 1.2, 6.5, o[2] * 5 + 1.2);
+    L2.position.set(-o[0] * 4, 3.0, -o[2] * 4);
+    camera.lookAt(center);
+    renderer.setViewport(i * cw, 0, cw, H);
+    renderer.setScissor(i * cw, 0, cw, H);
+    renderer.render(scene, camera);
+    scene.remove(grp);
+    grp.traverse(o => { o.geometry?.dispose?.(); });
+  });
 } else {
   show(curKey);
-  const loop = () => {
+  const loop = (t) => {
     requestAnimationFrame(loop);
+    flameShaderMat.uniforms.uTime.value = (t || 0) * 0.001;
     controls.update();
     renderer.render(scene, camera);
   };

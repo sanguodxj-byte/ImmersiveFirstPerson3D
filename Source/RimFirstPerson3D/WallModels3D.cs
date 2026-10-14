@@ -9,7 +9,7 @@ namespace RimFirstPerson3D
     /// <summary>
     /// 墙体、矮墙掩体、围栏与穿墙/壁挂建筑 3D 程序化建模系统（WallModels3D）。
     ///
-    /// - 贴图全部取自 scripts/wall_atlas.py 生成的 1.6/Textures/FPS3D/WallAtlas.png（WallUVGen.R），
+    /// - 贴图全部取自 scripts/wall_atlas.py 生成的 Textures\FPS3D\WallAtlas.png（WallUVGen.R），
     ///   保留原版像素颗粒（FilterMode.Point）并叠加原版 Stuff / GraphicData 颜色。
     /// - 满格墙体（建造墙、平滑岩墙、加固防爆墙、飞船气密船体墙、虫穴墙、冰墙、迷宫灰墙、
     ///   虚空金属刺墙、扭曲血肉墙、穿墙通风口、穿墙制冷机）按暴露面剔除（仅向可见外立面发射墙面与 3D 浮雕结构）。
@@ -36,7 +36,7 @@ namespace RimFirstPerson3D
             GrayWall,
             VoidmetalWall,
             FleshmassWall,
-            // 穿墙满格设备（高 2.70m）
+            // 穿墙 1x1x1 设备（高 1.00m，上方空隙由两侧相邻墙体填充）
             Vent,
             Cooler,
             // 四向连接矮墙掩体与围栏
@@ -45,9 +45,10 @@ namespace RimFirstPerson3D
             FenceSmooth,
             FenceMetal,
             AncientFence,
-            // 壁挂灯具
+            // 壁挂件（1x1 格内统一高度 Y = 2.00m）与火把木柄
             WallLamp,
             WallTorch,
+            TorchPost,
         }
 
         public const int UV_TOP = 0;
@@ -55,10 +56,14 @@ namespace RimFirstPerson3D
         public const int UV_DETAIL = 2;
         public const int UV_EXTRA = 3;
 
-        /// <summary>识别给定建筑属于哪一类墙体/掩体/穿墙/壁挂原型。</summary>
+        /// <summary>识别给定建筑（或其蓝图/框架）属于哪一类墙体/掩体/穿墙/壁挂原型。</summary>
         public static WallArch ArchOf(Thing t)
         {
             if (t == null || t.def == null) return WallArch.None;
+            if (t is Blueprint bp && bp.EntityToBuild() is ThingDef bpDef)
+                return ArchOfDef(bpDef, bp.EntityToBuildStuff());
+            if (t is Frame fr && fr.BuildDef != null)
+                return ArchOfDef(fr.BuildDef, fr.EntityToBuildStuff());
             return ArchOfDef(t.def, t.Stuff);
         }
 
@@ -130,10 +135,23 @@ namespace RimFirstPerson3D
                     return WallArch.AncientFence;
 
                 case "WallLamp":
+                case "AncientEmergencyLight_Red":
+                case "AncientEmergencyLight_Blue":
+                case "AncientEmergencyLight_Green":
                     return WallArch.WallLamp;
 
                 case "TorchWallLamp":
                     return WallArch.WallTorch;
+
+                case "TorchLamp":
+                case "Darktorch":
+                case "DarktorchFungus":
+                    return WallArch.TorchPost;
+            }
+
+            if (def.building != null && def.building.isAttachment)
+            {
+                return WallArch.WallLamp;
             }
 
             // 兼容其他模组继承自 Wall 或 isWall 的满格墙
@@ -148,6 +166,16 @@ namespace RimFirstPerson3D
             return WallArch.None;
         }
 
+        public static bool IsFullWall(WallArch a)
+        {
+            return a >= WallArch.WallBricks && a <= WallArch.FleshmassWall;
+        }
+
+        public static bool IsInWallDevice(WallArch a)
+        {
+            return a == WallArch.Vent || a == WallArch.Cooler;
+        }
+
         public static bool IsFullWallOrInWall(WallArch a)
         {
             return a >= WallArch.WallBricks && a <= WallArch.Cooler;
@@ -160,7 +188,7 @@ namespace RimFirstPerson3D
 
         public static bool IsWallAttachment(WallArch a)
         {
-            return a == WallArch.WallLamp || a == WallArch.WallTorch;
+            return a == WallArch.WallLamp || a == WallArch.WallTorch || a == WallArch.TorchPost;
         }
 
         public static bool IsLinkedBarrier(ThingDef def)
@@ -206,6 +234,7 @@ namespace RimFirstPerson3D
                 case WallArch.AncientFence: return "ancientfence";
                 case WallArch.WallLamp: return "walllamp";
                 case WallArch.WallTorch: return "walltorch";
+                case WallArch.TorchPost: return "walltorch";
                 default: return "smooth";
             }
         }
@@ -225,12 +254,13 @@ namespace RimFirstPerson3D
             Vector4 rSide = GetUv(p, "side");
             Vector4 rDet = WallUVGen.R.TryGetValue(p + ".detail", out var d) ? d
                          : (WallUVGen.R.TryGetValue(p + ".cold", out d) ? d : rTop);
-            Vector4 rExt = WallUVGen.R.TryGetValue(p + ".hot", out var e) ? e : rDet;
+            Vector4 rExt = WallUVGen.R.TryGetValue(p + ".hot", out var e) ? e : rTop;
+            Vector4 mainSide = arch == WallArch.Cooler ? rTop : rSide;
 
             var xz = new Vector2(1f, 1f);
             return new List<UvSpec>(4)
             {
-                new UvSpec { top = rTop, side = rSide, modelXZ = xz },
+                new UvSpec { top = rTop, side = mainSide, modelXZ = xz },
                 new UvSpec { top = rSide, side = rSide, modelXZ = xz },
                 new UvSpec { top = rDet, side = rDet, modelXZ = xz },
                 new UvSpec { top = rExt, side = rExt, modelXZ = xz },
@@ -243,9 +273,27 @@ namespace RimFirstPerson3D
         public static bool BarrierLinksTo(Map map, IntVec3 cell, WallArch arch, IntVec3 neighbor)
         {
             if (map == null || !neighbor.InBounds(map)) return false;
+            ThingDef ndef = null;
             var ed = neighbor.GetEdifice(map);
-            if (ed == null || ed.def == null) return false;
-            string dn = ed.def.defName;
+            if (ed != null && ed.def != null)
+            {
+                if (ed is Frame fr && fr.BuildDef != null) ndef = fr.BuildDef;
+                else ndef = ed.def;
+            }
+            if (ndef == null)
+            {
+                var list = neighbor.GetThingList(map);
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i] is Blueprint bp && bp.EntityToBuild() is ThingDef bd)
+                    {
+                        ndef = bd;
+                        break;
+                    }
+                }
+            }
+            if (ndef == null) return false;
+            string dn = ndef.defName;
             if (arch == WallArch.Sandbags)
             {
                 return dn == "Sandbags";
@@ -257,7 +305,7 @@ namespace RimFirstPerson3D
             if (arch == WallArch.FenceSmooth || arch == WallArch.FenceMetal || arch == WallArch.AncientFence)
             {
                 if (dn == "Fence" || dn == "AncientFence" || dn == "FenceGate") return true;
-                if (ed.def.Fillage == FillCategory.Full) return true;
+                if (ndef.Fillage == FillCategory.Full) return true;
             }
             return false;
         }
@@ -286,50 +334,50 @@ namespace RimFirstPerson3D
             {
                 case WallArch.WallBricks:
                 {
-                    // 石砖墙：顶部压顶石檐 + 底部勒脚石基
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.012f), new Vector3(0.98f, 0.20f, 0.028f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    // 石砖墙：顶部压顶石檐 + 底部勒脚石基（使用 UV_EXTRA 即纯墙帽石面）
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     break;
                 }
                 case WallArch.WallPlanks:
                 {
                     // 木板墙：上下横木梁 + 两侧木立柱筋
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.012f), new Vector3(0.98f, 0.18f, 0.028f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(-0.43f, 0.18f, 0.010f), new Vector3(0.10f, wallH - 0.34f, 0.024f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos( 0.43f, 0.18f, 0.010f), new Vector3(0.10f, wallH - 0.34f, 0.024f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.16f, 0.014f), new Vector3(0.98f, 0.16f, 0.032f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(-0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos( 0.43f, 0.14f, 0.010f), new Vector3(0.10f, wallH - 0.30f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     break;
                 }
                 case WallArch.WallSmooth:
                 {
                     // 光滑金属/宝石墙：利落的上下金属折边压条
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.14f, 0.012f), new Vector3(0.98f, 0.14f, 0.028f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.14f, 0.012f), new Vector3(0.98f, 0.14f, 0.028f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.010f), new Vector3(0.98f, 0.14f, 0.024f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     break;
                 }
                 case WallArch.RockSmooth:
                 {
                     // 平滑岩石墙：还原原版 rocksmooth_atlas 标志性的双层石雕顶冠线脚与底台
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.18f, 0.018f), new Vector3(0.98f, 0.18f, 0.040f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.42f, 0.012f), new Vector3(0.96f, 0.20f, 0.028f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.014f), new Vector3(0.98f, 0.22f, 0.032f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.18f, 0.018f), new Vector3(0.98f, 0.18f, 0.040f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.36f, 0.011f), new Vector3(0.96f, 0.16f, 0.026f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.014f), new Vector3(0.98f, 0.20f, 0.032f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
                     break;
                 }
                 case WallArch.FortifiedWall:
                 {
-                    // 远古加固防爆墙：重型防爆上挑檐 + 下部厚重阶梯式装甲护壁肋板 + 两侧加强柱
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.28f, 0.024f), new Vector3(0.98f, 0.28f, 0.052f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    // 远古加固防爆墙：重型防爆上挑檐 + 下部厚重阶梯式装甲护壁肋板 + 两侧混凝土加强柱
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.28f, 0.024f), new Vector3(0.98f, 0.28f, 0.052f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     m.Add(Prim.Box, FacePos(0f, 0.00f, 0.028f), new Vector3(0.84f, 1.08f, 0.060f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
                     m.Add(Prim.Wedge, FacePos(0f, 1.07f, 0.028f), new Vector3(0.84f, 0.26f, 0.060f), yaw: yaw + 180f, noOutline: true, uv: UV_DETAIL);
-                    m.Add(Prim.Box, FacePos(-0.41f, 0.00f, 0.018f), new Vector3(0.14f, wallH - 0.26f, 0.040f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos( 0.41f, 0.00f, 0.018f), new Vector3(0.14f, wallH - 0.26f, 0.040f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(-0.41f, 0.00f, 0.018f), new Vector3(0.14f, wallH - 0.26f, 0.040f), yaw: yaw, noOutline: true, uv: UV_SIDE);
+                    m.Add(Prim.Box, FacePos( 0.41f, 0.00f, 0.018f), new Vector3(0.14f, wallH - 0.26f, 0.040f), yaw: yaw, noOutline: true, uv: UV_SIDE);
                     break;
                 }
                 case WallArch.GravshipHull:
                 {
                     // 飞船气密船体墙：还原原版中央竖向舱壁拼缝 + 上下双联凸起装甲板 + 顶部中央凹槽锁扣
-                    m.Add(Prim.Box, FacePos(-0.26f, wallH - 0.26f, 0.020f), new Vector3(0.42f, 0.26f, 0.044f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos( 0.26f, wallH - 0.26f, 0.020f), new Vector3(0.42f, 0.26f, 0.044f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(-0.26f, wallH - 0.26f, 0.020f), new Vector3(0.42f, 0.26f, 0.044f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos( 0.26f, wallH - 0.26f, 0.020f), new Vector3(0.42f, 0.26f, 0.044f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     m.Add(Prim.Box, FacePos( 0.00f, wallH - 0.24f, 0.010f), new Vector3(0.12f, 0.22f, 0.024f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
                     // 中部暗色舱壁横槽带
                     m.Add(Prim.Box, FacePos( 0.00f, 1.28f, 0.010f), new Vector3(0.96f, 0.16f, 0.024f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
@@ -343,41 +391,37 @@ namespace RimFirstPerson3D
                 }
                 case WallArch.BurrowWall:
                 {
-                    // 虫穴分泌物岩土墙：三道错落突出的几丁质夯土横脊
-                    float s = ((cellHash + d) & 1) == 0 ? 1f : -1f;
-                    m.Add(Prim.Box, FacePos(-0.06f * s, 0.22f, 0.020f), new Vector3(0.84f, 0.34f, 0.044f), yaw: yaw, roll: 3f * s, noOutline: true, uv: UV_DETAIL);
-                    m.Add(Prim.Box, FacePos( 0.05f * s, 1.06f, 0.022f), new Vector3(0.86f, 0.32f, 0.048f), yaw: yaw, roll: -4f * s, noOutline: true, uv: UV_SIDE);
-                    m.Add(Prim.Box, FacePos(-0.04f * s, 1.88f, 0.018f), new Vector3(0.82f, 0.30f, 0.040f), yaw: yaw, roll: 2f * s, noOutline: true, uv: UV_DETAIL);
+                    // 虫穴分泌物岩土墙：浑然一体的天然有机巢穴墙体，整幅完整展现深黑褐泥冠、浅黄钙化波浪与暗橄榄夯土基底，严禁添加切断波浪的生硬横盒
                     break;
                 }
                 case WallArch.SmoothedIce:
                 {
                     // 平滑冰墙：纯白冰雪顶冠 + 冰蓝折光腰线与冰基
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.22f, 0.016f), new Vector3(0.98f, 0.22f, 0.036f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.22f, 0.016f), new Vector3(0.98f, 0.22f, 0.036f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     m.Add(Prim.Box, FacePos(0f, wallH - 0.40f, 0.011f), new Vector3(0.96f, 0.18f, 0.026f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
                     m.Add(Prim.Box, FacePos(0f, 0.00f, 0.012f), new Vector3(0.98f, 0.18f, 0.028f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
                     break;
                 }
                 case WallArch.SolidIce:
                 {
-                    // 天然冰川墙：厚重冰雪冠顶 + 多棱冰晶壁面凸脊
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.34f, 0.022f), new Vector3(0.94f, 0.34f, 0.050f), yaw: yaw, noOutline: true, uv: UV_TOP);
-                    m.Add(Prim.Box, FacePos(-0.18f, 0.30f, 0.020f), new Vector3(0.52f, 1.45f, 0.044f), yaw: yaw, roll: 4f, noOutline: true, uv: UV_DETAIL);
-                    m.Add(Prim.Box, FacePos( 0.20f, 0.65f, 0.018f), new Vector3(0.46f, 1.35f, 0.040f), yaw: yaw, roll: -5f, noOutline: true, uv: UV_SIDE);
+                    // 天然冰川墙：厚重冰雪冠顶 + 通高冰晶壁面凸脊
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.32f, 0.020f), new Vector3(0.96f, 0.32f, 0.044f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
+                    m.Add(Prim.Box, FacePos(-0.22f, 0.00f, 0.016f), new Vector3(0.46f, wallH - 0.30f, 0.036f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
+                    m.Add(Prim.Box, FacePos( 0.22f, 0.00f, 0.012f), new Vector3(0.44f, wallH - 0.30f, 0.028f), yaw: yaw, noOutline: true, uv: UV_SIDE);
                     break;
                 }
                 case WallArch.GrayWall:
                 {
                     // 异象迷宫灰墙：深灰巨石顶沿 + 浅灰高光倒角线 + 嵌入式石板框
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.20f, 0.016f), new Vector3(0.98f, 0.20f, 0.036f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.20f, 0.016f), new Vector3(0.98f, 0.20f, 0.036f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     m.Add(Prim.Box, FacePos(0f, wallH - 0.32f, 0.020f), new Vector3(0.98f, 0.12f, 0.044f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
-                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.014f), new Vector3(0.98f, 0.20f, 0.032f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, 0.00f, 0.014f), new Vector3(0.98f, 0.20f, 0.032f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     break;
                 }
                 case WallArch.VoidmetalWall:
                 {
                     // 虚空金属刺墙：还原原版贴图下部破壁而出的尖锐暗黑结晶刺簇
-                    m.Add(Prim.Box, FacePos(0f, wallH - 0.22f, 0.016f), new Vector3(0.98f, 0.22f, 0.036f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    m.Add(Prim.Box, FacePos(0f, wallH - 0.22f, 0.016f), new Vector3(0.98f, 0.22f, 0.036f), yaw: yaw, noOutline: true, uv: UV_EXTRA);
                     m.Add(Prim.Cone, FacePos(-0.28f, 0.04f, 0.035f), new Vector3(0.22f, 0.78f, 0.12f), yaw: yaw, pitch: 12f, roll: -8f, taper: 0.06f, noOutline: true, uv: UV_DETAIL);
                     m.Add(Prim.Cone, FacePos( 0.02f, 0.02f, 0.040f), new Vector3(0.26f, 0.96f, 0.14f), yaw: yaw, pitch: 14f, roll: 4f, taper: 0.05f, noOutline: true, uv: UV_DETAIL);
                     m.Add(Prim.Cone, FacePos( 0.30f, 0.06f, 0.032f), new Vector3(0.20f, 0.68f, 0.11f), yaw: yaw, pitch: 10f, roll: 10f, taper: 0.06f, noOutline: true, uv: UV_DETAIL);
@@ -399,8 +443,8 @@ namespace RimFirstPerson3D
         // 2. 穿墙设备（Vent 通风口 / Cooler 制冷机）与壁挂灯具（WallLamp / WallTorch）
         // ============================================================
 
-        /// <summary>向满格通风口或制冷机的前后立面添加 3D 百叶窗/散热格栅与冷热风口标志。</summary>
-        public static void AddInWallDeviceRelief(Model3D m, WallArch arch, Rot4 rot, float wallH,
+        /// <summary>向 1x1x1 (高 1.00m) 通风口或制冷机的前后立面添加 3D 百叶窗/散热格栅与冷热风口标志。</summary>
+        public static void AddInWallDeviceRelief(Model3D m, WallArch arch, Rot4 rot, float devH,
             bool expN, bool expS, bool expW, bool expE)
         {
             bool[] exp = { expN, expS, expW, expE };
@@ -417,28 +461,28 @@ namespace RimFirstPerson3D
 
                 if (arch == WallArch.Vent)
                 {
+                    // 1x1x1 通风口：顶部压边 + 前后立面外框与 5 层水平百叶格栅
+                    m.Add(Prim.Box, FP(0f, devH - 0.10f, 0.012f), new Vector3(0.96f, 0.10f, 0.028f), yaw: yaw, noOutline: true, uv: UV_TOP);
                     if (d == frontDir || d == backDir)
                     {
-                        // 通风口外框 + 5 层水平百叶格栅
-                        m.Add(Prim.Box, FP(0f, 0.36f, 0.016f), new Vector3(0.78f, 1.44f, 0.036f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                        m.Add(Prim.Box, FP(0f, 0.10f, 0.016f), new Vector3(0.82f, 0.76f, 0.036f), yaw: yaw, noOutline: true, uv: UV_TOP);
                         for (int i = 0; i < 5; i++)
                         {
-                            float ly = 0.48f + i * 0.24f;
-                            m.Add(Prim.Box, FP(0f, ly, 0.032f), new Vector3(0.68f, 0.13f, 0.042f), yaw: yaw, pitch: 14f, noOutline: true, uv: UV_DETAIL);
+                            float ly = 0.16f + i * 0.135f;
+                            m.Add(Prim.Box, FP(0f, ly, 0.032f), new Vector3(0.72f, 0.085f, 0.042f), yaw: yaw, pitch: 14f, noOutline: true, uv: UV_DETAIL);
                         }
                     }
                 }
                 else if (arch == WallArch.Cooler)
                 {
-                    // 顶冠与底座
-                    m.Add(Prim.Box, FP(0f, wallH - 0.18f, 0.014f), new Vector3(0.96f, 0.18f, 0.032f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                    // 1x1x1 制冷机：顶部压边 + 下半散热百叶格栅 + 上半冷/热风向指示面板
+                    m.Add(Prim.Box, FP(0f, devH - 0.10f, 0.014f), new Vector3(0.96f, 0.10f, 0.032f), yaw: yaw, noOutline: true, uv: UV_TOP);
                     if (d == frontDir || d == backDir)
                     {
-                        // 散热格栅框 + 冷/热风向指示标 (front=蓝冷风 UV_DETAIL, back=红热风 UV_EXTRA)
-                        m.Add(Prim.Box, FP(0f, 0.28f, 0.020f), new Vector3(0.80f, 1.36f, 0.044f), yaw: yaw, noOutline: true, uv: UV_SIDE);
-                        m.Add(Prim.Box, FP(0f, 1.72f, 0.024f), new Vector3(0.82f, 0.42f, 0.052f), yaw: yaw, noOutline: true, uv: UV_TOP);
+                        m.Add(Prim.Box, FP(0f, 0.08f, 0.020f), new Vector3(0.82f, 0.48f, 0.044f), yaw: yaw, noOutline: true, uv: UV_SIDE);
+                        m.Add(Prim.Box, FP(0f, 0.60f, 0.024f), new Vector3(0.82f, 0.24f, 0.052f), yaw: yaw, noOutline: true, uv: UV_TOP);
                         int indicatorUv = (d == frontDir) ? UV_DETAIL : UV_EXTRA;
-                        m.Add(Prim.Box, FP(0f, 1.80f, 0.042f), new Vector3(0.34f, 0.26f, 0.036f), yaw: yaw, noOutline: true, uv: indicatorUv);
+                        m.Add(Prim.Box, FP(0f, 0.64f, 0.042f), new Vector3(0.30f, 0.16f, 0.036f), yaw: yaw, noOutline: true, uv: indicatorUv);
                     }
                 }
             }
@@ -454,20 +498,23 @@ namespace RimFirstPerson3D
         public static Model3D BuildCellModel(WallArch arch, bool linkN, bool linkS, bool linkW, bool linkE, Rot4 rot, int cellHash = 0)
         {
             var m = new Model3D();
-            if (IsFullWallOrInWall(arch))
+            if (IsInWallDevice(arch))
+            {
+                // 通风管与制冷机本体统一为 1x1x1 模型（高 1.00m）
+                const float devH = 1.00f;
+                m.Add(Prim.Box, Vector3.zero, new Vector3(1.00f, devH, 1.00f), uv: UV_TOP);
+                AddInWallDeviceRelief(m, arch, rot, devH, linkN, linkS, linkW, linkE);
+                m.RecalcBounds();
+                return m;
+            }
+
+            if (IsFullWall(arch))
             {
                 float h = arch == WallArch.SolidIce ? Metrics3D.RockHeight : Fps3DState.WallHeight;
                 m.Add(Prim.Box, Vector3.zero, new Vector3(1.00f, h, 1.00f), uv: UV_TOP);
-                if (arch == WallArch.Vent || arch == WallArch.Cooler)
-                {
-                    AddInWallDeviceRelief(m, arch, rot, h, linkN, linkS, linkW, linkE);
-                }
-                else
-                {
-                    bool[] exp = { linkN, linkS, linkW, linkE };
-                    for (int d = 0; d < 4; d++)
-                        if (exp[d]) AddExposedFaceRelief(m, arch, d, h, cellHash);
-                }
+                bool[] exp = { linkN, linkS, linkW, linkE };
+                for (int d = 0; d < 4; d++)
+                    if (exp[d]) AddExposedFaceRelief(m, arch, d, h, cellHash);
                 m.RecalcBounds();
                 return m;
             }
@@ -481,8 +528,10 @@ namespace RimFirstPerson3D
                     BuildBarricade(m, linkN, linkS, linkW, linkE);
                     break;
                 case WallArch.FenceSmooth:
+                    BuildFence(m, linkN, linkS, linkW, linkE, isMetal: false);
+                    break;
                 case WallArch.FenceMetal:
-                    BuildFence(m, linkN, linkS, linkW, linkE);
+                    BuildFence(m, linkN, linkS, linkW, linkE, isMetal: true);
                     break;
                 case WallArch.AncientFence:
                     BuildAncientFence(m, linkN, linkS, linkW, linkE);
@@ -492,6 +541,9 @@ namespace RimFirstPerson3D
                     break;
                 case WallArch.WallTorch:
                     BuildWallTorch(m, rot);
+                    break;
+                case WallArch.TorchPost:
+                    BuildTorchPost(m);
                     break;
             }
             m.RecalcBounds();
@@ -503,18 +555,18 @@ namespace RimFirstPerson3D
         {
             if (!n && !s && !w && !e) { w = true; e = true; }
 
-            // 中心三层叠袋（错向咬合，确保任意转角/十字连接无空隙）
-            m.Add(Prim.Box, new Vector3(0.00f, 0.00f, 0.00f), new Vector3(0.48f, 0.20f, 0.46f), uv: UV_SIDE);
-            m.Add(Prim.Box, new Vector3(0.00f, 0.18f, 0.00f), new Vector3(0.46f, 0.20f, 0.48f), yaw: 8f, uv: UV_DETAIL);
-            m.Add(Prim.Box, new Vector3(0.00f, 0.36f, 0.00f), new Vector3(0.44f, 0.19f, 0.44f), yaw: -6f, uv: UV_TOP);
+            // 中心三层叠袋（底层用 UV_DETAIL，中层用 UV_SIDE，顶层用 UV_EXTRA 即单层袋顶面）
+            m.Add(Prim.Box, new Vector3(0.00f, 0.00f, 0.00f), new Vector3(0.48f, 0.20f, 0.46f), uv: UV_DETAIL);
+            m.Add(Prim.Box, new Vector3(0.00f, 0.18f, 0.00f), new Vector3(0.46f, 0.20f, 0.48f), yaw: 8f, uv: UV_SIDE);
+            m.Add(Prim.Box, new Vector3(0.00f, 0.36f, 0.00f), new Vector3(0.44f, 0.19f, 0.44f), yaw: -6f, uv: UV_EXTRA);
 
             void AddArm(float dirYaw)
             {
                 var q = Quaternion.Euler(0f, dirYaw, 0f);
                 // 沿臂方向延伸的三层饱满沙袋（中层错缝偏移）
-                m.Add(Prim.Box, q * new Vector3(0f, 0.00f, 0.31f), new Vector3(0.46f, 0.20f, 0.38f), yaw: dirYaw, uv: UV_SIDE);
-                m.Add(Prim.Box, q * new Vector3(0f, 0.18f, 0.28f), new Vector3(0.44f, 0.20f, 0.38f), yaw: dirYaw + 4f, uv: UV_DETAIL);
-                m.Add(Prim.Box, q * new Vector3(0f, 0.36f, 0.30f), new Vector3(0.42f, 0.19f, 0.38f), yaw: dirYaw - 3f, uv: UV_TOP);
+                m.Add(Prim.Box, q * new Vector3(0f, 0.00f, 0.31f), new Vector3(0.46f, 0.20f, 0.38f), yaw: dirYaw, uv: UV_DETAIL);
+                m.Add(Prim.Box, q * new Vector3(0f, 0.18f, 0.28f), new Vector3(0.44f, 0.20f, 0.38f), yaw: dirYaw + 4f, uv: UV_SIDE);
+                m.Add(Prim.Box, q * new Vector3(0f, 0.36f, 0.30f), new Vector3(0.42f, 0.19f, 0.38f), yaw: dirYaw - 3f, uv: UV_EXTRA);
             }
 
             if (s) AddArm(0f);
@@ -545,20 +597,28 @@ namespace RimFirstPerson3D
             if (w) AddBeam(-90f);
         }
 
-        /// <summary>木/石/金属栅栏（Fence）：还原原版方立柱 + 柱帽 + 上下双横档。</summary>
-        private static void BuildFence(Model3D m, bool n, bool s, bool w, bool e)
+        /// <summary>木/石/金属栅栏（Fence）：还原原版方立柱 + 柱帽 + 横档（木/石双横档，金属三横档）。</summary>
+        private static void BuildFence(Model3D m, bool n, bool s, bool w, bool e, bool isMetal = false)
         {
             bool isolated = !n && !s && !w && !e;
             if (isolated)
             {
-                // 独立单格栅栏：还原原版菜单与单格的双立柱 + 上下双横档造型
+                // 独立单格栅栏：还原原版菜单与单格的双立柱 + 横档造型
                 m.Add(Prim.Box, new Vector3(-0.30f, 0.00f, 0f), new Vector3(0.16f, 0.96f, 0.16f), uv: UV_SIDE);
                 m.Add(Prim.Box, new Vector3(-0.30f, 0.94f, 0f), new Vector3(0.19f, 0.06f, 0.19f), noOutline: true, uv: UV_DETAIL);
                 m.Add(Prim.Box, new Vector3( 0.30f, 0.00f, 0f), new Vector3(0.16f, 0.96f, 0.16f), uv: UV_SIDE);
                 m.Add(Prim.Box, new Vector3( 0.30f, 0.94f, 0f), new Vector3(0.19f, 0.06f, 0.19f), noOutline: true, uv: UV_DETAIL);
-                m.Add(Prim.Box, new Vector3( 0.00f, 0.64f, 0f), new Vector3(0.88f, 0.16f, 0.10f), uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3( 0.00f, 0.26f, 0f), new Vector3(0.88f, 0.16f, 0.10f), uv: UV_SIDE);
-                // 隐形接地垫保持双柱在 3D 连通性守卫中连通
+                if (isMetal)
+                {
+                    m.Add(Prim.Box, new Vector3(0.00f, 0.68f, 0f), new Vector3(0.88f, 0.12f, 0.10f), uv: UV_TOP);
+                    m.Add(Prim.Box, new Vector3(0.00f, 0.44f, 0f), new Vector3(0.88f, 0.12f, 0.10f), uv: UV_SIDE);
+                    m.Add(Prim.Box, new Vector3(0.00f, 0.20f, 0f), new Vector3(0.88f, 0.12f, 0.10f), uv: UV_SIDE);
+                }
+                else
+                {
+                    m.Add(Prim.Box, new Vector3(0.00f, 0.64f, 0f), new Vector3(0.88f, 0.16f, 0.10f), uv: UV_TOP);
+                    m.Add(Prim.Box, new Vector3(0.00f, 0.26f, 0f), new Vector3(0.88f, 0.16f, 0.10f), uv: UV_SIDE);
+                }
                 m.Add(Prim.Box, new Vector3( 0.00f, 0.00f, 0f), new Vector3(0.64f, 0.04f, 0.08f), noOutline: true, uv: UV_SIDE);
                 return;
             }
@@ -570,8 +630,17 @@ namespace RimFirstPerson3D
             void AddRail(float dirYaw)
             {
                 var q = Quaternion.Euler(0f, dirYaw, 0f);
-                m.Add(Prim.Box, q * new Vector3(0f, 0.64f, 0.27f), new Vector3(0.10f, 0.16f, 0.46f), yaw: dirYaw, uv: UV_TOP);
-                m.Add(Prim.Box, q * new Vector3(0f, 0.26f, 0.27f), new Vector3(0.10f, 0.16f, 0.46f), yaw: dirYaw, uv: UV_SIDE);
+                if (isMetal)
+                {
+                    m.Add(Prim.Box, q * new Vector3(0f, 0.68f, 0.27f), new Vector3(0.10f, 0.12f, 0.46f), yaw: dirYaw, uv: UV_TOP);
+                    m.Add(Prim.Box, q * new Vector3(0f, 0.44f, 0.27f), new Vector3(0.10f, 0.12f, 0.46f), yaw: dirYaw, uv: UV_SIDE);
+                    m.Add(Prim.Box, q * new Vector3(0f, 0.20f, 0.27f), new Vector3(0.10f, 0.12f, 0.46f), yaw: dirYaw, uv: UV_SIDE);
+                }
+                else
+                {
+                    m.Add(Prim.Box, q * new Vector3(0f, 0.64f, 0.27f), new Vector3(0.10f, 0.16f, 0.46f), yaw: dirYaw, uv: UV_TOP);
+                    m.Add(Prim.Box, q * new Vector3(0f, 0.26f, 0.27f), new Vector3(0.10f, 0.16f, 0.46f), yaw: dirYaw, uv: UV_SIDE);
+                }
             }
 
             if (s) AddRail(0f);
@@ -611,30 +680,37 @@ namespace RimFirstPerson3D
             if (w) AddPanel(-90f);
         }
 
-        /// <summary>壁灯（WallLamp）：金属背板底座 + 暖白发光灯管。</summary>
+        /// <summary>壁灯等壁挂件（WallLamp）：1x1 格内离地高度统一为 Y = 2.00m，贴靠所依附墙面。</summary>
         private static void BuildWallLamp(Model3D m, Rot4 rot)
         {
+            float y0 = Metrics3D.WallAttachmentHeight;
             float yaw = rot.AsAngle;
             var q = Quaternion.Euler(0f, yaw, 0f);
-            // 背板贴墙，灯管朝室内突出
-            m.Add(Prim.Box, q * new Vector3(0f, 0.00f, 0.00f), new Vector3(0.46f, 0.16f, 0.10f), yaw: yaw, uv: UV_TOP);
-            m.Add(Prim.Box, q * new Vector3(0f, 0.02f, -0.06f), new Vector3(0.40f, 0.12f, 0.10f), yaw: yaw, uv: UV_SIDE);
-            m.Add(Prim.Box, q * new Vector3(0f, 0.03f, -0.09f), new Vector3(0.36f, 0.09f, 0.06f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
+            // rot=North 时所附墙体在 +Z (z=+0.44f)，灯管朝室内 (-Z) 突出
+            m.Add(Prim.Box, q * new Vector3(0f, y0 + 0.00f, 0.44f), new Vector3(0.46f, 0.16f, 0.10f), yaw: yaw, uv: UV_TOP);
+            m.Add(Prim.Box, q * new Vector3(0f, y0 + 0.02f, 0.38f), new Vector3(0.40f, 0.12f, 0.10f), yaw: yaw, uv: UV_SIDE);
+            m.Add(Prim.Box, q * new Vector3(0f, y0 + 0.03f, 0.35f), new Vector3(0.36f, 0.09f, 0.06f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
         }
 
-        /// <summary>壁炬（TorchWallLamp）：铁箍托架 + 斜插木柄火把 + 火焰顶冠。</summary>
+        /// <summary>壁炬（TorchWallLamp）：1x1 格内离地高度统一为 Y = 2.00m，仅构建托架与木柄（火焰由 Shader 渲染）。</summary>
         private static void BuildWallTorch(Model3D m, Rot4 rot)
         {
+            float y0 = Metrics3D.WallAttachmentHeight;
             float yaw = rot.AsAngle;
             var q = Quaternion.Euler(0f, yaw, 0f);
-            // 壁挂铁托架
-            m.Add(Prim.Box, q * new Vector3(0f, 0.00f,  0.02f), new Vector3(0.16f, 0.18f, 0.10f), yaw: yaw, uv: UV_SIDE);
-            m.Add(Prim.Box, q * new Vector3(0f, 0.05f, -0.06f), new Vector3(0.14f, 0.08f, 0.16f), yaw: yaw, noOutline: true, uv: UV_SIDE);
-            // 斜向伸出的木火把柄
-            m.Add(Prim.Cylinder, q * new Vector3(0f, 0.02f, -0.08f), new Vector3(0.11f, 0.34f, 0.11f), yaw: yaw, pitch: -24f, taper: 1.25f, uv: UV_SIDE);
-            // 顶部燃烧火焰团
-            m.Add(Prim.Sphere, q * new Vector3(0f, 0.30f, -0.20f), new Vector3(0.20f, 0.22f, 0.20f), yaw: yaw, noOutline: true, uv: UV_TOP);
-            m.Add(Prim.Cone,   q * new Vector3(0f, 0.42f, -0.20f), new Vector3(0.16f, 0.18f, 0.16f), yaw: yaw, taper: 0.15f, noOutline: true, uv: UV_DETAIL);
+            // 壁挂托架底座（贴靠 +Z 墙面 z=0.44f）
+            m.Add(Prim.Box, q * new Vector3(0f, y0 + 0.00f, 0.44f), new Vector3(0.16f, 0.18f, 0.10f), yaw: yaw, uv: UV_DETAIL);
+            m.Add(Prim.Box, q * new Vector3(0f, y0 + 0.05f, 0.36f), new Vector3(0.12f, 0.08f, 0.16f), yaw: yaw, noOutline: true, uv: UV_DETAIL);
+            // 斜向伸出的火把木柄与顶杯（无实体火焰球/锥，火焰交由 Shader 渲染）
+            m.Add(Prim.Cylinder, q * new Vector3(0f, y0 + 0.02f, 0.34f), new Vector3(0.11f, 0.30f, 0.11f), yaw: yaw, pitch: -24f, taper: 1.25f, uv: UV_SIDE);
+            m.Add(Prim.Cylinder, q * new Vector3(0f, y0 + 0.24f, 0.24f), new Vector3(0.14f, 0.08f, 0.14f), yaw: yaw, pitch: -24f, taper: 1.12f, noOutline: true, uv: UV_TOP);
+        }
+
+        /// <summary>落地火把（TorchLamp / Darktorch）：仅构建直立木柄与顶杯，火焰部分由 Shader 渲染。</summary>
+        private static void BuildTorchPost(Model3D m)
+        {
+            m.Add(Prim.Cylinder, new Vector3(0f, 0.00f, 0f), new Vector3(0.14f, 0.78f, 0.14f), taper: 1.15f, uv: UV_SIDE);
+            m.Add(Prim.Cylinder, new Vector3(0f, 0.74f, 0f), new Vector3(0.18f, 0.14f, 0.18f), taper: 1.18f, noOutline: true, uv: UV_TOP);
         }
     }
 }

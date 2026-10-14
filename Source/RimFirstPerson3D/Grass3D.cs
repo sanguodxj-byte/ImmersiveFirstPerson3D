@@ -66,11 +66,12 @@ namespace RimFirstPerson3D
             get
             {
                 if (tuftShadowMat != null) return tuftShadowMat;
-                tuftShadowMat = new Material(ShaderDatabase.Transparent)
+                tuftShadowMat = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
                 {
                     name = "Fps3D_GrassShadow",
-                    mainTexture = ProcTex3D.Radial(32, 0.20f, 1.35f),
-                    color = new Color(0f, 0f, 0f, 0.38f)
+                    mainTexture = ProcTex3D.Radial(32, 0.20f, 1.45f),
+                    color = new Color(0f, 0f, 0f, 0.08f),
+                    renderQueue = 2914
                 };
                 return tuftShadowMat;
             }
@@ -121,17 +122,38 @@ namespace RimFirstPerson3D
         {
             if (mats != null) return;
             Texture2D tex = null;
-            try { tex = ContentFinder<Texture2D>.Get("Things/Plant/Grass/GrassA", false); } catch { }
+            try
+            {
+                var all = ContentFinder<Texture2D>.GetAllInFolder("Things/Plant/Grass");
+                foreach (var x in all)
+                {
+                    if (x != null && !x.NullOrBad()) { tex = x; break; }
+                }
+            }
+            catch { }
             if (tex == null)
+            {
+                try { tex = ContentFinder<Texture2D>.Get("Things/Plant/Grass/GrassA.psd", false); } catch { }
+            }
+            if (tex == null)
+            {
+                try { tex = ContentFinder<Texture2D>.Get("Things/Plant/Grass/GrassA", false); } catch { }
+            }
+            if (tex == null || tex.NullOrBad())
             {
                 try
                 {
                     var def = DefDatabase<ThingDef>.GetNamedSilentFail("Plant_Grass");
                     var g = def != null ? def.graphic : null;
-                    if (g != null) tex = g.MatSingle != null ? g.MatSingle.mainTexture as Texture2D : null;
+                    if (g != null && g.MatSingle != null && !g.MatSingle.NullOrBad())
+                    {
+                        var mTex = g.MatSingle.mainTexture as Texture2D;
+                        if (mTex != null && !mTex.NullOrBad()) tex = mTex;
+                    }
                 }
                 catch { }
             }
+            if (tex != null && tex.NullOrBad()) tex = null;
             mats = new Material[3];
             Color[] tints =
             {
@@ -251,7 +273,7 @@ namespace RimFirstPerson3D
                 {
                     if (byTint[i].Count > 0)
                         chunk.meshes[i] = Util3D.BuildInstancedMesh(Util3D.CrossMesh, byTint[i], lf, worldOffset,
-                            out chunk.positions[i], out chunk.colors[i]);
+                            out chunk.positions[i], out chunk.colors[i], 1.45f);
                 }
                 chunk.shadowMesh = Util3D.BuildInstancedMesh(Util3D.GroundQuad, shadowMats);
                 Vector3 center = new Vector3((x0 + x1) * 0.5f + worldOffset.x, baseY + 0.25f, (z0 + z1) * 0.5f + worldOffset.z);
@@ -323,8 +345,9 @@ namespace RimFirstPerson3D
                             buildBudget--;
                         }
                     }
-                    else if (chunk.colorDirty && colorBudget > 0)
+                    else if (chunk.colorDirty && colorBudget > 0 && Frustum3D.Visible(chunk.bounds))
                     {
+                        // 屏幕外的草块不重刷顶点色：留在 dirty 里，进视野再说
                         RecolorChunk(chunk);
                         colorBudget--;
                     }

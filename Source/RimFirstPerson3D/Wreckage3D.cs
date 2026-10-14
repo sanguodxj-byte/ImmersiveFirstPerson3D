@@ -11,7 +11,7 @@ namespace RimFirstPerson3D
     // ============================================================
     //
     // 【几何】由 WreckageSamples 的三视图重构模型提供（样板几何已冻结，见其文件头注释）。
-    // 【材质】完全取样自原版贴图合并成的图集 1.6/Textures/FPS3D/WreckageAtlas.png，
+    // 【材质】完全取样自原版贴图合并成的图集 Textures\FPS3D\WreckageAtlas.png，
     //        UV 常量表由 WreckageUVGen 自动生成；描边由 ModelBuilder 反绕外壳负责。
     //
     // 本类是残骸在**运行时**的唯一入口：BuildingLayer3D 在烘焙时对残骸短路

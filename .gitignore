@@ -5,6 +5,7 @@ scripts/__pycache__/
 *.user
 
 # 家具审核台的 Chrome 临时 profile（若有人改回共享目录）
+.chrome_tmp/
 docs/furniture/audit/.chrome-profile/
 # 出图沙盒（D 盘，替代 C 盘 %TEMP% 的 scoped_dir）：脚本自己按启动建删，允许崩溃残留
 temp_shots/
@@ -42,6 +43,24 @@ verify_*.png
 shots/
 viewer/shots/
 viewer/__pycache__/
+/*.png
+/temp_*.mjs
+/_tmpsweep/
+/build/
+/prompt_attachment/
+
+# 代理临时运行时与记忆文件（不入库）
+/AGENT.md
+/HEARTBEAT.md
+/IDENTITY.md
+/SOUL.md
+/USER.md
+/agents/
+/memory/
+/todo/
+/context/
+/messages/
+/coding_memory/
 
 # 临时出图与检查脚本（正式工具脚本仍正常入库）
 scripts/*_live.py

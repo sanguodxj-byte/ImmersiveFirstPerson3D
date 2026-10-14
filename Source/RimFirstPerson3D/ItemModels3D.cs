@@ -16,7 +16,7 @@ namespace RimFirstPerson3D
     //         活铁（Bioferrite）、原木（WoodLog）、重力板（GravlitePanel）、织物卷（Cloth等）、
     //         工业/高级零部件（Component）、化合燃料（Chemfuel）、中性胺（Neutroamine）、
     //         医药（Medicine）与有毒废料包（Wastepack）从 2D 十字面片升级为带反绕描边壳的实体 3D 模型。
-    // 【材质】完全取样自原版贴图合并而成的 1.6/Textures/FPS3D/ItemAtlas.png（由 scripts/item_atlas.py 生成），
+    // 【材质】完全取样自原版贴图合并而成的 Textures\FPS3D\ItemAtlas.png（由 scripts/item_atlas.py 生成），
     //         每个物块含 4 个原版取样区：0=top(受光顶面)、1=side(主立面)、2=shade(背光暗面)、3=detail(特征细节)。
     // 【性能】与 PlantModels3D 同口径：在 ItemLayer3D 中按 (物块键×形态变体) 分组，经 Util3D.BuildInstancedMesh
     //         烘焙为合并网格，全图仅 2 次 DrawMesh（本体 + 描边壳），零逐件 DrawCall 开销。
@@ -333,60 +333,66 @@ namespace RimFirstPerson3D
         {
             if (v == 0)
             {
-                // rocklowa：左后方高耸斜切岩峰 + 右前方低矮宽岩阶（L 形阶梯多面体巨石）
-                m.Add(Prim.Box, new Vector3(-0.08f, 0.00f,  0.04f), new Vector3(0.42f, 0.28f, 0.38f), yaw: -14f, uv: UV_TOP);
-                m.Add(Prim.Wedge, new Vector3(-0.08f, 0.278f, 0.04f), new Vector3(0.42f, 0.13f, 0.38f), yaw: 166f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3( 0.14f, 0.00f, -0.06f), new Vector3(0.38f, 0.19f, 0.32f), yaw: 12f, uv: UV_SIDE);
-                m.Add(Prim.Wedge, new Vector3( 0.14f, 0.188f, -0.06f), new Vector3(0.38f, 0.09f, 0.32f), yaw: -168f, uv: UV_SIDE);
-                m.Add(Prim.Box, new Vector3(-0.19f, 0.00f, -0.07f), new Vector3(0.26f, 0.21f, 0.28f), yaw: 24f, uv: UV_SHADE);
+                // rocklowa：L 形阶梯多面体巨石（左后高耸斜劈岩峰 + 右前宽厚矮岩阶 + 前侧切削角岩，极具辨识度的 L 形剪影）
+                m.Add(Prim.Box,   new Vector3(-0.08f, 0.00f,  0.04f), new Vector3(0.44f, 0.28f, 0.40f), yaw: -14f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.08f, 0.28f,  0.04f), new Vector3(0.44f, 0.14f, 0.40f), yaw: 166f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.16f, 0.00f, -0.06f), new Vector3(0.36f, 0.18f, 0.34f), yaw: -14f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.16f, 0.18f, -0.06f), new Vector3(0.36f, 0.10f, 0.34f), yaw: 166f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3(-0.18f, 0.00f, -0.06f), new Vector3(0.24f, 0.14f, 0.26f), yaw: -14f, uv: UV_SHADE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.18f, 0.14f, -0.06f), new Vector3(0.24f, 0.07f, 0.26f), yaw: -14f, uv: UV_SHADE, noBottom: true);
             }
             else if (v == 1)
             {
-                // rocklowb：中央偏右宽厚斜顶巨石 + 左前侧劈裂斜坡面
-                m.Add(Prim.Box, new Vector3( 0.04f, 0.00f,  0.02f), new Vector3(0.46f, 0.28f, 0.40f), yaw: 18f, uv: UV_TOP);
-                m.Add(Prim.Wedge, new Vector3( 0.04f, 0.278f, 0.02f), new Vector3(0.46f, 0.13f, 0.40f), yaw: -162f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3(-0.15f, 0.00f, -0.05f), new Vector3(0.34f, 0.20f, 0.34f), yaw: -22f, uv: UV_SIDE);
-                m.Add(Prim.Wedge, new Vector3(-0.15f, 0.198f, -0.05f), new Vector3(0.34f, 0.10f, 0.34f), yaw: 158f, uv: UV_SIDE);
+                // rocklowb：浑厚多面斜脊巨石（中央偏右浑厚斜脊主峰 + 左侧舒展劈裂斜坡面，宽厚稳重多棱角）
+                m.Add(Prim.Box,   new Vector3( 0.04f, 0.00f,  0.02f), new Vector3(0.48f, 0.28f, 0.42f), yaw:  18f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.04f, 0.28f,  0.02f), new Vector3(0.48f, 0.13f, 0.42f), yaw: -162f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3(-0.16f, 0.00f, -0.05f), new Vector3(0.34f, 0.20f, 0.36f), yaw: -22f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.16f, 0.20f, -0.05f), new Vector3(0.34f, 0.10f, 0.36f), yaw: 158f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.16f, 0.00f,  0.12f), new Vector3(0.28f, 0.13f, 0.26f), yaw:  18f, uv: UV_SHADE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.16f, 0.13f,  0.12f), new Vector3(0.28f, 0.07f, 0.26f), yaw: -162f, uv: UV_SHADE, noBottom: true);
             }
             else
             {
-                // rocklowc：双峰交错的多棱劈裂矿石（全斜切岩棱，无圆台帽）
-                m.Add(Prim.Box, new Vector3(-0.06f, 0.00f,  0.06f), new Vector3(0.40f, 0.31f, 0.36f), yaw: -22f, uv: UV_TOP);
-                m.Add(Prim.Wedge, new Vector3(-0.06f, 0.308f, 0.06f), new Vector3(0.40f, 0.13f, 0.36f), yaw: 158f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3( 0.12f, 0.00f, -0.08f), new Vector3(0.36f, 0.22f, 0.32f), yaw: 26f, uv: UV_SIDE);
-                m.Add(Prim.Wedge, new Vector3( 0.12f, 0.218f, -0.08f), new Vector3(0.36f, 0.10f, 0.32f), yaw: -154f, uv: UV_SIDE);
-                m.Add(Prim.Box, new Vector3(-0.15f, 0.00f, -0.09f), new Vector3(0.26f, 0.19f, 0.26f), yaw: 10f, uv: UV_SHADE);
+                // rocklowc：双峰交错对向劈裂岩（双峰对峙、V形凹谷对切劈裂、陡峭多棱峰）
+                m.Add(Prim.Box,   new Vector3(-0.10f, 0.00f,  0.06f), new Vector3(0.38f, 0.31f, 0.36f), yaw: -20f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.10f, 0.31f,  0.06f), new Vector3(0.38f, 0.14f, 0.36f), yaw: 160f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.14f, 0.00f, -0.04f), new Vector3(0.36f, 0.20f, 0.34f), yaw: -20f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.14f, 0.20f, -0.04f), new Vector3(0.36f, 0.09f, 0.34f), yaw: -20f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.02f, 0.00f,  0.14f), new Vector3(0.26f, 0.12f, 0.24f), yaw: -20f, uv: UV_SHADE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.02f, 0.12f,  0.14f), new Vector3(0.26f, 0.07f, 0.24f), yaw: 160f, uv: UV_SHADE, noBottom: true);
             }
         }
 
-        /// <summary>钢渣块（ChunkSlagSteel）：还原原版 metaldebrisa(交叠扭曲钢梁) / b(锯齿残甲) / c(V形撕裂双翼)。</summary>
+        /// <summary>钢渣块（ChunkSlagSteel）：还原原版 metaldebrisa(工字钢梁折板) / b(重装甲阶梯残盖) / c(V形撕裂双翼)。</summary>
         private static void BuildChunkSlag(Model3D m, int v)
         {
             if (v == 0)
             {
-                // metaldebrisa：左下斜插钢板 + 右侧宽翼折板 + 中央斜跨扭曲工字钢梁
-                m.Add(Prim.Box, new Vector3(-0.10f, 0.00f, -0.10f), new Vector3(0.42f, 0.12f, 0.26f), yaw: 24f, uv: UV_SHADE);
-                m.Add(Prim.Box, new Vector3( 0.14f, 0.04f,  0.04f), new Vector3(0.34f, 0.22f, 0.44f), yaw: -18f, roll: -12f, uv: UV_SIDE);
-                m.Add(Prim.Box, new Vector3(-0.04f, 0.06f,  0.02f), new Vector3(0.22f, 0.26f, 0.58f), yaw: 34f, pitch: 12f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3(-0.04f, 0.24f,  0.02f), new Vector3(0.28f, 0.05f, 0.52f), yaw: 34f, pitch: 12f, noOutline: true, uv: UV_DETAIL);
+                // metaldebrisa：扭曲工字钢梁 + 倾斜钢肋垫板残骸（严密闭合无破孔）
+                m.Add(Prim.Box,   new Vector3(-0.04f, 0.00f,  0.00f), new Vector3(0.34f, 0.22f, 0.56f), yaw:  28f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.04f, 0.22f,  0.00f), new Vector3(0.34f, 0.10f, 0.56f), yaw: 208f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3(-0.04f, 0.15f,  0.00f), new Vector3(0.44f, 0.06f, 0.50f), yaw:  28f, noOutline: true, uv: UV_DETAIL);
+                m.Add(Prim.Box,   new Vector3( 0.14f, 0.00f, -0.04f), new Vector3(0.28f, 0.14f, 0.40f), yaw:  28f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.14f, 0.14f, -0.04f), new Vector3(0.28f, 0.07f, 0.40f), yaw:  28f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3(-0.18f, 0.00f, -0.04f), new Vector3(0.22f, 0.11f, 0.36f), yaw:  28f, uv: UV_SHADE);
             }
             else if (v == 1)
             {
-                // metaldebrisb：中央拱起厚装甲板 + 四周参差伸出的断裂铆接齿条
-                m.Add(Prim.Box, new Vector3(0.00f, 0.00f, 0.00f), new Vector3(0.46f, 0.20f, 0.44f), yaw: -22f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3(0.00f, 0.14f, 0.00f), new Vector3(0.34f, 0.10f, 0.32f), yaw: -22f, pitch: 8f, noOutline: true, uv: UV_DETAIL);
-                m.Add(Prim.Box, new Vector3(-0.24f, 0.02f,  0.10f), new Vector3(0.18f, 0.09f, 0.10f), yaw: -22f, uv: UV_SHADE);
-                m.Add(Prim.Box, new Vector3( 0.24f, 0.02f, -0.10f), new Vector3(0.18f, 0.09f, 0.10f), yaw: -22f, uv: UV_SHADE);
-                m.Add(Prim.Box, new Vector3( 0.10f, 0.02f,  0.24f), new Vector3(0.10f, 0.09f, 0.18f), yaw: -22f, uv: UV_SIDE);
-                m.Add(Prim.Box, new Vector3(-0.10f, 0.02f, -0.24f), new Vector3(0.10f, 0.09f, 0.18f), yaw: -22f, uv: UV_SIDE);
+                // metaldebrisb：阶梯重装甲残盖 + 铆接撕裂翼板
+                m.Add(Prim.Box,   new Vector3( 0.04f, 0.00f,  0.00f), new Vector3(0.44f, 0.22f, 0.44f), yaw: -20f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.04f, 0.22f,  0.00f), new Vector3(0.44f, 0.11f, 0.44f), yaw: 160f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3(-0.14f, 0.00f,  0.00f), new Vector3(0.30f, 0.14f, 0.44f), yaw: -20f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.14f, 0.14f,  0.00f), new Vector3(0.30f, 0.07f, 0.44f), yaw: 160f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.20f, 0.00f,  0.00f), new Vector3(0.22f, 0.12f, 0.32f), yaw: -20f, uv: UV_SHADE);
             }
             else
             {
-                // metaldebrisc：V 形撕裂的双翼钢梁残骸
-                m.Add(Prim.Box, new Vector3( 0.00f, 0.00f, -0.06f), new Vector3(0.32f, 0.14f, 0.30f), yaw: 10f, uv: UV_SHADE);
-                m.Add(Prim.Box, new Vector3(-0.11f, 0.06f,  0.04f), new Vector3(0.18f, 0.26f, 0.48f), yaw: -24f, pitch: 16f, roll: 14f, uv: UV_SIDE);
-                m.Add(Prim.Box, new Vector3( 0.12f, 0.06f,  0.02f), new Vector3(0.20f, 0.28f, 0.52f), yaw: 20f, pitch: 14f, roll: -12f, uv: UV_TOP);
-                m.Add(Prim.Box, new Vector3( 0.00f, 0.12f, -0.02f), new Vector3(0.34f, 0.08f, 0.14f), yaw: 6f, noOutline: true, uv: UV_DETAIL);
+                // metaldebrisc：V 形撕裂双翼钢构残骸
+                m.Add(Prim.Box,   new Vector3(-0.08f, 0.00f,  0.02f), new Vector3(0.34f, 0.26f, 0.46f), yaw: -22f, uv: UV_SIDE, noTop: true);
+                m.Add(Prim.Wedge, new Vector3(-0.08f, 0.26f,  0.02f), new Vector3(0.34f, 0.11f, 0.46f), yaw: 158f, uv: UV_SIDE, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.12f, 0.00f, -0.02f), new Vector3(0.32f, 0.16f, 0.44f), yaw: -22f, uv: UV_TOP, noTop: true);
+                m.Add(Prim.Wedge, new Vector3( 0.12f, 0.16f, -0.02f), new Vector3(0.32f, 0.08f, 0.44f), yaw: -22f, uv: UV_TOP, noBottom: true);
+                m.Add(Prim.Box,   new Vector3( 0.02f, 0.00f,  0.14f), new Vector3(0.24f, 0.12f, 0.22f), yaw: -22f, noOutline: true, uv: UV_SHADE);
             }
         }
 

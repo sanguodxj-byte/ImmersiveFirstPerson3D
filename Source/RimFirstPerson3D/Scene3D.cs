@@ -33,7 +33,7 @@ namespace RimFirstPerson3D
         // 上次烘进网格的光照参数指纹
         private long lastLightKey = long.MinValue;
 
-        public LightField3D Light => field;
+        public LightField3D Light => this.field;
         public MountainField3D Mountain => mountain;
         public MountainLayer3D Mountains => mountains;
 
@@ -77,10 +77,10 @@ namespace RimFirstPerson3D
             Lighting3D.ClearLitMats();
             field.Prime(Lighting3D.Current);
             terrain.MarkAllColorDirty();
-            buildings.MarkAllDirty();
+            buildings.MarkAllColorDirty();
             mountains.MarkAllColorDirty();
-            water.MarkAllDirty();
-            plants.MarkAllDirty();
+            water.MarkAllColorDirty();
+            plants.MarkAllColorDirty();
             grass.MarkAllColorDirty();
             items.MarkBatchDirty();
         }
@@ -88,6 +88,7 @@ namespace RimFirstPerson3D
         public void NotifyTerrainChanged(IntVec3 c)
         {
             terrain.MarkCellDirty(c);
+            buildings.NotifyRoofOrTerrainChanged(c);
             water.MarkCellDirty(c);
             grass.MarkCellDirty(c);
             plants.MarkCellDirty(c);
@@ -96,6 +97,7 @@ namespace RimFirstPerson3D
         public void NotifyRoofChanged(IntVec3 c)
         {
             mountains.MarkCellDirty(c);
+            buildings.NotifyRoofOrTerrainChanged(c);
             grass.MarkCellDirty(c);
             plants.MarkCellDirty(c);
         }
@@ -178,9 +180,9 @@ namespace RimFirstPerson3D
                 Lighting3D.ClearLitMats();
                 field.Prime(env);
                 terrain.MarkAllDirty();
-                buildings.MarkAllDirty();
+                buildings.MarkAllColorDirty();
                 mountains.MarkAllColorDirty();
-                water.MarkAllDirty();
+                water.MarkAllColorDirty();
                 plants.MarkAllColorDirty();
                 grass.MarkAllColorDirty();
                 items.MarkBatchDirty();
@@ -196,8 +198,8 @@ namespace RimFirstPerson3D
             for (int i = 0; i < ch.Count; i++)
             {
                 terrain.MarkCellColorDirty(ch[i]);
-                buildings.MarkCellDirty(ch[i]);
-                water.MarkCellDirty(ch[i]);
+                buildings.MarkCellColorDirty(ch[i]);
+                water.MarkCellColorDirty(ch[i]);
                 plants.MarkCellColorDirty(ch[i]);
                 grass.MarkCellColorDirty(ch[i]);
             }
@@ -224,8 +226,8 @@ namespace RimFirstPerson3D
                 rebakeTimer = 0f;
                 lastBakedGlow = qg;
                 terrain.MarkAllColorDirty();
-                buildings.MarkAllDirty();
-                water.MarkAllDirty();
+                buildings.MarkAllColorDirty();
+                water.MarkAllColorDirty();
                 plants.MarkAllColorDirty();
                 grass.MarkAllColorDirty();
                 items.MarkBatchDirty();

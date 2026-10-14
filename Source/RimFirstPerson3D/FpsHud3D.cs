@@ -1,14 +1,18 @@
 // AI生成
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Verse;
+using RimWorld;
 
 namespace RimFirstPerson3D
 {
-    // 第一人称常驻 HUD：左下角角色状态条 + 背包界面（B / Tab 开关）。
-    // 背包本身只是一个视图：物品的枚举与动作全部交给独立组件 Backpack3D，
-    // 本类不直接碰 pawn.inventory —— 这样"存什么、怎么用"只有一处实现。
-    // 整个背包仅在第一人称可用（Chase/Off 下不显示、也不响应开关）。
+    // 第一人称常驻 HUD：
+    // 1. 左下角角色状态条
+    // 2. 中间上方天际风格框式罗盘（CompassHud3D）
+    // 3. 右上角战术雷达迷你地图（MinimapHud3D）
+    // 4. 右下角日期时间、天气、温度、速度等信息直接透传（GlobalControlsOnGUI）
+    // 5. 背包界面（B / Tab 开关）
     [StaticConstructorOnStartup]
     public static class FpsHud3D
     {
@@ -19,6 +23,44 @@ namespace RimFirstPerson3D
 
         // 背包开着时移动输入让位（环视保持）。
         public static bool BlockMovement => inventoryOpen;
+
+        public static bool HasInteractiveUI =>
+            Fps3DState.Active && Fps3DState.Mode == ViewMode.FirstPerson;
+
+        public static Rect StatusRect => new Rect(10f, UI.screenHeight - 56f, 216f, 46f);
+        public static Rect GlobalControlsRect
+        {
+            get
+            {
+                float top = (Find.LetterStack != null && Find.LetterStack.LettersListForReading != null && Find.LetterStack.LettersListForReading.Count > 0)
+                    ? Mathf.Min(Find.LetterStack.LastTopY, UI.screenHeight - 480f)
+                    : (UI.screenHeight - 480f);
+                return new Rect(UI.screenWidth - 280f, Mathf.Max(0f, top - 20f), 280f, UI.screenHeight);
+            }
+        }
+
+        public static Rect InventoryRect
+        {
+            get
+            {
+                float w = 372f;
+                var items = Backpack3D.Items();
+                float h = Mathf.Min(UI.screenHeight * 0.82f, 140f + items.Count * 30f);
+                return new Rect(UI.screenWidth * 0.5f - w * 0.5f, (UI.screenHeight - h) * 0.5f, w, h);
+            }
+        }
+
+        // 光标是否落在第一人称 HUD 任何控件几何范围内
+        public static bool OverHud(Vector2 mousePos)
+        {
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson) return false;
+            if (inventoryOpen && InventoryRect.Contains(mousePos)) return true;
+            if (StatusRect.Contains(mousePos)) return true;
+            if (GlobalControlsRect.Contains(mousePos)) return true;
+            if (MinimapHud3D.Bounds.Contains(mousePos)) return true;
+            if (CompassHud3D.Bounds.Contains(mousePos)) return true;
+            return false;
+        }
 
         public static void ToggleInventory()
         {
@@ -32,18 +74,41 @@ namespace RimFirstPerson3D
 
         public static void Draw()
         {
-            // 仅第一人称显示背包与状态；其它视角一律收起来。
-            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson)
+            // 仅第一人称显示背包、罗盘、小地图与状态；其它视角或终端打开期间一律收起来。
+            if (!Fps3DState.Active || Fps3DState.Mode != ViewMode.FirstPerson || MapScreen3D.BlocksGameplay)
             {
                 inventoryOpen = false;
                 return;
             }
-            var pawn = CameraRig3D.Possessed;
-            if (pawn == null) { inventoryOpen = false; return; }
             EnsureSolid();
+            var pawn = CameraRig3D.Possessed;
 
-            DrawStatus(pawn);
-            if (inventoryOpen) DrawInventory();
+            // 1. 左下角状态条（有附身角色时显示）
+            if (pawn != null)
+            {
+                try { DrawStatus(pawn); } catch { }
+            }
+
+            // 2. 中间上方上古卷轴5框式罗盘
+            try { CompassHud3D.Draw(pawn); } catch { }
+
+            // 3. 右上角迷你地图
+            try { MinimapHud3D.Draw(pawn); } catch { }
+
+            // 4. 右下角日期时间等信息直接透传
+            try { DrawGlobalControls(); } catch { }
+
+            // 5. 背包界面（若开启）
+            if (inventoryOpen && pawn != null)
+            {
+                try { DrawInventory(); } catch { }
+            }
+
+            // 6. 统一绘制悬停提示
+            if (Event.current != null && Event.current.type == EventType.Repaint)
+            {
+                try { TooltipHandler.DoTooltipGUI(); } catch { }
+            }
         }
 
         private static void EnsureSolid()
@@ -55,10 +120,27 @@ namespace RimFirstPerson3D
             solid.name = "Fps3D_HudSolid";
         }
 
+        // 透传 RimWorld 原版右下角日期时间、天气、温度、速度控制器与信件
+        private static void DrawGlobalControls()
+        {
+            if (Current.ProgramState != ProgramState.Playing) return;
+            if (Find.CurrentMap == null) return;
+            var ui = Find.MapUI;
+            if (ui == null || ui.globalControls == null) return;
+
+            try
+            {
+                ui.globalControls.GlobalControlsOnGUI();
+            }
+            catch
+            {
+                // 地图过渡期或切换期保护
+            }
+        }
+
         private static void DrawStatus(Pawn pawn)
         {
-            float w = 216f, h = 46f;
-            var r = new Rect(10f, UI.screenHeight - h - 10f, w, h);
+            var r = StatusRect;
             Fill(r, new Color(0f, 0f, 0f, 0.55f));
 
             string name = pawn.Name != null ? pawn.Name.ToStringFull : pawn.def.label;
@@ -95,9 +177,8 @@ namespace RimFirstPerson3D
             var items = Backpack3D.Items();
             Thing primary = Backpack3D.PrimaryWeapon;
 
-            float w = 372f;
-            float h = Mathf.Min(UI.screenHeight * 0.82f, 140f + items.Count * 30f);
-            var r = new Rect(UI.screenWidth * 0.5f - w * 0.5f, (UI.screenHeight - h) * 0.5f, w, h);
+            var r = InventoryRect;
+            float w = r.width;
             Fill(r, new Color(0f, 0f, 0f, 0.78f));
 
             Text.Font = GameFont.Small;

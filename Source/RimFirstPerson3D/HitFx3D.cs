@@ -19,8 +19,10 @@ namespace RimFirstPerson3D
     // 也不看 hitPoints 变化 —— 那会把「回血」「处决」「出生即伤」都当成受击。
     // 曲线与常数在 HitFxMath.cs（纯函数，离线台 tools/LightSim 链接同一份跑判据）。
     // 规范：docs/features/F014-hit-feedback.md
+    [StaticConstructorOnStartup]   // 持有 Texture2D 字段的类型要按原版规矩标出来，否则启动期报「资产可能不在主线程加载」
     public static class HitFx3D
     {
+        static HitFx3D() { }
         /// <summary>红闪浓度分档：克隆材质按档缓存，一屏同时挂彩的 pawn 不会很多。</summary>
         private const int BucketN = 8;
 
@@ -129,7 +131,11 @@ namespace RimFirstPerson3D
             int b = Mathf.Clamp(Mathf.CeilToInt(k * BucketN), 1, BucketN);
             long key = ((long)tex.GetInstanceID() << 4) | (uint)b;
             if (overlays.TryGetValue(key, out var m) && m != null) return m;
-            m = new Material(ShaderDatabase.Transparent) { name = "Fps3D_HurtFlash" };
+            m = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
+            {
+                name = "Fps3D_HurtFlash",
+                renderQueue = 2918
+            };
             m.mainTexture = tex;
             m.color = new Color(HurtTint.r, HurtTint.g, HurtTint.b, b / (float)BucketN);
             overlays[key] = m;
@@ -158,7 +164,8 @@ namespace RimFirstPerson3D
             EnsureVignette();
             if (vignette == null) return;
             var prev = GUI.color;
-            GUI.color = new Color(VignetteTint.r, VignetteTint.g, VignetteTint.b, a * 0.85f);
+            GUI.color = new Color(VignetteTint.r, VignetteTint.g, VignetteTint.b,
+                a * HitFxMath.VignetteMax);
             GUI.DrawTexture(new Rect(0f, 0f, UI.screenWidth, UI.screenHeight), vignette,
                 ScaleMode.StretchToFill, true);
             GUI.color = prev;
@@ -173,7 +180,7 @@ namespace RimFirstPerson3D
             if (vignette != null) Object.Destroy(vignette);
             vigW = w;
             vigH = h;
-            vignette = ProcTex3D.Vignette(w, h, 0.30f, 1.6f);
+            vignette = ProcTex3D.Vignette(w, h, HitFxMath.VignetteBand, HitFxMath.VignetteGamma);
         }
 
         // ---- 维护 ----

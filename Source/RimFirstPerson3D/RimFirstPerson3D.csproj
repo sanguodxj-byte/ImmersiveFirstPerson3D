@@ -1,67 +1,57 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <RootNamespace>RimFirstPerson3D</RootNamespace>
     <AssemblyName>RimFirstPerson3D</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>..\..\1.6\Assemblies\</OutputPath>
+    <OutputPath>..\..\1.7\Assemblies\</OutputPath>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-  </PropertyGroup>
-
-  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RimWorldPath Condition="'$(RIMWORLD_PATH)' != ''">$(RIMWORLD_PATH)</RimWorldPath>
     <RimWorldPath Condition="'$(RimWorldPath)' == ''">D:\Steam\steamapps\common\RimWorld</RimWorldPath>
-    <ManagedPath>$(RimWorldPath)\RimWorldWin64_Data\Managed</ManagedPath>
-    <HarmonyPath>$(RimWorldPath)\Mods\HumanoidAlienRaces\1.6\Assemblies</HarmonyPath>
-    <HarmonyPath Condition="'$(HarmonyPath)' == '' Or !Exists('$(HarmonyPath)\0Harmony.dll')">D:\Steam\steamapps\workshop\content\294100\1127530465\1.6\Assemblies</HarmonyPath>
+    <HarmonyPath>$(RimWorldPath)\Mods\Harmony\1.7\Assemblies</HarmonyPath>
+    <DeployToGame Condition="'$(DeployToGame)' == ''">true</DeployToGame>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>$(ManagedPath)\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(RimWorldPath)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RimWorld">
+      <HintPath>$(RimWorldPath)\RimWorld.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityStubs">
+      <HintPath>$(RimWorldPath)\UnityStubs.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Waylith">
+      <HintPath>$(RimWorldPath)\Waylith.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Waylith.UnityCompat">
+      <HintPath>$(RimWorldPath)\Waylith.UnityCompat.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
       <HintPath>$(HarmonyPath)\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>$(ManagedPath)\UnityEngine.CoreModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>$(ManagedPath)\UnityEngine.IMGUIModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>$(ManagedPath)\UnityEngine.InputLegacyModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>$(ManagedPath)\UnityEngine.PhysicsModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>$(ManagedPath)\UnityEngine.TextRenderingModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.AudioModule">
-      <HintPath>$(ManagedPath)\UnityEngine.AudioModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
   </ItemGroup>
 
-  <Target Name="DeployToRimWorldMods" AfterTargets="Build" Condition="Exists('$(RimWorldPath)\Mods\FirstPerson3D')">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(RimWorldPath)\Mods\FirstPerson3D\1.6\Assemblies\" SkipUnchangedFiles="false" Retries="1" RetryDelayMilliseconds="100" ContinueOnError="WarnAndContinue" />
-    <ItemGroup>
-      <AtlasTextures Include="..\..\1.6\Textures\FPS3D\*.png" />
-    </ItemGroup>
-    <Copy SourceFiles="@(AtlasTextures)" DestinationFolder="$(RimWorldPath)\Mods\FirstPerson3D\1.6\Textures\FPS3D\" SkipUnchangedFiles="false" Retries="1" RetryDelayMilliseconds="100" ContinueOnError="WarnAndContinue" />
+  <Target Name="ValidateRimWorldReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(RimWorldPath)\RimWorld.dll') Or !Exists('$(RimWorldPath)\UnityStubs.dll') Or !Exists('$(RimWorldPath)\Assembly-CSharp.dll')" Text="RimWorld 1.7 references are missing under $(RimWorldPath)." />
+    <Error Condition="!Exists('$(HarmonyPath)\0Harmony.dll')" Text="Harmony 1.7 reference is missing under $(HarmonyPath)." />
+  </Target>
+
+  <Target Name="DeployToRimWorldMods" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true' And Exists('$(RimWorldPath)\Mods\FirstPerson3D')">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\deploy.ps1&quot;" />
   </Target>
 
 </Project>

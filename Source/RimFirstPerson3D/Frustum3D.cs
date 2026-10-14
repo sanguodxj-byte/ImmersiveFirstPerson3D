@@ -58,7 +58,7 @@ namespace RimFirstPerson3D
             }
             for (int i = 0; i < 6; i++)
             {
-                if (planes[i].GetDistanceToPoint(worldPos) < -radius)
+                if (Vector3.Dot(planes[i].normal, worldPos) + planes[i].distance < -radius)
                     return false;
             }
             return true;

@@ -136,6 +136,8 @@ created: 2026-10-10
 
 武器射击效果（F015）补的是「枪响了却什么都看不见」：第一人称压掉原版绘制后弹丸本来就不存在，所以先画弹丸本体（原版贴图 + `Projectile.ExactPosition`，抛物线弹的覆写一并白拿），再沿弹道拉一条相机朝向的加法缎带，开火处前移 0.32 m 点一团火光，`Impact` 处开一朵边淡边长的烟尘；附身者自己开火则在视图模型的枪口锚点上亮一下 —— 那个锚点是 F013 变换算出来的，不另算位置就必然对得齐。加法混合要用**预乘**光斑（`ProcTex3D.AdditiveRadial`，灯具发光片也改吃这一份），白 RGB 配 alpha 的那种在加法下会糊成一块亮方片。
 
+效果演示走「C# 出数、python 出图」的分工：`dotnet run --project tools/LightSim -- --demo` 用游戏里同一份 `HitFxMath` / `ShotFxMath` / `LightShade` 把 1.5 秒的射击与受击按 20 fps 算成帧表（`temp_light/fx_demo.json`），`scripts/shotfx_demo.py` 只做投影与合成，出胶片与 GIF。脚本里不许再算一遍衰减，暗角的带宽与浓度上限也是从 `HitFxMath.cs` 正则读出来的 —— 否则演示证明的是脚本而不是模组。这条通道当场否掉了 0.85 的暗角浓度（屏幕三边全红、准星糊住），并暴露出远景目标只有几个像素、红闪读不出来，于是渲染加了 2 倍放大的取景窗。
+
 受击反馈（F014）照 Minecraft 的两条做：任意 pawn 受伤后 0.5 s 内把**同一份几何再叠一层红**（`HitFx3D.DrawOverlay`，同 mesh 同 matrix 只换 `Transparent` 材质），附身玩家则压屏幕四边的红色暗角（`HitFx3D.DrawVignette`，画在准星之前，所以再红也挡不住准星），残血另有一层常驻薄红边，两路**取大不相加**。触发只认 `Pawn.PostApplyDamage` 的 Harmony 后置，时刻取 `Time.realtimeSinceStartup`（墙钟，暂停也照样退完）。曲线在 `HitFxMath.cs`（纯函数，`tools/LightSim` 链接它跑 22 条判据），暗角贴图场与红闪合成由 `scripts/hitfx_check.py` 离屏出图核对。为什么用叠层而不是乘子：乘子只能把颜色压暗，深色护甲乘上红色只会变黑，而 MC 的受击闪是"发亮的红"。
 
 设置真源是 `FirstPerson3DSettings`，经 RimBridge 读写，供 GABS 调参和读性能快照。合成输入（`cmdLookDx`、`cmdKey`、`cmdWalkHold`、`cmdClick`、`cmdTeleport`、`cmdAction`）消费后清零，不进存档。

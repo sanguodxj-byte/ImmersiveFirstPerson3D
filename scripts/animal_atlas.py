@@ -18,7 +18,7 @@
                          鸡冠肉垂、象牙、鹿角、鸭喙、企鹅橙喙、熊猫黑斑、狐白尾尖等）
        · eye    (uv=5) : 眼瞳 / 鼻头深色区
   4. 打包输出：
-       -> 1.6/Textures/FPS3D/AnimalAtlas.png（同步副本到 viewer/animal_atlas.png）
+       -> Textures/FPS3D/AnimalAtlas.png（同步副本到 viewer/animal_atlas.png）
        -> Source/RimFirstPerson3D/AnimalUVGen.cs（C# 常量表，勿手改）
        -> viewer/animal_uv.json（预览与守卫同源数据）
        -> docs/animals/sampling.png（原版贴图 + 取样框 + 6 区色板可视化对照表）
@@ -34,11 +34,11 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from PIL import Image, ImageDraw
 
-VAN = r"D:\rim mod\RimWorld_Vanilla_Textures_1.6"
+VAN = r"D:\rim mod\rimdevtools\RimWorld_Vanilla_Textures_1.6"
 RIM_DATA = r"D:\steam\steamapps\common\RimWorld\Data"
 MOD = r"D:\rim mod\FirstPerson3D"
 
-ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "AnimalAtlas.png")
+ATLAS_OUT = os.path.join(MOD, "Textures", "FPS3D", "AnimalAtlas.png")
 VIEW_ATLAS = os.path.join(MOD, "viewer", "animal_atlas.png")
 CS_OUT = os.path.join(MOD, "Source", "RimFirstPerson3D", "AnimalUVGen.cs")
 JSON_OUT = os.path.join(MOD, "viewer", "animal_uv.json")

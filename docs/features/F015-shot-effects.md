@@ -52,6 +52,7 @@ created: 2026-10-12
 
 - 曲线：`dotnet run --project tools/LightSim` 的 F015 段（衰减窗口、非法时长、拖焰单调与夹限、尾端方向、烟尘边淡边长、透明度上限、枪口水平前移、退化方向不炸 NaN、火光比烟尘短命），每条带反向对照。
 - 贴图与合成：`python scripts/shotfx_check.py` 出 `shots/shotfx_preview.png`，常数从 C# 源码正则读出（改名就报错），断言预乘光斑逐像素 RGB==A、中心满、四角零、沿半径单调；反向对照把光斑换成非预乘写法（4084 个像素不符）必须被绊倒。
+- 演示：`dotnet run --project tools/LightSim -- --demo` 出帧表，`python scripts/shotfx_demo.py` 渲染成胶片与 GIF（`shots/shotfx_demo_strip.png` / `.gif`）。C# 只出数、python 只出图：弹丸位置、拖焰长度与厚度、火光与烟尘的尺寸与透明度、目标红闪、玩家暗角，全部来自 `ShotFxMath` / `HitFxMath` / `LightShade`，连地面与人物底色都是 F013 公式的输出。四条判据量在像素上（火光把枪口画亮、红闪让目标偏红且随强度单调、暗角让边比中心红且中心仍清晰、弹丸投影沿弹道单调推进），对照一律取「同一帧去掉这一个字段」。
 - 实机：`shotfx: toggle` 做开关反证；真开火走 GABS 的 `cmdClick`（原版射击作业 → 真 `Launch`/`Impact`）。`dump lighting` 的 JSON 里带 `"shotfx":{on,projectiles,tracers,flashes,puffs,queued,mats}`。
 
 ## Acceptance Criteria

@@ -33,8 +33,8 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 // ===========================================================================
 // 植被与树木 3D 检查页
 //
-// 几何 = 1.6/Assets/plants/*.obj（运行时 ObjImporter3D 加载的就是这些文件，
-// 零第二份口径）；材质 = 1.6/Textures/FPS3D/PlantAtlas.png。
+// 几何 = 1.7\Assets\plants\*.obj（运行时 ObjImporter3D 加载的就是这些文件，
+// 零第二份口径）；材质 = Textures\FPS3D\PlantAtlas.png。
 // 绕序反转与 ObjImporter3D 一致（OBJ 右手 CCW -> Unity 左手 CW），
 // 页面用 FrontSide 渲染 = 游戏实况（背面剔除下）所见。
 // ===========================================================================
@@ -42,6 +42,8 @@ const VER = 'plant7';
 const qs = new URLSearchParams(location.search);
 const STILL = qs.get('still') === '1';
 const GALLERY = qs.get('gallery') === '1';   // 全员一排、相机人眼高度（1.62m）
+const REF = qs.get('ref') === '1';           // 1.75m 人高参考（判尺度用，非游戏内容）
+const ONLY = (qs.get('only') || '').split(',').map(s => s.trim()).filter(Boolean);
 
 const hud = document.getElementById('hud');
 function hudSet(html){ hud.innerHTML = html; }
@@ -112,9 +114,9 @@ function parseOBJ(text){
         const p = tok.split('/');
         return [parseInt(p[0])-1, parseInt(p[1])-1, parseInt(p[2])-1];
       });
-      // 三角扇 + 绕序反转（导入器同款）
+      // 右手系标准 CCW 三角扇（Unity 侧 ObjImporter3D 翻转 Z 并反转绕序为左手系 CW）
       for(let i=2;i<idx.length;i++){
-        tris.push([idx[0], idx[i], idx[i-1]]);
+        tris.push([idx[0], idx[i-1], idx[i]]);
       }
     }
   }
@@ -155,6 +157,22 @@ async function getGeo(name){
   return g;
 }
 
+// ---- 1.75m 人高参考（审核判尺度用；线框人 + 1.75m 标尺杆）----
+function personRef(){
+  const grp = new THREE.Group();
+  grp.name = 'personref';
+  const mat = new THREE.MeshBasicMaterial({color: 0xff7a5c, wireframe: true});
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.13, 1.45, 8), mat);
+  body.position.y = 0.725;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), mat);
+  head.position.y = 1.60;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.75, 4),
+    new THREE.MeshBasicMaterial({color: 0xffd27a}));
+  pole.position.set(0.42, 0.875, 0);
+  grp.add(body, head, pole);
+  return grp;
+}
+
 // ---- 机位 ----
 const VIEWS = {
   '45°':    (h)=>[h*1.02, h*0.92, h*1.02, 0, h*0.48, 0],
@@ -181,6 +199,11 @@ async function build(){
   box.position.y = a.height/2;
   group.add(box);
   scene.add(group);
+  if (REF) {
+    const pr = personRef();
+    pr.position.set(a.diameter * 0.5 + Math.max(0.5, a.height * 0.45), 0, 0);
+    scene.add(pr);
+  }
   const v = VIEWS[cur.view](a.height);
   camera.position.set(v[0], v[1], v[2]);
   controls.target.set(v[3], v[4], v[5]);
@@ -225,7 +248,8 @@ if (GALLERY) {
   const g = new THREE.Group();
   let cursor = 0;
   const centers = [];
-  for(const a of meta.arch){
+  const LIST = ONLY.length ? meta.arch.filter(a => ONLY.includes(a.name)) : meta.arch;
+  for(const a of LIST){
     const geo = await getGeo(a.name);
     const m = new THREE.Mesh(geo, MAT);
     m.position.x = cursor + a.diameter * 0.5;
@@ -235,7 +259,7 @@ if (GALLERY) {
   }
   // 名字标牌用独立 canvas 贴图（避免共用同一 canvas 导致全员显示最后一个名字）
   const texByName = {};
-  for(const a of meta.arch){
+  for(const a of LIST){
     const cv = document.createElement('canvas');
     cv.width = 256; cv.height = 64;
     const ctx2 = cv.getContext('2d');
@@ -247,15 +271,23 @@ if (GALLERY) {
     t.colorSpace = THREE.SRGBColorSpace;
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: t, transparent: true}));
     sp.scale.set(1.6, 0.4, 1);
-    sp.position.set(centers[meta.arch.indexOf(a)], 0.14, 0);
+    sp.position.set(centers[LIST.indexOf(a)], 0.14, 0);
     g.add(sp);
     texByName[a.name] = t;
   }
   scene.add(g);
+  if (REF) {
+    scene.children.slice().forEach(o => { if (o.name === 'personref') scene.remove(o); });
+    const pr = personRef();
+    pr.position.set(-2.4, 0, 0);
+    scene.add(pr);
+  }
   const part = parseFloat(qs.get('part') || '0.5');   // 0..1：眼列相机锚点（一排放不下，分段出图）
   const mid = centers[Math.max(0, Math.min(centers.length - 1, Math.round(part * (centers.length - 1))))];
-  camera.position.set(mid, 1.62, 9.5);
-  controls.target.set(mid, 1.15, 0);
+  const camd = parseFloat(qs.get('camd') || '9.5');   // 眼列相机距离（小株排可拉近）
+  const camy = parseFloat(qs.get('camy') || '1.15');  // 眼列相机注视高度
+  camera.position.set(mid, 1.62, camd);
+  controls.target.set(mid, camy, 0);
   controls.update();
   hudSet('<b>gallery</b> ' + NAMES.length + ' archetypes, eye=1.62m, part=' + part);
 }

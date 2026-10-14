@@ -22,8 +22,10 @@ namespace RimFirstPerson3D
     // 不自算弹道、不自算命中 —— 那两个原版都有，抄一份就是第二套规范。
     // 曲线与长度在 ShotFxMath.cs（纯函数，离线台链接同一份）。
     // 规范：docs/features/F015-shot-effects.md
+    [StaticConstructorOnStartup]   // 同上：类里有 Texture2D / Material 缓存字段
     public static class ShotFx3D
     {
+        static ShotFx3D() { }
         private const int MaxEvents = 96;         // 事件上限：一场大战也别把列表撑爆
         private const int BucketN = 8;            // 加法材质按浓度分档缓存
         private const float MuzzleForward = 0.32f; // 枪口前移（米）
@@ -65,7 +67,7 @@ namespace RimFirstPerson3D
 
         public static void Patch(Harmony harmony)
         {
-            // RimWorld 1.6 同时有“目标版”和“带 origin 的实际发射版”两个
+            // RimWorld 同时有“目标版”和“带 origin 的实际发射版”两个
             // Launch 重载。不能只按名称查找，否则 Harmony 会抛
             // AmbiguousMatchException，进而阻断整个 ModEntry 静态初始化。
             var launch = AccessTools.Method(typeof(Projectile), "Launch", new[]
@@ -309,8 +311,9 @@ namespace RimFirstPerson3D
         private static Shader AdditiveShader()
         {
             if (addShader != null) return addShader;
-            try { addShader = ShaderDatabase.WorldOverlayAdditive; } catch { }
-            if (addShader == null) try { addShader = ShaderDatabase.MoteGlow; } catch { }
+            try { addShader = ShaderDatabase.MoteGlow; } catch { }
+            if (addShader == null) try { addShader = ShaderDatabase.WorldOverlayAdditive; } catch { }
+            if (addShader == null) try { addShader = ShaderDatabase.TransparentPostLight; } catch { }
             if (addShader == null) try { addShader = ShaderDatabase.Transparent; } catch { }
             return addShader;
         }

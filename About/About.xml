@@ -5,7 +5,7 @@
   <packageId>sanguo.firstperson3d</packageId>
   <modVersion>0.2.0</modVersion>
   <supportedVersions>
-    <li>1.6</li>
+    <li>1.7</li>
   </supportedVersions>
   <description>第一人称3D视觉改造：透视相机、地形/建筑3D网格、植物十字面片、pawn面朝玩家立牌、建筑盒体描边、Y轴多层与流式大地图（逐步实现）。F8 切换视角模式，F7 性能面板。</description>
   <loadAfter>

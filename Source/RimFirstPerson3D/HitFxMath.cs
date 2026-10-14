@@ -21,6 +21,19 @@ namespace RimFirstPerson3D
         /// <summary>暗角脉冲频率（Hz）。MC 的 damage bob 是一冲一缓，不是直线衰减。</summary>
         public const float PulseHz = 2.2f;
 
+        /// <summary>
+        /// 暗角浓度上限。0.85 是离线演示台（tools/LightSim --demo + scripts/shotfx_demo.py）
+        /// 否掉的：那一档下受击一瞬屏幕三边全是红，准星周围也糊住，反馈读不出"从哪个方向来"，
+        /// 只剩"看不见"。压到 0.55 后中心仍可分辨，红边仍然明显（判据量的是边与中心的红度差）。
+        /// </summary>
+        public const float VignetteMax = 0.55f;
+
+        /// <summary>暗角红边带厚占短边的比例（按像素算到最近屏幕边）。</summary>
+        public const float VignetteBand = 0.22f;
+
+        /// <summary>暗角由边向内的衰减形状。</summary>
+        public const float VignetteGamma = 1.6f;
+
         /// <summary>低血压暗角的起点：血量比例低于这个值才开始常驻红边。</summary>
         public const float LowHealthFrom = 0.40f;
 

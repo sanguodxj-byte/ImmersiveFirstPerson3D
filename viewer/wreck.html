@@ -51,7 +51,7 @@ const clamp01 = x => x<0?0:x>1?1:x;
 const lerp = (a,b,t)=>a+(b-a)*t;
 
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({antialias:true});
+const renderer = new THREE.WebGLRenderer({antialias:true, stencil:true});
 renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(1);
 renderer.setClearColor(0x1c1e26, 1);
 app.appendChild(renderer.domElement);
@@ -70,7 +70,45 @@ tex.magFilter = tex.minFilter = THREE.NearestFilter;
 tex.generateMipmaps = false;
 tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
 tex.flipY = false;              // 顶点 UV 用 v'=1-v 对齐 Unity 口径
-const mat = new THREE.MeshLambertMaterial({map:tex, side:THREE.DoubleSide});
+const mat = new THREE.MeshLambertMaterial({
+  map:tex, side:THREE.DoubleSide,
+  stencilWrite:true, stencilRef:1,
+  stencilFunc:THREE.AlwaysStencilFunc,
+  stencilZPass:THREE.ReplaceStencilOp
+});
+const matHull = new THREE.MeshBasicMaterial({
+  color:0x0a0910, side:THREE.BackSide,
+  stencilWrite:true, stencilRef:1,
+  stencilFunc:THREE.NotEqualStencilFunc
+});
+
+function createHull(geo, width = 0.012){
+  const g = geo.clone();
+  if(!g.attributes.normal) g.computeVertexNormals();
+  const pos = g.attributes.position;
+  const norm = g.attributes.normal;
+  const groups = new Map();
+  const keyOf = i => `${Math.round(pos.getX(i)*2048)},${Math.round(pos.getY(i)*2048)},${Math.round(pos.getZ(i)*2048)}`;
+  for(let i=0; i<pos.count; i++){
+    const k = keyOf(i);
+    if(!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(i);
+  }
+  const newX = new Float32Array(pos.count);
+  const newY = new Float32Array(pos.count);
+  const newZ = new Float32Array(pos.count);
+  for(let i=0; i<pos.count; i++){
+    const grp = groups.get(keyOf(i));
+    let nx=0, ny=0, nz=0;
+    for(const gi of grp){ nx += norm.getX(gi); ny += norm.getY(gi); nz += norm.getZ(gi); }
+    const len = Math.hypot(nx, ny, nz) || 1;
+    newX[i] = pos.getX(i) + (nx/len) * width;
+    newY[i] = pos.getY(i) + (ny/len) * width;
+    newZ[i] = pos.getZ(i) + (nz/len) * width;
+  }
+  for(let i=0; i<pos.count; i++) pos.setXYZ(i, newX[i], newY[i], newZ[i]);
+  return new THREE.Mesh(g, matHull);
+}
 
 // ---------------------------------------------------------------- 网格拼装
 function G(){ return {pos:[],uv:[],idx:[]}; }
@@ -100,9 +138,11 @@ function topRect(m,a,b,c,d,uv){
   const t0=clamp01((minZ+mz*0.5)/mz), t1=clamp01((maxZ+mz*0.5)/mz);
   return [lerp(r[0],r[2],s0), lerp(r[1],r[3],t0), lerp(r[0],r[2],s1), lerp(r[1],r[3],t1)];
 }
-function mkMat(px,py,pz,yaw,pitch){
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw*Math.PI/180)
-    .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), pitch*Math.PI/180));
+function mkMat(px,py,pz,yaw=0,pitch=0,roll=0){
+  const qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw*Math.PI/180);
+  const qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), pitch*Math.PI/180);
+  const qZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), roll*Math.PI/180);
+  const q = qY.multiply(qX).multiply(qZ);
   return new THREE.Matrix4().compose(new THREE.Vector3(px,py,pz), q, new THREE.Vector3(1,1,1));
 }
 
@@ -125,9 +165,9 @@ function addCyl(g,uv,m,s,cone){
     const b1=new THREE.Vector3(Math.cos(a1)*r,0,Math.sin(a1)*rz);
     const t1=new THREE.Vector3(Math.cos(a1)*topR,h,Math.sin(a1)*rz*topR/r);
     const t0=new THREE.Vector3(Math.cos(a0)*topR,h,Math.sin(a0)*rz*topR/r);
-    quad(g,m,b0,b1,t1,t0,
-      [lerp(rs[0],rs[2],u0),rs[1]],[lerp(rs[0],rs[2],u1),rs[1]],
-      [lerp(rs[0],rs[2],u1),rs[3]],[lerp(rs[0],rs[2],u0),rs[3]]);
+    quad(g,m,b1,b0,t0,t1,
+      [lerp(rs[0],rs[2],u1),rs[1]],[lerp(rs[0],rs[2],u0),rs[1]],
+      [lerp(rs[0],rs[2],u0),rs[3]],[lerp(rs[0],rs[2],u1),rs[3]]);
   }
   if(!cone){
     const tr=topRect(m,new THREE.Vector3(-r,h,rz),new THREE.Vector3(r,h,rz),
@@ -139,23 +179,35 @@ function addCyl(g,uv,m,s,cone){
       const P1=new THREE.Vector3(Math.cos(a1)*r,h,Math.sin(a1)*rz).applyMatrix4(m);
       const v0=pushV(g,P0,lerp(tr[0],tr[2],i/seg),lerp(tr[1],tr[3],i/seg));
       const v1=pushV(g,P1,lerp(tr[0],tr[2],(i+1)/seg),lerp(tr[1],tr[3],(i+1)/seg));
-      g.idx.push(cIdx,v0,v1);
+      g.idx.push(cIdx,v1,v0);
     }
+  }
+  const br=topRect(m,new THREE.Vector3(-r,0,rz),new THREE.Vector3(r,0,rz),
+                     new THREE.Vector3(r,0,-rz),new THREE.Vector3(-r,0,-rz),uv);
+  const bIdx=pushV(g,new THREE.Vector3(0,0,0).applyMatrix4(m),(br[0]+br[2])*0.5,(br[1]+br[3])*0.5);
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
+    const P0=new THREE.Vector3(Math.cos(a0)*r,0,Math.sin(a0)*rz).applyMatrix4(m);
+    const P1=new THREE.Vector3(Math.cos(a1)*r,0,Math.sin(a1)*rz).applyMatrix4(m);
+    const v0=pushV(g,P0,lerp(br[0],br[2],i/seg),lerp(br[1],br[3],i/seg));
+    const v1=pushV(g,P1,lerp(br[0],br[2],(i+1)/seg),lerp(br[1],br[3],(i+1)/seg));
+    g.idx.push(bIdx,v0,v1);
   }
 }
 function addWedge(g,uv,m,s){
-  const hw=s[0]/2,hd=s[2]/2,h=s[1];
-  sideQuad(g,m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(hw,0,-hd),new THREE.Vector3(hw,h,hd),new THREE.Vector3(-hw,h,hd),uv.side);
-  sideQuad(g,m,new THREE.Vector3(hw,0,hd),new THREE.Vector3(-hw,0,hd),new THREE.Vector3(-hw,h,hd),new THREE.Vector3(hw,h,hd),uv.side);
-  tri(g,m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(-hw,0,hd),new THREE.Vector3(-hw,h,hd),[0,0],[1,0],[0.5,1]);
-  tri(g,m,new THREE.Vector3(hw,0,hd),new THREE.Vector3(hw,0,-hd),new THREE.Vector3(hw,h,hd),[0,0],[1,0],[0.5,1]);
-  quad(g,m,new THREE.Vector3(-hw,0,hd),new THREE.Vector3(hw,0,hd),new THREE.Vector3(hw,0,-hd),new THREE.Vector3(-hw,0,-hd),[0,0],[1,0],[1,1],[0,1]);
+  const hw=s[0]/2,hd=s[2]/2,h=s[1], rs=uv.side;
+  const tr=topRect(m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(-hw,h,hd),new THREE.Vector3(hw,h,hd),new THREE.Vector3(hw,0,-hd),uv);
+  sideQuad(g,m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(-hw,h,hd),new THREE.Vector3(hw,h,hd),new THREE.Vector3(hw,0,-hd),tr);
+  sideQuad(g,m,new THREE.Vector3(-hw,0,hd),new THREE.Vector3(hw,0,hd),new THREE.Vector3(hw,h,hd),new THREE.Vector3(-hw,h,hd),rs);
+  tri(g,m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(-hw,0,hd),new THREE.Vector3(-hw,h,hd),[rs[0],rs[1]],[rs[2],rs[1]],[(rs[0]+rs[2])*0.5,rs[3]]);
+  tri(g,m,new THREE.Vector3(hw,0,hd),new THREE.Vector3(hw,0,-hd),new THREE.Vector3(hw,h,hd),[rs[0],rs[1]],[rs[2],rs[1]],[(rs[0]+rs[2])*0.5,rs[3]]);
+  sideQuad(g,m,new THREE.Vector3(-hw,0,-hd),new THREE.Vector3(hw,0,-hd),new THREE.Vector3(hw,0,hd),new THREE.Vector3(-hw,0,hd),rs);
 }
 function build(name){
   const S=uvJson.samples[name], g=G();
   const uv={top:S.top, side:S.side, modelXZ:S.modelXZ};
   for(const p of S.parts){
-    const m=mkMat(p.pos[0],p.pos[1],p.pos[2],p.yaw,p.pitch);
+    const m=mkMat(p.pos[0],p.pos[1],p.pos[2],p.yaw,p.pitch,p.roll||0);
     if(p.kind==='Box') addBox(g,uv,m,p.size);
     else if(p.kind==='Cylinder') addCyl(g,uv,m,p.size,false);
     else if(p.kind==='Cone') addCyl(g,uv,m,p.size,true);
@@ -192,10 +244,12 @@ function setView(k){
 function rebuild(){
   while(root.children.length) root.remove(root.children[0]);
   const geo=build(ITEM);
-  root.add(new THREE.Mesh(geo, mat));
-  const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geo, 32),
-    new THREE.LineBasicMaterial({color:0x0a0910}));
-  root.add(edges);
+  const bodyMesh = new THREE.Mesh(geo, mat);
+  const hullMesh = createHull(geo);
+  bodyMesh.renderOrder = 1;
+  hullMesh.renderOrder = 2;
+  root.add(bodyMesh);
+  root.add(hullMesh);
   hud(); setView(cur);
 }
 function hud(){
@@ -227,11 +281,41 @@ addEventListener('keydown',e=>{
 });
 
 const q=new URLSearchParams(location.search);
+const TRIPTYCH = q.get('triptych') === '1';
+if (TRIPTYCH) {
+  ['hud', 'items', 'views'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+  grid.visible = false;
+}
 if(uvJson.samples[q.get('item')]) ITEM=q.get('item');
 if(VIEWS[q.get('view')]) cur=q.get('view');
 [...bar.children].forEach(x=>x.classList.toggle('on',x.dataset.i===ITEM));
 rebuild();
-function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); }
+
+function renderTriptych() {
+  const shots = ['45°', '主视·南', '侧视·东', '俯视'];
+  const W = innerWidth, H = innerHeight, cw = Math.floor(W / shots.length);
+  renderer.setScissorTest(true);
+  camera.aspect = cw / H;
+  camera.updateProjectionMatrix();
+  const S = uvJson.samples[ITEM], b = S.bounds;
+  const R = Math.max(0.25, 0.5 * Math.hypot(b[0], b[1], b[2]));
+  shots.forEach((vKey, i) => {
+    const v = VIEWS[vKey], L = Math.hypot(v.d[0], v.d[1], v.d[2]), dist = v.k * R;
+    camera.position.set(v.d[0] / L * dist, v.d[1] / L * dist, v.d[2] / L * dist);
+    controls.target.set(0, b[1] * 0.45, 0);
+    controls.update();
+    camera.lookAt(0, b[1] * 0.45, 0);
+    renderer.setViewport(i * cw, 0, cw, H);
+    renderer.setScissor(i * cw, 0, cw, H);
+    renderer.render(scene, camera);
+  });
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if (TRIPTYCH) { renderTriptych(); return; }
+  controls.update(); renderer.render(scene,camera);
+}
 loop();
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();

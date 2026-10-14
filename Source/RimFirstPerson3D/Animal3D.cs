@@ -14,7 +14,7 @@ namespace RimFirstPerson3D
     //   1. 材质与分色：由 scripts/animal_atlas.py 解析原版（Core / Biotech /
     //      Ideology / Odyssey）全部动物的三视图贴图（_east / _south / _north）
     //      及 CutoutComplex 遮罩与 XML 染色，提取 6 个真实纹理区打包进
-    //      1.6/Textures/FPS3D/AnimalAtlas.png（UV 表见 AnimalUVGen.cs）：
+    //      Textures\FPS3D\AnimalAtlas.png（UV 表见 AnimalUVGen.cs）：
     //        · UV_COAT   (0) : 背部 / 躯干主毛皮、羽翼、鳞甲或背壳
     //        · UV_BELLY  (1) : 胸腹 / 下摆长毛 / 折叠翼 / 腹甲
     //        · UV_HEAD   (2) : 头部 / 面盘 / 吻部 / 头胸甲
@@ -83,13 +83,14 @@ namespace RimFirstPerson3D
             get { var s = FirstPerson3DMod.settings; return s == null || s.animalModels; }
         }
 
-        /// <summary>该 pawn 是否由本系统绘制（非人形、非机械族）。</summary>
+        /// <summary>该 pawn 是否由本系统绘制（非人形、非机械族且在 3D 动物图集中）。</summary>
         public static bool HandlesPawn(Pawn p)
         {
             if (!Enabled || p == null || p.RaceProps == null) return false;
             if (p.RaceProps.Humanlike) return false;
             if (p.RaceProps.IsMechanoid) return false;
-            return true;
+            string key = ResolveSpeciesKey(p);
+            return AnimalUVGen.R.ContainsKey(key + ".coat");
         }
 
         public static void Clear()
@@ -215,8 +216,8 @@ namespace RimFirstPerson3D
             float pitch, float yaw = 0f, float roll = 0f, int uv = UV_COAT, bool joint = true, bool noOutline = false)
         {
             if (joint)
-                m.Add(Prim.Sphere, p0 - new Vector3(0f, d0 * 0.46f, 0f),
-                    new Vector3(d0 * 0.98f, d0 * 0.90f, d0 * 0.98f), noOutline: true, uv: uv);
+                m.Add(Prim.Sphere, p0 - new Vector3(0f, d0 * 0.44f, 0f),
+                    new Vector3(d0 * 0.88f, d0 * 0.82f, d0 * 0.88f), noOutline: true, uv: uv);
             float taper = d0 > 0.0001f ? Mathf.Clamp(d1 / d0, 0.04f, 1.8f) : 1f;
             m.Add(Prim.Cylinder, p0, new Vector3(d0, len, d0), yaw: yaw, pitch: pitch, noOutline: noOutline, uv: uv, roll: roll, taper: taper);
             return p0 + StepVec(len * 0.88f, pitch, yaw, roll);
@@ -231,41 +232,50 @@ namespace RimFirstPerson3D
         }
 
         /// <summary>
-        /// 原版风格无腿贴地三段式躯干：
-        ///   · 前胸垂瓣与后臀垂瓣直接贴地 (y=0)，中段躯干桥微收 (y=bh*0.07)，还原原版 _east 腹下弧线；
+        /// 原版风格流线型平滑躯干：
+        ///   · 浑然一体的主躯干贯通前胸至后臀，背部脊线平顺连续无马鞍深坑与分段圆球肉瘤；
+        ///   · 两侧肩臀肌肉过渡层贴合侧壁，消除突兀向外鼓出的圆球包；
         ///   · 表面胸腹分色片与肩臀肌肉过渡层全部设为 noOutline=true，彻底杜绝毛虫分段黑线与胸口靶心黑圈。
         /// </summary>
         private static void BuildQuadBody(Model3D m, float L, float bl, float bh, float bw,
             float legH, float legD, float chestLift, float rumpScale,
             out Vector3 chestTop, out Vector3 tailBase,
-            int frontLegUv = UV_LIMB, int rearLegUv = UV_LIMB, int bellyUv = UV_BELLY)
+            int frontLegUv = UV_LIMB, int rearLegUv = UV_LIMB, int bellyUv = UV_BELLY,
+            float waistDip = 0f, float tuckUp = 0f)
         {
-            float fz = bl * 0.20f;
-            float rz = -bl * 0.21f;
+            float fz = bl * 0.18f;
+            float rz = -bl * 0.20f;
             float sx = bw * 0.14f;
 
             int chestUv = (frontLegUv == UV_BELLY || bellyUv == UV_COAT) ? frontLegUv : UV_COAT;
+            float midZ = (fz + rz) * 0.5f;
 
-            // 1. 三个外轮廓主球：前胸垂瓣(y=0) + 中段腰桥(腹底微收) + 后臀垂瓣(y=0)
-            m.Add(Prim.Sphere, new Vector3(0f, bh * 0.07f, 0f),
-                new Vector3(bw * 0.96f, bh * 0.90f, bl * 0.78f), uv: UV_COAT);
+            float frontH = bh + chestLift, rearH = bh * 0.95f * rumpScale;
+            float midH = Mathf.Max(bh * 0.60f, (frontH + rearH) * 0.48f - waistDip);
+            float midY = Mathf.Max(0f, bh * 0.02f + tuckUp * 0.5f);
+
+            // 1. 唯一流线型主躯干（全身唯一的带外轮廓椭球，从颈根到臀尖全线圆顺包裹，彻底消除多节块状拼接与分段感）
+            float bodyH = Mathf.Max(frontH, rearH) * 0.98f - waistDip * 0.30f;
+            float bodyY = Mathf.Max(0f, tuckUp * 0.20f);
+            m.Add(Prim.Sphere, new Vector3(0f, bodyY, midZ),
+                new Vector3(bw * 0.98f, bodyH, bl * 0.96f), uv: UV_COAT);
+
+            // 2. 内部深胸与后臀体块（全部 noOutline: true，只充填肌肉体积，绝不在外表产生阶梯隆起与分节黑环）
             m.Add(Prim.Sphere, new Vector3(0f, 0f, fz),
-                new Vector3(bw * 1.02f, bh + chestLift, bl * 0.54f), uv: chestUv);
-            m.Add(Prim.Sphere, new Vector3(0f, 0f, rz),
-                new Vector3(bw * 0.98f * rumpScale, bh * 0.95f * rumpScale, bl * 0.54f), uv: UV_COAT);
+                new Vector3(bw * 0.92f, frontH * 0.92f, bl * 0.46f), uv: chestUv, noOutline: true);
+            m.Add(Prim.Sphere, new Vector3(0f, Mathf.Max(0f, tuckUp * 0.25f), rz),
+                new Vector3(bw * 0.90f * rumpScale, rearH * 0.92f, bl * 0.46f), uv: UV_COAT, noOutline: true);
 
-            // 2. 两侧肩廓与臀廓平滑过渡（noOutline=true，不产生内部割裂黑线）
-            AddSymX(m, Prim.Sphere, sx, bh * 0.05f, fz * 0.9f,
-                new Vector3(bw * 0.76f, bh * 0.86f, bl * 0.46f), uv: chestUv, noOutline: true);
-            AddSymX(m, Prim.Sphere, sx, bh * 0.05f, rz * 0.9f,
-                new Vector3(bw * 0.74f * rumpScale, bh * 0.84f * rumpScale, bl * 0.46f), uv: UV_COAT, noOutline: true);
+            // 3. 内部背腹平滑顺延层（高度严格收敛在主躯干内部，消除侧视中段突兀隆起）
+            float bridgeH = Mathf.Min(bodyH * 0.95f, (frontH + rearH) * 0.48f - waistDip);
+            m.Add(Prim.Sphere, new Vector3(0f, Mathf.Max(0f, tuckUp * 0.25f), midZ),
+                new Vector3(bw * 0.88f, bridgeH, bl * 0.82f), uv: UV_COAT, noOutline: true);
 
-            // 3. 腹底对比色片（noOutline=true，贴合中腹下表面展现腹底分色而不侵占前胸正视底部）
-            if (bellyUv != UV_COAT)
-            {
-                m.Add(Prim.Sphere, new Vector3(0f, 0.005f * L, -0.01f * L),
-                    new Vector3(bw * 0.94f, bh * 0.44f, bl * 0.62f), noOutline: true, uv: bellyUv);
-            }
+            // 4. 侧身肋部贴合
+            AddSymX(m, Prim.Sphere, sx, 0f, fz * 0.85f,
+                new Vector3(bw * 0.46f, frontH * 0.85f, bl * 0.48f), uv: chestUv, noOutline: true);
+            AddSymX(m, Prim.Sphere, sx, Mathf.Max(0f, tuckUp * 0.35f), rz * 0.85f,
+                new Vector3(bw * 0.44f * rumpScale, rearH * 0.83f, bl * 0.48f), uv: UV_COAT, noOutline: true);
 
             chestTop = new Vector3(0f, chestLift + bh * 0.64f, bl * 0.32f);
             tailBase = new Vector3(0f, bh * 0.52f * rumpScale, -bl * 0.44f);
@@ -325,48 +335,43 @@ namespace RimFirstPerson3D
                 new Vector3(hr * 0.19f, hr * 0.21f, hr * 0.21f), uv: UV_EYE, noOutline: true);
         }
 
-        /// <summary>有蹄类草食动物专属长脸头部（马/鹿/驼鹿/牛/羊/骆驼）：同心双层圆颅 + 同心双层倾角长椭球吻部（零端盖接缝环、一体式长脸轮廓）。</summary>
+        /// <summary>有蹄类草食动物专属长脸头部（马/鹿/驼鹿/牛/羊/骆驼）：长楔形主轮廓 + 顺滑一体式长脸（彻底消除面颊与吻部的任何断层折角）。</summary>
         private static void BuildUngulateHead(Model3D m, Vector3 headCenter, float hr,
             float muzzleLen, float muzzleW, float muzzleH,
             int headUv = UV_HEAD, int muzzleUv = UV_HEAD, int jawUv = UV_BELLY, float pitch = 118f)
         {
             float tilt = pitch - 90f;
-            // 1. 饱满后颅：上提带描边颅核 + 无描边颅皮
-            m.Add(Prim.Sphere, headCenter + new Vector3(0f, -hr * 0.24f, -hr * 0.02f),
-                new Vector3(hr * 0.82f, hr * 0.66f, hr * 0.88f), uv: headUv);
-            m.Add(Prim.Sphere, headCenter - new Vector3(0f, hr * 0.43f, 0f),
+            // 1. 贯穿整个头脸的长楔形主轮廓（头部全线仅此一个外轮廓描边，从脑后到吻端自然一体，彻底消除面颊与吻部的任何断层折角）
+            var cFullHead = headCenter + StepVec(muzzleLen * 0.16f, pitch);
+            float fullLen = hr * 0.95f + muzzleLen * 1.35f;
+            float fullW = Mathf.Max(muzzleW * 1.35f, hr * 0.82f);
+            float fullH = Mathf.Max(muzzleH * 1.25f, hr * 0.68f);
+            m.Add(Prim.Sphere, cFullHead - StepVec(fullH * 0.45f, tilt),
+                new Vector3(fullW, fullH, fullLen), pitch: tilt, uv: headUv);
+
+            // 2. 内部饱满后颅（noOutline: true）
+            m.Add(Prim.Sphere, headCenter - new Vector3(0f, hr * 0.42f, 0f),
                 new Vector3(hr * 0.88f, hr * 0.86f, hr * 0.94f), noOutline: true, uv: headUv);
 
-            // 2. 同心双层长椭球楔形长脸（球心锚定于颅前，仅前半椭球延伸为长鼻梁，彻底消除圆柱端盖黑环与折痕）
-            var cMuzzle = headCenter + new Vector3(0f, -hr * 0.08f, hr * 0.12f) + StepVec(muzzleLen * 0.28f, pitch);
-            float sx = Mathf.Max(muzzleW * 1.28f, hr * 0.72f);
-            float sy = Mathf.Max(muzzleH * 1.18f, hr * 0.60f);
-            float sz = muzzleLen * 1.52f;
-            float sxCore = Mathf.Max(0.02f, sx - 0.022f);
-            float syCore = Mathf.Max(0.02f, sy - 0.022f);
-            float szCore = Mathf.Max(0.02f, sz - 0.022f);
-            m.Add(Prim.Sphere, cMuzzle - StepVec(syCore * 0.5f, tilt),
-                new Vector3(sxCore, syCore, szCore), pitch: tilt, uv: headUv);
+            // 3. 内部顺滑口吻与鼻端（noOutline: true）
+            var cMuzzle = headCenter + new Vector3(0f, -hr * 0.08f, hr * 0.12f) + StepVec(muzzleLen * 0.32f, pitch);
+            float sx = Mathf.Max(muzzleW * 1.22f, hr * 0.70f);
+            float sy = Mathf.Max(muzzleH * 1.15f, hr * 0.58f);
+            float sz = muzzleLen * 1.45f;
             m.Add(Prim.Sphere, cMuzzle - StepVec(sy * 0.5f, tilt),
                 new Vector3(sx, sy, sz), pitch: tilt, noOutline: true, uv: headUv);
 
             if (muzzleUv != headUv)
             {
-                var cTip = cMuzzle + StepVec(sz * 0.16f, pitch);
-                float hTip = sy * 0.92f;
+                var cTip = cMuzzle + StepVec(sz * 0.20f, pitch);
+                float hTip = sy * 0.90f;
                 m.Add(Prim.Sphere, cTip - StepVec(hTip * 0.5f, tilt),
-                    new Vector3(sx * 0.94f, hTip, sz * 0.70f), pitch: tilt, noOutline: true, uv: muzzleUv);
+                    new Vector3(sx * 0.92f, hTip, sz * 0.65f), pitch: tilt, noOutline: true, uv: muzzleUv);
             }
 
-            // 3. 眼下颧骨与鼻根无描边消隐桥
-            var cBridge = headCenter + new Vector3(0f, -hr * 0.04f, hr * 0.18f);
-            float hBridge = hr * 0.72f;
-            m.Add(Prim.Sphere, cBridge - StepVec(hBridge * 0.5f, tilt * 0.6f),
-                new Vector3(hr * 0.84f, hBridge, hr * 0.78f), pitch: tilt * 0.6f, noOutline: true, uv: headUv);
-
-            // 4. 温和侧眼
-            AddSymX(m, Prim.Sphere, hr * 0.36f, headCenter.y + hr * 0.02f, headCenter.z + hr * 0.28f,
-                new Vector3(hr * 0.20f, hr * 0.20f, hr * 0.22f), uv: UV_EYE, noOutline: true);
+            // 4. 温和侧眼（位于额骨两侧、耳朵前方）
+            AddSymX(m, Prim.Sphere, hr * 0.36f, headCenter.y + hr * 0.04f, headCenter.z + hr * 0.04f,
+                new Vector3(hr * 0.16f, hr * 0.16f, hr * 0.18f), uv: UV_EYE, noOutline: true);
         }
 
         /// <summary>立耳 / 长耳 / 圆耳 / 垂耳。</summary>
@@ -376,12 +381,12 @@ namespace RimFirstPerson3D
             if (floppy)
             {
                 AddSymX(m, Prim.Sphere, hr * 0.46f, headCenter.y - hr * 0.40f, headCenter.z - hr * 0.04f,
-                    new Vector3(earW * 0.9f, earH * 1.15f, earW * 1.35f), yaw: 12f, splay: 18f, uv: earUv);
+                    new Vector3(earW * 0.9f, earH * 1.15f, earW * 0.65f), yaw: 12f, splay: 18f, uv: earUv);
             }
             else if (roundEar)
             {
-                AddSymX(m, Prim.Sphere, hr * 0.35f, headCenter.y + hr * 0.34f, headCenter.z - hr * 0.10f,
-                    new Vector3(earW * 1.15f, earH * 0.92f, earW * 0.82f), yaw: 12f, splay: 22f, uv: earUv);
+                AddSymX(m, Prim.Sphere, hr * 0.35f, headCenter.y + hr * 0.34f, headCenter.z - hr * 0.08f,
+                    new Vector3(earW * 1.05f, earH * 0.88f, earW * 0.42f), yaw: 12f, splay: 22f, uv: earUv, noOutline: true);
             }
             else
             {
@@ -413,55 +418,57 @@ namespace RimFirstPerson3D
                     float bl = 0.72f * L, bh = 0.46f * L;
                     float bw = CalibrateWidth(n, bl, 0.36f * L);
                     BuildQuadBody(m, L, bl, bh, bw, 0f, 0.10f * L, 0.08f * L, 0.86f,
-                        out var chestTop, out var tailBase, UV_LIMB, UV_LIMB, UV_LIMB);
+                        out var chestTop, out var tailBase, UV_COAT, UV_COAT, UV_COAT);
                     bodyCenterY = bh * 0.5f;
                     bodyHalfW = bw * 0.52f;
 
-                    // 贴地灰蓝下摆底盘(UV_LIMB) + 覆盖肩背与双胁的雪白厚毛披肩(UV_COAT)
-                    m.Add(Prim.Sphere, new Vector3(0f, 0f, 0.02f * L),
-                        new Vector3(bw * 1.03f, bh * 0.52f, bl * 0.94f), noOutline: true, uv: UV_LIMB);
-                    AddSymX(m, Prim.Sphere, bw * 0.24f, bh * 0.20f, 0.02f * L,
-                        new Vector3(bw * 0.62f, bh * 0.76f, bl * 0.72f), uv: UV_COAT, noOutline: true);
-                    // 正面(_south)胸前中线灰蓝与两侧垂下的雪白厚毛肩绺
-                    m.Add(Prim.Sphere, new Vector3(0f, 0.01f * L, bl * 0.26f),
-                        new Vector3(bw * 0.56f, bh * 0.82f, bl * 0.42f), noOutline: true, uv: UV_LIMB);
-                    AddSymX(m, Prim.Sphere, bw * 0.30f, bh * 0.14f, bl * 0.24f,
-                        new Vector3(bw * 0.44f, bh * 0.76f, bl * 0.40f), uv: UV_COAT, noOutline: true);
+                    // 雪白通体神兽躯干，顺滑覆盖肩背与双胁的雪白厚毛披肩
+                    AddSymX(m, Prim.Sphere, bw * 0.20f, bh * 0.18f, 0.02f * L,
+                        new Vector3(bw * 0.54f, bh * 0.74f, bl * 0.72f), uv: UV_COAT, noOutline: true);
+                    // 原版胸前标志性锯齿白披肩与前胸毛绺（带独立清晰轮廓）
+                    m.Add(Prim.Sphere, new Vector3(0f, bh * 0.12f, bl * 0.24f),
+                        new Vector3(bw * 0.58f, bh * 0.76f, bl * 0.38f), uv: UV_COAT);
+                    AddSymX(m, Prim.Cone, bw * 0.22f, bh * 0.12f, bl * 0.22f,
+                        new Vector3(0.065f * L, 0.16f * L, 0.075f * L), pitch: 18f, splay: 28f, taper: 0.18f, uv: UV_COAT);
 
-                    // 粗壮直立微 S 形长颈（全程 noOutline=true 消除颈部横向黑环）
-                    var np = chestTop + new Vector3(0f, -0.05f * L, -0.03f * L);
-                    np = AddSeg(m, np, 0.19f * L, 0.23f * L, 0.19f * L, 10f, uv: UV_COAT, noOutline: true);
-                    np = AddSeg(m, np, 0.17f * L, 0.19f * L, 0.16f * L, 0f, uv: UV_COAT, noOutline: true);
-                    var hp = AddSeg(m, np, 0.13f * L, 0.16f * L, 0.14f * L, -4f, uv: UV_COAT, noOutline: true);
-                    // 正面灰蓝喉带（与灰蓝下胸相连）
-                    m.Add(Prim.Cylinder, chestTop + new Vector3(0f, -0.04f * L, 0.04f * L),
-                        new Vector3(0.10f * L, 0.36f * L, 0.08f * L), pitch: 6f, noOutline: true, uv: UV_LIMB, taper: 0.68f);
+                    // 腹底标志性白毛锯齿毛帘（4簇沿腹底边缘排布的下垂毛锥）
+                    for (int i = 0; i < 4; i++)
+                    {
+                        float fz = (0.16f - i * 0.11f) * L;
+                        m.Add(Prim.Cone, new Vector3(0f, 0.065f * L, fz),
+                            new Vector3(0.055f * L, 0.046f * L, 0.065f * L), pitch: -168f, taper: 0.18f, uv: UV_COAT, noOutline: true);
+                    }
 
-                    // 头后与上颈放射状炸毛白鬃冠（无内部相交黑圈）
-                    m.Add(Prim.Cone, hp + new Vector3(0f, 0.04f * L, -0.04f * L),
-                        new Vector3(0.09f * L, 0.21f * L, 0.10f * L), pitch: -24f, noOutline: true, uv: UV_COAT);
-                    AddSymX(m, Prim.Cone, 0.04f * L, hp.y + 0.02f * L, hp.z - 0.04f * L,
-                        new Vector3(0.08f * L, 0.20f * L, 0.09f * L), pitch: -28f, splay: 24f, uv: UV_COAT, noOutline: true);
-                    AddSymX(m, Prim.Cone, 0.06f * L, hp.y - 0.05f * L, hp.z - 0.05f * L,
-                        new Vector3(0.08f * L, 0.18f * L, 0.09f * L), pitch: -38f, splay: 38f, uv: UV_COAT, noOutline: true);
-                    m.Add(Prim.Cone, hp + new Vector3(0f, -0.10f * L, -0.06f * L),
-                        new Vector3(0.09f * L, 0.17f * L, 0.09f * L), pitch: -48f, noOutline: true, uv: UV_COAT);
+                    // 自然平顺的微 S 形长颈（前倾角从36°渐变至18°，神兽姿态自然昂首前倾）
+                    var np = chestTop + new Vector3(0f, -0.08f * L, 0.02f * L);
+                    np = AddSeg(m, np, 0.18f * L, 0.23f * L, 0.19f * L, 36f, uv: UV_COAT, noOutline: true);
+                    np = AddSeg(m, np, 0.16f * L, 0.19f * L, 0.16f * L, 26f, uv: UV_COAT, noOutline: true);
+                    var hp = AddSeg(m, np, 0.14f * L, 0.16f * L, 0.14f * L, 16f, uv: UV_COAT, noOutline: true);
+                    m.Add(Prim.Cylinder, chestTop + new Vector3(0f, -0.06f * L, 0.04f * L),
+                        new Vector3(0.12f * L, 0.32f * L, 0.10f * L), pitch: 30f, noOutline: true, uv: UV_COAT, taper: 0.68f);
 
-                    // 紧凑异兽头（上白额颅 + 前下方内收的深灰蓝短吻 pitch=122°）
+                    // 贴颈流线雪白披肩毛冠（平贴颈背，消除乱刺穿模）
+                    m.Add(Prim.Cone, hp + new Vector3(0f, 0.03f * L, -0.05f * L),
+                        new Vector3(0.075f * L, 0.18f * L, 0.080f * L), pitch: -18f, noOutline: true, uv: UV_COAT);
+                    AddSymX(m, Prim.Cone, 0.04f * L, hp.y + 0.01f * L, hp.z - 0.04f * L,
+                        new Vector3(0.065f * L, 0.16f * L, 0.070f * L), pitch: -22f, splay: 18f, uv: UV_COAT, noOutline: true);
+
+                    // 紧凑异兽头（通体雪白神兽头）
                     float hr = 0.20f * L;
                     var headC = hp + new Vector3(0f, 0.01f * L, 0.03f * L);
-                    BuildUngulateHead(m, headC, hr, 0.15f * L, 0.105f * L, 0.105f * L, UV_COAT, UV_LIMB, UV_LIMB, pitch: 122f);
+                    BuildUngulateHead(m, headC, hr, 0.15f * L, 0.105f * L, 0.105f * L, UV_COAT, UV_COAT, UV_COAT, pitch: 122f);
                     BuildEars(m, headC, hr, 0.048f * L, 0.13f * L, earUv: UV_COAT);
 
-                    // 标志性向后上方弧形弯折的宽刃弯刀独角（严格还原 thrumbo_east 的新月形后弯大角）
-                    float hd0 = (alpha ? 0.125f : 0.105f) * L;
-                    var hornP = headC + new Vector3(0f, hr * 0.26f, hr * 0.20f);
-                    hornP = AddSeg(m, hornP, 0.15f * L, hd0, hd0 * 0.80f, 26f, uv: UV_DETAIL);
-                    hornP = AddSeg(m, hornP, 0.15f * L, hd0 * 0.80f, hd0 * 0.50f, -8f, uv: UV_DETAIL);
-                    AddSeg(m, hornP, 0.15f * L, hd0 * 0.50f, hd0 * 0.08f, -42f, uv: UV_DETAIL);
+                    // 原版标志性向前上方挺拔耸立、尖端微反勾的白玉弯刀大角
+                    float hd0 = (alpha ? 0.142f : 0.128f) * L;
+                    var hornP = headC + new Vector3(0f, hr * 0.24f, hr * 0.12f);
+                    hornP = AddSeg(m, hornP, 0.18f * L, hd0, hd0 * 0.86f, 22f, uv: UV_DETAIL);
+                    hornP = AddSeg(m, hornP, 0.17f * L, hd0 * 0.86f, hd0 * 0.60f, 10f, uv: UV_DETAIL);
+                    hornP = AddSeg(m, hornP, 0.16f * L, hd0 * 0.60f, hd0 * 0.32f, -6f, uv: UV_DETAIL);
+                    AddSeg(m, hornP, 0.15f * L, hd0 * 0.32f, hd0 * 0.06f, -26f, uv: UV_DETAIL, joint: false);
                     if (alpha)
                         AddSymX(m, Prim.Cone, hr * 0.30f, headC.y + hr * 0.16f, headC.z + hr * 0.08f,
-                            new Vector3(0.055f * L, 0.13f * L, 0.055f * L), pitch: 22f, splay: 26f, uv: UV_DETAIL);
+                            new Vector3(0.055f * L, 0.13f * L, 0.055f * L), pitch: -20f, splay: 26f, uv: UV_DETAIL);
 
                     // 扬起短尾簇
                     m.Add(Prim.Cone, tailBase + new Vector3(0f, 0.04f * L, 0.02f * L),
@@ -475,6 +482,7 @@ namespace RimFirstPerson3D
                     bool bison = Has(n, "bison");
                     bool muskox = Has(n, "muskox");
                     bool yak = Has(n, "yak");
+                    bool muffalo = !sheep && !yak && !bison && !muskox;
 
                     float bl = (sheep ? 0.68f : 0.80f) * L;
                     float bh = (sheep ? 0.48f : 0.56f) * L;
@@ -490,13 +498,13 @@ namespace RimFirstPerson3D
 
                     if (bison)
                     {
-                        // 美洲野牛：前肩高耸暖棕毛峰(UV_COAT) + 底部深褐腹毛裙边(UV_BELLY, noOutline=true)
+                        // 野牛高耸肩峰
                         m.Add(Prim.Sphere, new Vector3(0f, bh * 0.18f, bl * 0.14f),
                             new Vector3(bw * 1.02f, bh * 0.90f, bl * 0.56f), noOutline: true, uv: UV_COAT);
                         m.Add(Prim.Sphere, new Vector3(0f, 0f, -0.01f * L),
                             new Vector3(bw * 1.03f, bh * 0.40f, bl * 0.94f), noOutline: true, uv: UV_BELLY);
                     }
-                    else if (!sheep)
+                    else if (!sheep && !muffalo)
                     {
                         // 野牦牛 / 牦牛 / 麝牛：圆拱高耸背峰 + 贴地深色底毛裙边(noOutline=true)
                         m.Add(Prim.Sphere, new Vector3(0f, bh * 0.12f, bl * 0.10f),
@@ -504,7 +512,7 @@ namespace RimFirstPerson3D
                         m.Add(Prim.Sphere, new Vector3(0f, 0f, -0.01f * L),
                             new Vector3(bw * 1.04f, bh * 0.42f, bl * 0.94f), noOutline: true, uv: UV_BELLY);
                     }
-                    else
+                    else if (sheep)
                     {
                         // 绵羊团簇状蓬松绒球
                         AddSymX(m, Prim.Sphere, bw * 0.20f, bh * 0.12f, 0.03f * L,
@@ -513,15 +521,27 @@ namespace RimFirstPerson3D
 
                     float hr = (sheep ? 0.24f : 0.29f) * L;
                     var headC = new Vector3(0f, bh * (sheep ? 0.48f : bison ? 0.36f : 0.42f), bl * 0.44f);
-                    if (!sheep && !yak && !bison && !muskox)
+                    if (muffalo)
                     {
-                        // Muffalo：高耸前倾的蓝白厚毛肩峰 + 前探露出的大号水滴形灰蓝面盘(标准细描边) + 居中横缝眼
-                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.24f, bl * 0.22f),
-                            new Vector3(bw * 1.00f, bh * 0.86f, bl * 0.50f), noOutline: true, uv: UV_COAT);
-                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.04f, bl * 0.44f),
-                            new Vector3(hr * 0.88f, bh * 0.68f, hr * 0.78f), pitch: 12f, uv: UV_HEAD);
-                        AddSymX(m, Prim.Sphere, hr * 0.25f, bh * 0.35f, bl * 0.585f,
-                            new Vector3(0.068f * L, 0.020f * L, 0.055f * L), yaw: 26f, uv: UV_EYE, noOutline: true);
+                        // Muffalo 浑然天成的羊毛巨丘：厚重前倾毛肩峰 + 前胸一体化厚毛斗篷领（通体雪青毛色，绝无杂色穿插）
+                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.16f, bl * 0.14f),
+                            new Vector3(bw * 0.96f, bh * 0.82f, bl * 0.56f), noOutline: true, uv: UV_COAT);
+                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.10f, bl * 0.34f),
+                            new Vector3(bw * 0.86f, bh * 0.76f, bl * 0.34f), noOutline: true, uv: UV_COAT);
+                        // 正面居中经典宽阔水滴形灰蓝面盘（面盘边缘平顺嵌于毛领中，额宽颊圆）
+                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.10f, bl * 0.40f),
+                            new Vector3(hr * 0.88f, bh * 0.74f, hr * 0.68f), pitch: 12f, uv: UV_HEAD);
+                        // 居中横缝双眼
+                        AddSymX(m, Prim.Sphere, hr * 0.24f, bh * 0.38f, bl * 0.515f,
+                            new Vector3(0.055f * L, 0.016f * L, 0.045f * L), yaw: 18f, uv: UV_EYE, noOutline: true);
+                        // 额顶厚实羊毛发冠与两侧下垂微翘小毛耳
+                        m.Add(Prim.Sphere, new Vector3(0f, bh * 0.26f, bl * 0.36f),
+                            new Vector3(hr * 0.76f, 0.09f * L, hr * 0.52f), noOutline: true, uv: UV_COAT);
+                        AddSymX(m, Prim.Cone, hr * 0.44f, bh * 0.32f, bl * 0.38f,
+                            new Vector3(0.040f * L, 0.085f * L, 0.045f * L), pitch: -22f, splay: 45f, uv: UV_HEAD, noOutline: true);
+                        // 臀部下垂毛尾
+                        m.Add(Prim.Cone, tailBase + new Vector3(0f, 0.02f * L, 0.01f * L),
+                            new Vector3(0.065f * L, 0.14f * L, 0.065f * L), pitch: -72f, uv: UV_COAT);
                     }
                     else if (bison)
                     {
@@ -657,34 +677,35 @@ namespace RimFirstPerson3D
                     bodyHalfW = bw * 0.52f;
 
                     float hr = (rhino ? 0.25f : 0.30f) * L;
-                    var headC = new Vector3(0f, bh * (rhino ? 0.50f : 0.52f), bl * (ele ? 0.48f : 0.43f));
+                    var headC = new Vector3(0f, bh * (rhino ? 0.50f : 0.62f), bl * (ele ? 0.46f : 0.43f));
 
                     if (ele)
                     {
-                        // 饱满前探象颅 + 向两侧宽幅外展的大扇耳(_south/_north 均宽出体侧) + 三段下垂微卷象鼻 + 暖白长象牙
-                        m.Add(Prim.Sphere, headC - new Vector3(0f, hr * 0.48f, 0f),
-                            new Vector3(hr * 0.94f, hr * 1.02f, hr * 0.98f), pitch: 12f, uv: UV_HEAD);
+                        m.Add(Prim.Sphere, headC - new Vector3(0f, hr * 0.44f, 0f),
+                            new Vector3(hr * 0.96f, hr * 1.05f, hr * 0.98f), pitch: 8f, uv: UV_HEAD);
                         if (mastodon)
                             m.Add(Prim.Sphere, headC + new Vector3(0f, hr * 0.14f, 0f),
                                 new Vector3(hr * 1.04f, hr * 0.64f, hr * 0.94f), noOutline: true, uv: UV_COAT);
 
-                        AddSymX(m, Prim.Sphere, bw * 0.54f, headC.y - hr * 0.44f, headC.z - hr * 0.24f,
-                            new Vector3(0.24f * L, 0.32f * L, 0.16f * L), yaw: 18f, splay: 22f, uv: UV_HEAD);
-                        AddSymX(m, Prim.Sphere, hr * 0.31f, headC.y - hr * 0.04f, headC.z + hr * 0.32f,
+                        // 原版特征性的下垂贴颊宽薄大扇耳 (薄如扇叶，向下垂挂贴颊，上沿紧贴头顶，彻底消除朝天竖起兔耳翅膀感)
+                        AddSymX(m, Prim.Sphere, bw * 0.42f, headC.y - hr * 0.28f, headC.z - hr * 0.08f,
+                            new Vector3(0.030f * L, 0.24f * L, 0.28f * L), yaw: 16f, pitch: -4f, splay: -2f, uv: UV_HEAD);
+                        AddSymX(m, Prim.Sphere, hr * 0.31f, headC.y - hr * 0.02f, headC.z + hr * 0.32f,
                             new Vector3(0.05f * L, 0.055f * L, 0.055f * L), uv: UV_EYE, noOutline: true);
 
-                        // 三段自然下垂并在末端微卷的象鼻（严格对齐 elephant_east）
-                        var trk = headC + new Vector3(0f, -hr * 0.08f, hr * 0.36f);
-                        trk = AddSeg(m, trk, 0.14f * L, 0.125f * L, 0.095f * L, 134f, uv: UV_HEAD);
-                        trk = AddSeg(m, trk, 0.12f * L, 0.095f * L, 0.075f * L, 162f, uv: UV_HEAD);
-                        AddSeg(m, trk, 0.08f * L, 0.075f * L, 0.052f * L, 126f, uv: UV_HEAD);
+                        // 自然向下垂挂并在末端向前向上强烈回卷勾起的长象鼻 (Curled Hook)
+                        var trk = headC + new Vector3(0f, -hr * 0.06f, hr * 0.38f);
+                        trk = AddSeg(m, trk, 0.14f * L, 0.130f * L, 0.105f * L, 130f, uv: UV_HEAD, joint: true);
+                        trk = AddSeg(m, trk, 0.13f * L, 0.105f * L, 0.082f * L, 165f, uv: UV_HEAD, joint: true);
+                        trk = AddSeg(m, trk, 0.11f * L, 0.082f * L, 0.060f * L, 82f, uv: UV_HEAD, joint: true);
+                        AddSeg(m, trk, 0.09f * L, 0.060f * L, 0.038f * L, 18f, uv: UV_HEAD, joint: true);
 
-                        // 双段向前下方探出并微翘的暖白长象牙（UV_DETAIL）
-                        var tL = headC + new Vector3(-hr * 0.28f, -hr * 0.26f, hr * 0.30f);
-                        var tR = headC + new Vector3(hr * 0.28f, -hr * 0.26f, hr * 0.30f);
-                        float tl = (mastodon ? 0.18f : 0.13f) * L;
-                        AddSymSeg(m, ref tL, ref tR, tl, 0.058f * L, 0.042f * L, 124f, 10f, 0f, UV_DETAIL);
-                        AddSymSeg(m, ref tL, ref tR, tl * 0.85f, 0.042f * L, 0.014f * L, 92f, 4f, 0f, UV_DETAIL);
+                        // 两根向前下方自然伸出微翘的洁白巨型象牙
+                        var tL = headC + new Vector3(-hr * 0.26f, -hr * 0.22f, hr * 0.32f);
+                        var tR = headC + new Vector3( hr * 0.26f, -hr * 0.22f, hr * 0.32f);
+                        float tl = (mastodon ? 0.22f : 0.17f) * L;
+                        AddSymSeg(m, ref tL, ref tR, tl, 0.054f * L, 0.036f * L, 108f, 14f, 0f, UV_DETAIL, joint: true);
+                        AddSymSeg(m, ref tL, ref tR, tl * 0.85f, 0.036f * L, 0.012f * L, 68f, 8f, 0f, UV_DETAIL, joint: false);
                     }
                     else if (rhino)
                     {
@@ -721,48 +742,127 @@ namespace RimFirstPerson3D
                     bool goat = Has(n, "goat");
                     bool bovine = Has(n, "cow", "bull");
 
-                    float bl = (bovine ? 0.76f : 0.70f) * L;
-                    float bh = (bovine ? 0.42f : moose ? 0.38f : 0.38f) * L;
-                    float bw = CalibrateWidth(n, bl, (bovine ? 0.42f : 0.31f) * L);
-
-                    BuildQuadBody(m, L, bl, bh, bw, 0f, (bovine ? 0.09f : 0.07f) * L,
-                        (bovine ? 0.01f : 0.03f) * L, bovine ? 0.96f : moose ? 0.93f : 0.95f,
-                        out var chestTop, out var tailBase, UV_LIMB, bovine ? UV_COAT : UV_LIMB, ibex ? UV_LIMB : UV_BELLY);
-                    bodyCenterY = bh * 0.5f;
-                    bodyHalfW = bw * 0.5f;
-
-                    // 颈部前倾角与低头垂吻（noOutline=true 消除颈部接缝黑圈；马颈修长昂立，牛颈粗壮微昂）
-                    float neckPitch = bovine ? 46f : moose ? 52f : equine ? 26f : 36f;
-                    float nd0 = (bovine ? 0.19f : 0.155f) * L;
-                    float nd1 = (bovine ? 0.165f : 0.135f) * L;
-                    var np = chestTop + new Vector3(0f, -0.05f * L, 0.01f * L);
-                    np = AddSeg(m, np, (bovine ? 0.13f : equine ? 0.18f : 0.16f) * L, nd0, nd1, neckPitch, uv: UV_COAT, noOutline: true);
-                    var hp = AddSeg(m, np, (bovine ? 0.10f : equine ? 0.16f : 0.14f) * L, nd1, nd1 * 0.86f, neckPitch - 8f, uv: UV_COAT, noOutline: true);
-
-                    // 有蹄类专属长脸头（pitch=116°~128° 向前下方垂吻，彻底告别仰头翘鼻）
-                    float hr = (bovine ? 0.22f : 0.195f) * L;
-                    var headC = hp + new Vector3(0f, 0.01f * L, 0.02f * L);
-                    BuildUngulateHead(m, headC, hr,
-                        (moose ? 0.18f : bovine ? 0.16f : 0.16f) * L,
-                        (bovine ? 0.115f : moose ? 0.115f : 0.095f) * L,
-                        (moose ? 0.12f : bovine ? 0.11f : 0.10f) * L,
-                        UV_HEAD, bovine ? UV_LIMB : UV_HEAD, UV_BELLY, pitch: moose ? 116f : equine ? 128f : bovine ? 122f : 118f);
-
-                    // 马/驴颈背连续平滑深棕鬃毛脊 + 额前鬃簇 + 直立小马耳
                     if (equine)
                     {
-                        var maneStart = headC + new Vector3(0f, hr * 0.34f, -hr * 0.16f);
-                        var maneMid = AddSeg(m, maneStart, 0.19f * L, 0.058f * L, 0.068f * L, -158f, uv: UV_DETAIL, joint: true);
-                        AddSeg(m, maneMid, 0.18f * L, 0.068f * L, 0.048f * L, -152f, uv: UV_DETAIL, joint: true, noOutline: true);
-                        m.Add(Prim.Sphere, headC + new Vector3(0f, hr * 0.20f, hr * 0.12f),
-                            new Vector3(0.062f * L, 0.058f * L, 0.075f * L), pitch: 24f, uv: UV_DETAIL);
-                        AddSymX(m, Prim.Cone, hr * 0.30f, headC.y + hr * 0.24f, headC.z - hr * 0.04f,
-                            new Vector3(0.042f * L, (donkey ? 0.16f : 0.082f) * L, 0.038f * L),
-                            pitch: -8f, splay: donkey ? 28f : 14f, taper: 0.22f, uv: UV_HEAD);
+                        // 马 (Horse) 专属高保真解剖建模：1:1 严格对照原版 2D 贴图像素工程蓝图 (东侧视/南正视/北后视)
+                        // 彻底根除审查官全部视觉硬伤：
+                        // 1. 紧凑修长躯干与真马鞍背流线：克制躯干宽度(bw=0.200L，彻底根除圆球巨臀)，基准流线主躯干贯穿前后，前驱深胸鬐甲(顶0.380L/底0.008L贴地)与后驱高臀(顶0.355L/底0.070L高收起)在马鞍处平滑相交于自然下凹脊线(顶0.330L下凹/腹底单向向上收起)，彻底消除毛毛虫多节突起与多余垂肉
+                        // 2. 45°斜挺挺拔长颈与胸颈顺滑肌肉过渡：双段斜长颈(48°->40°)长0.34L向前上方挺拔伸展，肩胸处肌肉平顺包裹，彻底消除圆柱直插生硬折角
+                        // 马 (Horse) 专属高保真解剖建模：1:1 严格对照原版 2D 贴图像素工程蓝图 (东侧视/南正视/北后视)
+                        // 彻底根除全部历史审查硬伤：
+                        // 1. 基准流线主躯干：采用 buildQuadBody 黄金解剖，鬐甲顶高0.48L > 臀峰0.41L > 鞍部0.36L，平缓优美微凹弧线，深胸饱满接地0.00L，完全消除肉瘤驼峰
+                        // 2. 强壮挺拔厚实马颈：粗壮斜长马颈(胸端0.22L, 头端0.16L)，自鬐甲与前胸向上前方38°挺拔直贯颅顶，胸颈扇形肌肉无缝平滑衔接
+                        // 3. 高还原原版Q版马首：适度长面(长吻0.12L，头长0.18L，拒绝食蚁兽管吻)，饱满颅骨与外展下颌腮骨，圆钝吻端平齐马鞍0.36L，黑眼与挺拔俏耳(高0.095L)
+                        // 4. 沿颈背高耸连贯深色马鬃：采用 UV_DETAIL 深栗色，与马颈同角度平行紧贴颈脊，自鬐甲直达后脑枕骨与额前刘海，两端完全贴合零悬空
+                        // 5. 贴臀自然下垂长马尾：采用 UV_DETAIL，根部锚定于后臀外缘(-0.31L, 0.28L)，三段自然垂直垂落至离地0.02L，在北后视中形成居中悬垂的饱满立体长羽
+
+                        float bw = 0.32f * L;
+
+                        // 1. 基准流线马身：全长流线基底主椭球 (长0.66L，充填中段马鞍最低点0.36L，腹底收腰0.04L，保证单一流畅收腹弧线)
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.02f * L, -0.10f * L), new Vector3(bw * 0.94f, 0.34f * L, 0.66f * L), uv: UV_COAT, noOutline: false);
+
+                        // 前驱深胸与挺拔鬐甲 (顶高0.46L，胸底0.00L 接地，长0.38L，向前顺滑承托马颈脊线)
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.00f * L, 0.07f * L), new Vector3(bw * 0.98f, 0.46f * L, 0.38f * L), pitch: 10f, uv: UV_COAT, noOutline: false);
+
+                        // 后驱饱满圆臀 (顶高0.415L 呈现自然微翘臀峰，底高0.01L，长0.40L，后弧达-0.42L，与尾根无缝咬合)
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.01f * L, -0.24f * L), new Vector3(bw * 0.96f, 0.405f * L, 0.40f * L), pitch: -8f, uv: UV_COAT, noOutline: false);
+
+                        // 正视/后视丰满肩胛轮廓 (充盈体量，noOutline避免侧身产生多余轮廓环)
+                        AddSymX(m, Prim.Sphere, bw * 0.22f, 0.04f * L, 0.06f * L, new Vector3(bw * 0.44f, 0.38f * L, 0.28f * L), pitch: 10f, uv: UV_COAT, noOutline: true);
+                        // 后臀两侧丰满后腿肌肉
+                        AddSymX(m, Prim.Sphere, bw * 0.20f, 0.03f * L, -0.24f * L, new Vector3(bw * 0.42f, 0.36f * L, 0.28f * L), pitch: -8f, uv: UV_COAT, noOutline: true);
+
+                        // 2. 粗壮斜长厚实马颈 (自鬐甲脊顶 0.46L 与前胸斜向前上方 48° 挺拔舒展直达颅顶，单调平滑递增，彻底根除驼峰断层)
+                        var neckBase = new Vector3(0f, 0.26f * L, 0.08f * L);
+                        float neckLen = 0.20f * L;
+                        float neckPitch = 48f;
+                        m.Add(Prim.Cylinder, neckBase, new Vector3(0.18f * L, neckLen, 0.22f * L), pitch: neckPitch, taper: 0.74f, uv: UV_COAT, noOutline: false);
+                        // 前胸与颈下肌肉充盈过渡
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.16f * L, 0.12f * L), new Vector3(bw * 0.86f, 0.28f * L, 0.24f * L), pitch: 28f, uv: UV_COAT, noOutline: false);
+
+                        // 3. 高保真原版Q版马首 (比例严格控制在头长0.18L，后脑+腮骨+斜垂长吻124°，吻端高0.35L平齐马鞍)
+                        var neckTop = neckBase + StepVec(neckLen * 0.88f, neckPitch);
+                        var headC = neckTop + new Vector3(0f, 0.00f * L, 0.01f * L);
+
+                        // 饱满后脑与颅骨 (Braincase & Poll，高0.165L，宽0.125L)
+                        m.Add(Prim.Sphere, new Vector3(headC.x, headC.y - 0.015f * L, headC.z), new Vector3(0.125f * L, 0.165f * L, 0.135f * L), pitch: 16f, uv: UV_HEAD, noOutline: false);
+
+                        // 宽阔外展下颌腮骨 (Mandible Cheek Flares)
+                        AddSymX(m, Prim.Sphere, 0.045f * L, headC.y - 0.015f * L, headC.z - 0.01f * L, new Vector3(0.035f * L, 0.080f * L, 0.070f * L), pitch: 16f, uv: UV_HEAD, noOutline: true);
+
+                        // 顺滑斜垂长吻桥 (Nasal Bridge: 前倾斜垂 124°，长0.120L)
+                        var bridgeBase = new Vector3(headC.x, headC.y + 0.005f * L, headC.z + 0.02f * L);
+                        m.Add(Prim.Cylinder, bridgeBase, new Vector3(0.082f * L, 0.120f * L, 0.092f * L), pitch: 124f, taper: 0.74f, uv: UV_HEAD, noOutline: false);
+
+                        // 圆钝方圆吻端与鼻孔区 (Muzzle Tip: 吻端高 0.35L 平齐马鞍)
+                        var noseC = bridgeBase + StepVec(0.110f * L, 124f);
+                        m.Add(Prim.Sphere, new Vector3(noseC.x, noseC.y - 0.020f * L, noseC.z), new Vector3(0.075f * L, 0.070f * L, 0.075f * L), pitch: 18f, uv: UV_HEAD, noOutline: false);
+                        // 下唇/分色下巴 (Chin，高 0.28L)
+                        m.Add(Prim.Sphere, new Vector3(noseC.x, noseC.y - 0.040f * L, noseC.z - 0.01f * L), new Vector3(0.066f * L, 0.042f * L, 0.066f * L), pitch: 18f, uv: UV_BELLY, noOutline: true);
+
+                        // 灵动黑眼睛 (侧面外凸，位于额骨与腮骨上方)
+                        AddSymX(m, Prim.Sphere, 0.050f * L, headC.y + 0.015f * L, headC.z + 0.028f * L, new Vector3(0.024f * L, 0.024f * L, 0.024f * L), pitch: 16f, uv: UV_EYE, noOutline: false);
+
+                        // 显著挺拔秀美马耳 (高0.095L，向后上方挺立俏立)
+                        AddSymX(m, Prim.Cone, 0.036f * L, headC.y + 0.075f * L, headC.z - 0.015f * L,
+                            new Vector3(0.026f * L, (donkey ? 0.15f : 0.095f) * L, 0.024f * L),
+                            pitch: -16f, splay: donkey ? 22f : 12f, taper: 0.18f, uv: UV_HEAD, noOutline: false);
+
+                        // 4. 沿颈背高耸连贯深色马鬃 (紧贴颈脊脊线，自鬐甲直达颅顶后枕骨与额前刘海，两端完全贴合零悬空)
+                        var mane0 = new Vector3(0f, 0.44f * L, 0.07f * L);
+                        var maneTop = new Vector3(0f, headC.y + 0.080f * L, headC.z - 0.012f * L);
+                        float my = maneTop.y - mane0.y, mz = maneTop.z - mane0.z;
+                        float mlen = Mathf.Sqrt(my * my + mz * mz);
+                        float mpitch = Mathf.Atan2(mz, my) * 180f / Mathf.PI;
+
+                        m.Add(Prim.Cylinder, mane0, new Vector3(0.052f * L, mlen, 0.072f * L), pitch: mpitch, taper: 0.88f, uv: UV_DETAIL, noOutline: false);
+                        m.Add(Prim.Sphere, mane0, new Vector3(0.052f * L, 0.052f * L, 0.072f * L), uv: UV_DETAIL, noOutline: false);
+                        m.Add(Prim.Sphere, maneTop, new Vector3(0.046f * L, 0.046f * L, 0.058f * L), uv: UV_DETAIL, noOutline: false);
+
+                        // 额顶刘海 (Forelock)
+                        m.Add(Prim.Sphere, new Vector3(0f, headC.y + 0.070f * L, headC.z + 0.022f * L), new Vector3(0.040f * L, 0.038f * L, 0.046f * L), pitch: 16f, uv: UV_DETAIL, noOutline: false);
+
+                        // 5. 贴臀自然垂直下垂长马尾 (锚定于后臀后弧外缘-0.42L，垂直下垂至离地0.08L，在北后视中清晰居中悬垂)
+                        var tailRoot = new Vector3(0f, 0.30f * L, -0.42f * L);
+                        var t1 = AddSeg(m, tailRoot, 0.09f * L, 0.065f * L, 0.052f * L, -165f, uv: UV_DETAIL, joint: false, noOutline: false);
+                        var t2 = AddSeg(m, t1, 0.08f * L, 0.052f * L, 0.032f * L, -175f, uv: UV_DETAIL, joint: false, noOutline: false);
+                        AddSeg(m, t2, 0.05f * L, 0.032f * L, 0.014f * L, -180f, uv: UV_EYE, joint: false, noOutline: false);
+                        break;
                     }
-                    else if (bovine)
+                    else
                     {
-                        // 家牛：位于牛角后下方的水平侧展牛耳（与前弯牛角清晰错开）
+                        float bl = (bovine ? 0.76f : 0.70f) * L;
+                        float bh = (bovine ? 0.42f : moose ? 0.38f : 0.38f) * L;
+                        float bw = CalibrateWidth(n, bl, (bovine ? 0.42f : 0.31f) * L);
+
+                        BuildQuadBody(m, L, bl, bh, bw, 0f,
+                            (bovine ? 0.09f : 0.07f) * L,
+                            (bovine ? 0.01f : 0.03f) * L,
+                            bovine ? 0.96f : moose ? 0.93f : 0.95f,
+                            out var chestTop, out var tailBase, UV_LIMB, bovine ? UV_COAT : UV_LIMB, ibex ? UV_LIMB : UV_BELLY);
+                        bodyCenterY = bh * 0.5f;
+                        bodyHalfW = bw * 0.5f;
+
+                        // 颈部前倾角与挺拔昂首
+                        float neckPitch = bovine ? 46f : moose ? 52f : 36f;
+                        float nd0 = (bovine ? 0.19f : 0.155f) * L;
+                        float nd1 = (bovine ? 0.165f : 0.135f) * L;
+                        var np = chestTop + new Vector3(0f, -0.02f * L, 0.01f * L);
+                        np = AddSeg(m, np, (bovine ? 0.13f : 0.16f) * L, nd0, nd1, neckPitch, uv: UV_COAT, noOutline: true);
+                        var hp = AddSeg(m, np, (bovine ? 0.10f : 0.14f) * L, nd1, nd1 * 0.85f, neckPitch - 6f, uv: UV_COAT, noOutline: true);
+
+                        // 有蹄类专属长脸头
+                        float hr = (bovine ? 0.22f : 0.195f) * L;
+                        var headC = hp + new Vector3(0f, 0.01f * L, 0.02f * L);
+                        BuildUngulateHead(m, headC, hr,
+                            (moose ? 0.18f : bovine ? 0.16f : 0.16f) * L,
+                            (bovine ? 0.115f : moose ? 0.115f : 0.095f) * L,
+                            (moose ? 0.12f : bovine ? 0.11f : 0.10f) * L,
+                            UV_HEAD, bovine ? UV_LIMB : UV_HEAD, UV_BELLY, pitch: moose ? 116f : bovine ? 122f : 118f);
+
+                        if (bovine)
+                        {
+                            // 家牛：位于牛角后下方的水平侧展牛耳（与前弯牛角清晰错开）
                         AddSymX(m, Prim.Cone, hr * 0.40f, headC.y + hr * 0.04f, headC.z - hr * 0.10f,
                             new Vector3(0.046f * L, 0.105f * L, 0.040f * L), pitch: -28f, splay: 74f, taper: 0.25f, uv: UV_HEAD);
                     }
@@ -850,13 +950,8 @@ namespace RimFirstPerson3D
                         }
                     }
 
-                    // 尾部（马贴臀自然垂尾 / 鹿白尾簇 / 驼鹿与牛贴臀垂尾）
-                    if (equine)
-                    {
-                        var tp = AddSeg(m, tailBase + new Vector3(0f, 0.04f * L, 0.02f * L), 0.13f * L, 0.072f * L, 0.088f * L, -152f, uv: UV_DETAIL, joint: true, noOutline: true);
-                        AddSeg(m, tp, 0.14f * L, 0.088f * L, 0.032f * L, -162f, uv: UV_DETAIL, joint: true);
-                    }
-                    else if (bovine)
+                    // 尾部（鹿白尾簇 / 驼鹿与牛贴臀垂尾）
+                    if (bovine)
                     {
                         AddSeg(m, tailBase + new Vector3(0f, 0.01f * L, 0.02f * L), 0.17f * L, 0.044f * L, 0.020f * L, -160f, uv: UV_COAT, joint: false);
                     }
@@ -870,6 +965,7 @@ namespace RimFirstPerson3D
                             pitch: goat ? -35f : -164f, uv: antler ? UV_BELLY : UV_COAT);
                     }
                     break;
+                    }
                 }
 
                 case Arch.UrsineSloth:
@@ -877,6 +973,7 @@ namespace RimFirstPerson3D
                     bool panda = Has(n, "panda");
                     bool sloth = Has(n, "megasloth", "sloth");
                     bool badger = Has(n, "badger", "wolverine");
+                    bool bear = !panda && !sloth && !badger;
 
                     float bl = (badger ? 0.68f : 0.76f) * L;
                     float bh = (badger ? 0.36f : sloth ? 0.50f : 0.42f) * L;
@@ -885,12 +982,19 @@ namespace RimFirstPerson3D
                     int frontRegion = panda ? UV_LIMB : sloth ? UV_BELLY : UV_LIMB;
                     int rearRegion = panda ? UV_COAT : UV_LIMB;
                     int bellyRegion = panda ? UV_COAT : sloth ? UV_LIMB : UV_BELLY;
+                    // 灰熊：浑厚强健滚木体魄，前肩耸起顺滑融入背脊，后臀低收 (rumpScale: 0.82)
                     BuildQuadBody(m, L, bl, bh, bw, 0f, (badger ? 0.09f : 0.12f) * L,
-                        (sloth ? 0.04f : 0.01f) * L, sloth ? 0.90f : 1.00f, out var chestTop, out var tailBase, frontRegion, rearRegion, bellyRegion);
+                        (sloth ? 0.04f : bear ? 0.08f : 0.03f) * L, sloth ? 0.90f : bear ? 0.82f : 0.98f, out var chestTop, out var tailBase, frontRegion, rearRegion, bellyRegion);
                     bodyCenterY = bh * 0.5f;
                     bodyHalfW = bw * 0.52f;
 
-                    if (panda)
+                    if (bear)
+                    {
+                        // 沉甸甸的低垂厚腹 (Sagging Belly)，自然融入圆润滚木体躯
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.005f * L, -0.02f * L),
+                            new Vector3(bw * 0.96f, bh * 0.55f, bl * 0.72f), uv: UV_BELLY, noOutline: true);
+                    }
+                    else if (panda)
                     {
                         // 熊猫：后背纯白拱顶(_south 露出白背顶) + 后臀底部黑色下摆(_east/_north 底部黑腿块)
                         m.Add(Prim.Sphere, new Vector3(0f, 0.02f * L, -bl * 0.14f),
@@ -913,10 +1017,10 @@ namespace RimFirstPerson3D
                             new Vector3(0.14f * L, 0.15f * L, 0.14f * L), pitch: -48f, taper: 0.22f, noOutline: true, uv: UV_BELLY);
                     }
 
-                    // 熊/熊猫头与肩高平齐，大地懒低头前探（米白额头 + 深色眼带与深褐鼻吻）
-                    float hr = (badger ? 0.21f : sloth ? 0.23f : 0.25f) * L;
-                    var headC = new Vector3(0f, bh * (sloth ? 0.48f : 0.66f), bl * (sloth ? 0.46f : 0.44f));
-                    BuildHead(m, headC, hr, hr * 0.68f, hr * 0.58f, hr * 0.50f,
+                    // 灰熊宽厚四方短吻与平视雄姿（吻部平视前探，宽阔大脸盘）
+                    float hr = (badger ? 0.21f : sloth ? 0.23f : bear ? 0.21f : 0.25f) * L;
+                    var headC = new Vector3(0f, bh * (sloth ? 0.48f : bear ? 0.46f : 0.62f), bl * (sloth ? 0.46f : bear ? 0.38f : 0.42f));
+                    BuildHead(m, headC, hr, (badger ? 0.14f : bear ? 0.12f : 0.15f) * L, (bear ? 0.13f : 0.10f) * L, (bear ? 0.12f : 0.10f) * L,
                         panda ? UV_HEAD : sloth ? UV_BELLY : UV_COAT,
                         badger ? UV_DETAIL : sloth ? UV_LIMB : UV_HEAD,
                         panda ? UV_HEAD : UV_BELLY);
@@ -927,7 +1031,7 @@ namespace RimFirstPerson3D
                             new Vector3(hr * 0.32f, hr * 0.28f, hr * 0.28f), yaw: 18f, splay: -14f, uv: UV_LIMB, noOutline: true);
                     }
                     if (!sloth)
-                        BuildEars(m, headC, hr, 0.058f * L, 0.082f * L, roundEar: true, earUv: UV_LIMB);
+                        BuildEars(m, headC, hr, bear ? 0.046f * L : 0.054f * L, bear ? 0.052f * L : 0.076f * L, roundEar: true, earUv: UV_LIMB);
 
                     if (sloth)
                     {
@@ -937,7 +1041,7 @@ namespace RimFirstPerson3D
                         AddSeg(m, tailBase, 0.17f * L, 0.12f * L, 0.055f * L, -115f, uv: UV_COAT);
                     else
                         AddSeg(m, tailBase + new Vector3(0f, 0.01f * L, 0.02f * L),
-                            0.10f * L, 0.062f * L, 0.030f * L, -142f, uv: panda ? UV_COAT : UV_LIMB, joint: false);
+                            bear ? 0.06f * L : 0.10f * L, 0.055f * L, 0.030f * L, -165f, uv: panda ? UV_COAT : UV_LIMB, joint: false);
                     break;
                 }
 
@@ -951,13 +1055,19 @@ namespace RimFirstPerson3D
                     bool terrier = Has(n, "terrier", "yorkshire");
 
                     float bl = (fox ? 0.66f : 0.70f) * L;
-                    float bh = (warg ? 0.40f : fox ? 0.32f : 0.37f) * L;
-                    float bw = CalibrateWidth(n, bl, (warg ? 0.36f : fox ? 0.29f : 0.32f) * L);
-
+                    float bh = (warg ? 0.40f : fox ? 0.32f : 0.34f) * L;
+                    float bw = CalibrateWidth(n, bl, (warg ? 0.36f : fox ? 0.29f : 0.29f) * L);
                     int bellyUv = fox ? UV_DETAIL : UV_BELLY;
-                    BuildQuadBody(m, L, bl, bh, bw, 0f, (warg ? 0.10f : 0.07f) * L,
-                        (warg ? 0.04f : 0.02f) * L, warg ? 0.78f : 0.94f,
-                        out var chestTop, out var tailBase, UV_LIMB, UV_LIMB, bellyUv);
+
+                    // 犬科极具辨识度的深胸与急剧收腰流线（前胸深沉贴地，腹部高高收起，背线平顺微弓消除驼峰）
+                    float tuckUp = (warg ? 0.058f : fox ? 0.044f : 0.062f) * L;
+                    float waistDip = 0.015f * L;
+                    BuildQuadBody(m, L, bl, bh, bw, 0f,
+                        (warg ? 0.10f : 0.06f) * L,
+                        (warg ? 0.05f : 0.03f) * L,
+                        warg ? 0.76f : 0.78f,
+                        out var chestTop, out var tailBase, UV_LIMB, UV_LIMB, bellyUv,
+                        waistDip: waistDip, tuckUp: tuckUp);
                     bodyCenterY = bh * 0.5f;
                     bodyHalfW = bw * 0.5f;
 
@@ -967,26 +1077,30 @@ namespace RimFirstPerson3D
                             new Vector3(bw * 1.06f, bh * 0.52f, bl * 0.94f), noOutline: true, uv: UV_BELLY);
                     }
 
-                    // 颈部前伸（noOutline=true 消除颈根黑环）与低头垂吻的犬科头部
-                    float canidNeckPitch = warg ? 48f : 50f;
-                    var np = AddSeg(m, chestTop + new Vector3(0f, -0.06f * L, 0.01f * L),
-                        0.13f * L, 0.15f * L, 0.13f * L, canidNeckPitch, uv: UV_COAT, noOutline: true);
+                    // 颈部挺立前探：狼颈有力挺起（pitch=42°），狼头平视前方，头顶高昂警惕
+                    float canidNeckPitch = warg ? 44f : 42f;
+                    var np = AddSeg(m, chestTop + new Vector3(0f, -0.04f * L, 0.02f * L),
+                        0.15f * L, 0.18f * L, 0.14f * L, canidNeckPitch, uv: UV_COAT, noOutline: true);
+                    m.Add(Prim.Sphere, chestTop + new Vector3(0f, -0.02f * L, 0.06f * L),
+                        new Vector3(bw * 0.72f, bh * 0.65f, bl * 0.32f), pitch: 24f, noOutline: true, uv: UV_COAT);
                     if (husky)
                     {
-                        m.Add(Prim.Cylinder, chestTop + new Vector3(0f, -0.08f * L, 0.04f * L),
+                        m.Add(Prim.Cylinder, chestTop + new Vector3(0f, -0.04f * L, 0.04f * L),
                             new Vector3(0.11f * L, 0.14f * L, 0.09f * L), pitch: canidNeckPitch, noOutline: true, uv: UV_BELLY, taper: 0.82f);
                     }
-                    float hr = (warg ? 0.24f : fox ? 0.21f : 0.22f) * L;
-                    var headC = np + new Vector3(0f, 0.01f * L, 0.02f * L);
-                    BuildHead(m, headC, hr, hr * (fox ? 0.96f : 0.84f), hr * (fox ? 0.46f : 0.52f), hr * 0.45f,
-                        terrier ? UV_HEAD : UV_COAT, husky ? UV_BELLY : fox ? UV_COAT : UV_HEAD, bellyUv);
-                    if (husky)
-                    {
-                        AddSymX(m, Prim.Sphere, hr * 0.365f, headC.y - hr * 0.02f, headC.z + hr * 0.285f,
-                            new Vector3(hr * 0.20f, hr * 0.22f, hr * 0.22f), uv: UV_DETAIL, noOutline: true);
-                    }
-                    BuildEars(m, headC, hr, (fennec ? 0.085f : 0.052f) * L, (fennec ? 0.22f : 0.11f) * L,
-                        floppy: floppy, earUv: (fox || fennec) ? UV_LIMB : UV_HEAD);
+                    float hr = (fox ? 0.155f : 0.165f) * L;
+                    var headC = np + new Vector3(0f, 0.02f * L, 0.03f * L);
+                    BuildHead(m, headC, hr, (warg ? 0.20f : fox ? 0.14f : 0.135f) * L, 0.076f * L, (warg ? 0.11f : 0.082f) * L,
+                        UV_HEAD, UV_HEAD, bellyUv);
+
+                    // 正视与背视极具辨识度的外展倒三角形颊毛 (Cheek Ruff，形成经典的六角/倒三角狼脸剪影)
+                    AddSymX(m, Prim.Cone, hr * 0.44f, headC.y - hr * 0.10f, headC.z - hr * 0.02f,
+                        new Vector3(0.052f * L, 0.110f * L, 0.072f * L), pitch: -14f, splay: 48f, yaw: -18f, taper: 0.24f, uv: UV_HEAD, noOutline: true);
+                    AddSymX(m, Prim.Cone, hr * 0.42f, headC.y - hr * 0.16f, headC.z + hr * 0.04f,
+                        new Vector3(0.042f * L, 0.090f * L, 0.062f * L), pitch: -10f, splay: 54f, yaw: -12f, taper: 0.20f, uv: UV_HEAD, noOutline: true);
+                    // 适中挺立的 V 形尖狼耳（直立坚毅，朝前上方）
+                    BuildEars(m, headC, hr, (fennec ? 0.09f : 0.044f) * L, (fennec ? 0.22f : warg ? 0.15f : fox ? 0.16f : 0.10f) * L,
+                        floppy: floppy, earUv: UV_HEAD);
 
                     if (!warg && !floppy && !terrier)
                     {
@@ -1015,12 +1129,12 @@ namespace RimFirstPerson3D
                     if (fox)
                     {
                         var tStart = tailBase + new Vector3(0f, 0.02f * L, 0.02f * L);
-                        AddSeg(m, tStart, 0.38f * L, 0.15f * L, 0.036f * L, -116f, uv: UV_COAT, joint: true);
-                        var tMid = tStart + StepVec(0.11f * L, -116f);
-                        m.Add(Prim.Sphere, tMid - new Vector3(0f, 0.085f * L, 0f),
-                            new Vector3(0.175f * L, 0.17f * L, 0.22f * L), pitch: -26f, noOutline: true, uv: UV_COAT);
-                        var tWhite = tStart + StepVec(0.19f * L, -116f);
-                        AddSeg(m, tWhite, 0.20f * L, 0.135f * L, 0.038f * L, -116f, uv: UV_DETAIL, joint: true, noOutline: true);
+                        AddSeg(m, tStart, 0.36f * L, 0.14f * L, 0.036f * L, -114f, uv: UV_COAT, joint: true);
+                        var tMid = tStart + StepVec(0.11f * L, -114f, 0f, 0f);
+                        m.Add(Prim.Sphere, tMid + new Vector3(0f, -0.040f * L, 0f),
+                            new Vector3(0.165f * L, 0.13f * L, 0.20f * L), pitch: -22f, noOutline: true, uv: UV_COAT);
+                        var tWhite = tStart + StepVec(0.18f * L, -114f, 0f, 0f);
+                        AddSeg(m, tWhite, 0.18f * L, 0.125f * L, 0.036f * L, -114f, uv: UV_DETAIL, joint: true, noOutline: true);
                     }
                     else if (husky || terrier)
                     {
@@ -1035,7 +1149,10 @@ namespace RimFirstPerson3D
                     }
                     else
                     {
-                        AddSeg(m, tailBase + new Vector3(0f, 0.02f * L, 0.02f * L), 0.25f * L, 0.12f * L, 0.038f * L, -128f, uv: UV_COAT, joint: true);
+                        // 饱满粗壮下垂的大扫帚狼尾（尾根斜向后下垂，尾梢贴近脚跟，还原原版平顺低垂姿态）
+                        var tailP = tailBase + new Vector3(0f, 0.01f * L, 0.01f * L);
+                        var tp = AddSeg(m, tailP, 0.095f * L, 0.082f * L, 0.086f * L, -140f, uv: UV_COAT, joint: true, noOutline: true);
+                        AddSeg(m, tp, 0.090f * L, 0.086f * L, 0.036f * L, -155f, uv: UV_COAT, joint: true);
                     }
                     break;
                 }
@@ -1110,52 +1227,53 @@ namespace RimFirstPerson3D
                     bool boar = Has(n, "boar");
                     float bl = 0.66f * L, bh = 0.36f * L;
                     float bw = CalibrateWidth(n, bl, 0.38f * L);
-                    BuildQuadBody(m, L, bl, bh, bw, 0f, 0.08f * L, 0f, 0.92f,
+                    // 野猪前高后低敦实楔形体魄（前肩强壮高耸，后臀收拢）
+                    BuildQuadBody(m, L, bl, bh, bw, 0f, 0.08f * L, boar ? 0.04f * L : 0f, boar ? 0.80f : 0.92f,
                         out var chestTop, out var tailBase, UV_COAT, UV_COAT, UV_BELLY);
                     bodyCenterY = bh * 0.5f;
                     bodyHalfW = bw * 0.5f;
 
-                    // 楔形猪头与扁平猪鼻盘（鼻盘精确贴合楔形吻端前尖，noOutline=true 消除正视两颊重影黑圈）
-                    float hr = 0.24f * L;
-                    var headC = new Vector3(0f, bh * 0.58f, bl * 0.38f);
-                    BuildHead(m, headC, hr, hr * 0.58f, hr * 0.62f, hr * 0.52f, boar ? UV_COAT : UV_HEAD, boar ? UV_COAT : UV_HEAD, UV_BELLY, hasNose: false);
-                    var snoutTip = headC + new Vector3(0f, -hr * 0.22f, hr * 0.52f);
-                    m.Add(Prim.Sphere, snoutTip - new Vector3(0f, 0.042f * L, 0f),
-                        new Vector3(0.096f * L, 0.084f * L, 0.068f * L), noOutline: true, uv: UV_HEAD);
+                    // 楔形猪头与扁平猪鼻盘（向前下方倾斜）
+                    float hr = (boar ? 0.18f : 0.22f) * L;
+                    var headC = new Vector3(0f, bh * (boar ? 0.38f : 0.54f), bl * (boar ? 0.38f : 0.38f));
+                    BuildHead(m, headC, hr, hr * (boar ? 0.68f : 0.58f), hr * (boar ? 0.56f : 0.62f), hr * (boar ? 0.46f : 0.52f),
+                        boar ? UV_COAT : UV_HEAD, boar ? UV_COAT : UV_HEAD, UV_BELLY, hasNose: false);
+                    var snoutTip = headC + new Vector3(0f, -hr * 0.18f, hr * 0.56f);
+                    m.Add(Prim.Sphere, snoutTip - new Vector3(0f, 0.034f * L, 0f),
+                        new Vector3(0.082f * L, 0.068f * L, 0.058f * L), noOutline: true, uv: UV_HEAD);
 
-                    // 向两侧外展的尖猪耳（耳根深埋头球内消除耳根黑折线，在 _south 与 _north 均清晰露角）
-                    AddSymX(m, Prim.Cone, hr * 0.28f, headC.y + hr * 0.04f, headC.z - hr * 0.06f,
-                        new Vector3(0.058f * L, 0.14f * L, 0.048f * L), pitch: -14f, splay: 44f, taper: 0.24f, uv: boar ? UV_COAT : UV_HEAD);
+                    // 向斜后上方倾斜的小尖猪耳
+                    AddSymX(m, Prim.Cone, hr * 0.28f, headC.y + hr * 0.10f, headC.z - hr * 0.06f,
+                        new Vector3(0.036f * L, 0.070f * L, 0.030f * L), pitch: -22f, splay: 26f, taper: 0.24f, uv: boar ? UV_COAT : UV_HEAD);
 
                     if (boar)
                     {
-                        // 额中铁锈橙鬃毛带（还原 _south 延伸至两眼之间的宽橙鬃）
-                        m.Add(Prim.Sphere, headC + new Vector3(0f, -hr * 0.06f, hr * 0.12f),
-                            new Vector3(0.068f * L, hr * 0.56f, hr * 0.72f), pitch: 22f, noOutline: true, uv: UV_LIMB);
-                        // 野猪标志性铁锈橙锯齿背鬃脊：从两耳之间的额顶一路沿背脊延伸至后背（还原 _east / _south / _north）
-                        for (int i = 0; i < 6; i++)
+                        // 额中前额毛
+                        m.Add(Prim.Sphere, headC + new Vector3(0f, -hr * 0.04f, hr * 0.10f),
+                            new Vector3(0.055f * L, hr * 0.46f, hr * 0.60f), pitch: 20f, noOutline: true, uv: UV_LIMB);
+                        // 野猪标志性贴脊硬毛鬃带（平顺连续的铁锈橙背脊硬毛带，紧密贴伏背脊从额顶延伸至后背，杜绝圆柱穿刺）
+                        for (int i = 0; i < 7; i++)
                         {
-                            float t = i / 5f;
+                            float t = i / 6f;
                             var spPos = Vector3.Lerp(
-                                new Vector3(0f, headC.y + hr * 0.22f, headC.z + 0.02f * L),
-                                new Vector3(0f, bh * 0.82f, -0.22f * L), t);
-                            if (i > 0 && i < 5) spPos.y += 0.03f * L;
+                                new Vector3(0f, headC.y + hr * 0.12f, headC.z - 0.02f * L),
+                                new Vector3(0f, bh * 0.46f, -bl * 0.20f), t);
                             m.Add(Prim.Cone, spPos,
-                                new Vector3((0.068f - i * 0.003f) * L, (0.115f - i * 0.006f) * L, 0.088f * L),
-                                pitch: -24f - i * 4f, taper: 0.18f, uv: UV_LIMB);
+                                new Vector3(0.038f * L, 0.024f * L, 0.045f * L),
+                                pitch: -10f - i * 3f, taper: 0.35f, uv: UV_LIMB, noOutline: true);
                         }
 
-                        // 从吻部两侧向上翘起的亮白獠牙（UV_DETAIL）
-                        var tL = headC + new Vector3(-hr * 0.26f, -hr * 0.28f, hr * 0.36f);
-                        var tR = headC + new Vector3( hr * 0.26f, -hr * 0.28f, hr * 0.36f);
-                        AddSymSeg(m, ref tL, ref tR, 0.115f * L, 0.046f * L, 0.014f * L, 22f, 20f, 0f, UV_DETAIL, joint: true);
+                        // 下颌嘴角向上弯翘的一对白色小獠牙（向斜前上方弯翘立起）
+                        var tL = headC + new Vector3(-hr * 0.22f, -hr * 0.20f, hr * 0.36f);
+                        var tR = headC + new Vector3( hr * 0.22f, -hr * 0.20f, hr * 0.36f);
+                        AddSymSeg(m, ref tL, ref tR, 0.065f * L, 0.022f * L, 0.008f * L, 28f, 16f, 0f, UV_DETAIL, joint: false);
                     }
 
-                    // 贴臀下垂短尾（野猪尾尖带铁锈棕毛簇）
+                    // 贴臀下垂短尾
                     var tp = AddSeg(m, tailBase + new Vector3(0f, 0.01f * L, 0.02f * L),
-                        0.09f * L, 0.038f * L, 0.026f * L, -142f, uv: UV_COAT, joint: false);
+                        0.08f * L, 0.034f * L, 0.022f * L, -145f, uv: UV_COAT, joint: false);
                     if (boar)
-                        AddSeg(m, tp, 0.05f * L, 0.028f * L, 0.016f * L, -148f, uv: UV_LIMB, joint: false, noOutline: true);
+                        AddSeg(m, tp, 0.05f * L, 0.022f * L, 0.012f * L, -155f, uv: UV_LIMB, joint: false, noOutline: true);
                     break;
                 }
 
@@ -1907,26 +2025,38 @@ namespace RimFirstPerson3D
                                 new Vector3(bw * 0.96f, 0.148f * L, 0.34f * L), noOutline: true, uv: UV_COAT);
 
                             // 暖米黄(UV_DETAIL)腹底 + 前胸腹底短足凸起（还原 _east 咽腹之间蓝灰前足分隔，不越出 _south 侧轮廓）
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.005f * L, -0.02f * L),
-                                new Vector3(bw * 0.90f, 0.072f * L, 0.34f * L), noOutline: true, uv: UV_DETAIL);
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.002f * L, -0.02f * L),
+                                new Vector3(bw * 0.75f, 0.055f * L, 0.32f * L), noOutline: true, uv: UV_DETAIL);
                             m.Add(Prim.Sphere, new Vector3(0f, 0f, 0.12f * L),
                                 new Vector3(bw * 0.76f, 0.052f * L, 0.088f * L), noOutline: true, uv: UV_COAT);
 
-                            // 扁平头颅 + 无内黑线凸起眉骨眼座 + 各向异性窄核宽皮长鳄吻(消除 _south 吻侧黑括号) + 暖米黄(UV_DETAIL)咽喉下颌
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.034f * L, 0.225f * L),
-                                new Vector3(0.112f * L, 0.062f * L, 0.21f * L), pitch: 3f, noOutline: true, uv: UV_DETAIL);
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.065f * L, 0.19f * L),
-                                new Vector3(0.148f * L, 0.094f * L, 0.16f * L), uv: UV_COAT);
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.053f * L, 0.19f * L),
-                                new Vector3(0.172f * L, 0.118f * L, 0.18f * L), noOutline: true, uv: UV_COAT);
-                            AddSymX(m, Prim.Sphere, 0.035f * L, 0.128f * L, 0.215f * L,
-                                new Vector3(0.046f * L, 0.044f * L, 0.065f * L), uv: UV_COAT, noOutline: true);
-                            AddSymX(m, Prim.Sphere, 0.044f * L, 0.132f * L, 0.225f * L,
-                                new Vector3(0.028f * L, 0.026f * L, 0.036f * L), uv: UV_EYE, noOutline: true);
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.064f * L, 0.295f * L),
-                                new Vector3(0.048f * L, 0.060f * L, 0.205f * L), pitch: 2f, uv: UV_COAT);
-                            m.Add(Prim.Sphere, new Vector3(0f, 0.055f * L, 0.295f * L),
-                                new Vector3(0.122f * L, 0.078f * L, 0.215f * L), pitch: 2f, noOutline: true, uv: UV_COAT);
+                            // 扁平头颅与宽阔厚实的经典 U 形长鳄吻 (顺滑渐变无阶梯断层，正视宽厚有力再现短吻鳄标志性强壮吻部)
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.040f * L, 0.185f * L),
+                                new Vector3(0.155f * L, 0.068f * L, 0.18f * L), uv: UV_COAT);
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.036f * L, 0.185f * L),
+                                new Vector3(0.165f * L, 0.076f * L, 0.19f * L), noOutline: true, uv: UV_COAT);
+                            // 突出凸起的立体眼眶座与冷酷侧眼
+                            AddSymX(m, Prim.Sphere, 0.042f * L, 0.096f * L, 0.208f * L,
+                                new Vector3(0.038f * L, 0.036f * L, 0.055f * L), uv: UV_COAT);
+                            AddSymX(m, Prim.Sphere, 0.046f * L, 0.104f * L, 0.215f * L,
+                                new Vector3(0.022f * L, 0.022f * L, 0.030f * L), uv: UV_EYE, noOutline: true);
+
+                            // 宽阔厚实的中前吻部体块（由后至前平滑收敛：宽 0.142L -> 0.120L，高 0.054L -> 0.044L，顺滑无阶梯）
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.036f * L, 0.260f * L),
+                                new Vector3(0.142f * L, 0.054f * L, 0.18f * L), uv: UV_COAT, noOutline: true);
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.033f * L, 0.335f * L),
+                                new Vector3(0.120f * L, 0.044f * L, 0.15f * L), uv: UV_COAT, noOutline: true);
+                            // 吻端圆滑厚实 U 形收口（宽 0.104L，厚 0.038L，正视饱满厚实，完全消除单薄平铲感）
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.030f * L, 0.385f * L),
+                                new Vector3(0.104f * L, 0.038f * L, 0.072f * L), uv: UV_COAT);
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.030f * L, 0.385f * L),
+                                new Vector3(0.110f * L, 0.042f * L, 0.078f * L), noOutline: true, uv: UV_COAT);
+
+                            // 鼻梁平滑纵向连接体与米黄下颌平滑底板
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.038f * L, 0.275f * L),
+                                new Vector3(0.130f * L, 0.048f * L, 0.24f * L), pitch: 1f, uv: UV_COAT);
+                            m.Add(Prim.Sphere, new Vector3(0f, 0.020f * L, 0.265f * L),
+                                new Vector3(0.096f * L, 0.026f * L, 0.20f * L), pitch: 1f, noOutline: true, uv: UV_DETAIL);
                         }
                     }
                     break;
@@ -1934,47 +2064,54 @@ namespace RimFirstPerson3D
 
                 case Arch.Serpent:
                 {
-                    // 眼镜蛇：同心双层无节缝 S 形盘蛇管 + 自然弧线后仰昂立曲颈 + 修长椭圆兜帽 + 冠顶顺滑衔接蛇头
+                    // 眼镜蛇：同心双层无节缝 S 形盘蛇管 + 自然弧线后仰昂立曲颈 + 立体宽展盾型兜帽 + 冠顶顺滑衔接蛇头
                     bodyCenterY = 0.16f * L;
                     bodyHalfW = 0.18f * L;
 
-                    // 盘蛇底座至昂立蛇颈的连续 3D 中心线（尾尖 -> 上叠环 -> 底盘环 -> 弧线昂起蛇颈 -> 兜帽顶）
-                    Vector3[] pts = new Vector3[]
-                    {
-                        new Vector3(-0.07f * L, 0.145f * L, -0.14f * L),
-                        new Vector3(-0.02f * L, 0.132f * L, -0.05f * L),
-                        new Vector3( 0.10f * L, 0.110f * L, -0.08f * L),
-                        new Vector3(-0.11f * L, 0.082f * L, -0.14f * L),
-                        new Vector3(-0.04f * L, 0.044f * L, -0.27f * L),
-                        new Vector3( 0.10f * L, 0.042f * L, -0.15f * L),
-                        new Vector3( 0.09f * L, 0.042f * L,  0.03f * L),
-                        new Vector3( 0.00f * L, 0.044f * L,  0.12f * L),
-                        new Vector3( 0.00f * L, 0.145f * L,  0.09f * L),
-                        new Vector3( 0.00f * L, 0.255f * L,  0.04f * L),
-                        new Vector3( 0.00f * L, 0.355f * L,  0.025f * L),
-                    };
-                    float[] diams = new float[]
-                    {
-                        0.028f * L, 0.046f * L, 0.064f * L, 0.072f * L,
-                        0.078f * L, 0.082f * L, 0.084f * L, 0.086f * L,
-                        0.082f * L, 0.078f * L, 0.074f * L
-                    };
+                    // 1. 底盘阿基米德平滑流线螺旋（几何连续无折角，从尾尖平滑盘绕至昂起曲颈）
+                    int numSpiral = 18;
+                    float turns = 1.30f;
+                    var pts = new List<Vector3>(numSpiral + 4);
+                    var diams = new List<float>(numSpiral + 4);
 
-                    // 同心双层管：内层 noOutline=false 核管提供连续外轮廓黑边，外层 noOutline=true 皮管完全包覆圆柱端盖消除节间黑环
-                    for (int i = 0; i < pts.Length; i++)
+                    for (int i = 0; i < numSpiral; i++)
+                    {
+                        float t = (float)i / (numSpiral - 1);
+                        float angle = -1.1f + t * Mathf.PI * 2f * turns;
+                        float r = (0.24f - t * 0.13f) * L;
+                        float x = Mathf.Cos(angle) * r;
+                        float z = Mathf.Sin(angle) * r - 0.04f * L;
+                        float y = (0.015f + t * 0.110f) * L;
+                        pts.Add(new Vector3(x, y, z));
+                        diams.Add((0.032f + t * 0.052f) * L);
+                    }
+
+                    // 昂起曲颈段（平滑连接底盘，先向前探出、再优雅向后仰、头部向前探视的立体S形微拱）
+                    var neckNodes = new (Vector3 p, float d)[]
+                    {
+                        (new Vector3( 0.010f * L, 0.145f * L,  0.085f * L), 0.068f * L),
+                        (new Vector3( 0.000f * L, 0.210f * L,  0.045f * L), 0.062f * L),
+                        (new Vector3( 0.000f * L, 0.275f * L, -0.005f * L), 0.056f * L),
+                        (new Vector3( 0.000f * L, 0.335f * L,  0.025f * L), 0.050f * L),
+                    };
+                    for (int i = 0; i < neckNodes.Length; i++)
+                    {
+                        pts.Add(neckNodes[i].p);
+                        diams.Add(neckNodes[i].d);
+                    }
+
+                    for (int i = 0; i < pts.Count; i++)
                     {
                         float ds = diams[i];
-                        float dc = Mathf.Max(0.014f * L, ds - 0.026f * L);
-                        m.Add(Prim.Sphere, pts[i] - new Vector3(0f, dc * 0.5f, 0f),
-                            new Vector3(dc, dc, dc), uv: UV_COAT);
-                        m.Add(Prim.Sphere, pts[i] - new Vector3(0f, ds * 0.5f, 0f),
-                            new Vector3(ds, ds, ds), noOutline: true, uv: UV_COAT);
-                        if (i < pts.Length - 1)
+                        m.Add(Prim.Sphere, pts[i] - new Vector3(0f, ds * 0.44f, 0f),
+                            new Vector3(ds * 0.98f, ds * 0.98f, ds * 0.98f), noOutline: true, uv: UV_COAT);
+                        if (i < pts.Count - 1)
                         {
                             Vector3 d = pts[i + 1] - pts[i];
                             float segLen = d.magnitude;
                             float segPitch = Mathf.Acos(Mathf.Clamp(d.y / segLen, -1f, 1f)) * Mathf.Rad2Deg;
                             float segYaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+                            float dc = Mathf.Max(0.014f * L, ds - 0.026f * L);
                             float dcNext = Mathf.Max(0.014f * L, diams[i + 1] - 0.026f * L);
                             AddSeg(m, pts[i], segLen, dc, dcNext, segPitch, segYaw, 0f, UV_COAT, false);
                             m.Add(Prim.Cylinder, pts[i], new Vector3(ds, segLen, ds),
@@ -1982,25 +2119,20 @@ namespace RimFirstPerson3D
                         }
                     }
 
-                    // 昂立蛇颈前侧浅褐腹鳞带(UV_HEAD) + 修长椭圆兜帽(hood) + 与兜帽冠顶顺滑衔接的前倾蛇头
-                    m.Add(Prim.Sphere, new Vector3(0f, 0.065f * L, 0.082f * L),
-                        new Vector3(0.062f * L, 0.28f * L, 0.062f * L), pitch: -19f, noOutline: true, uv: UV_HEAD);
-                    m.Add(Prim.Sphere, new Vector3(0f, 0.235f * L, 0.028f * L),
-                        new Vector3(0.118f * L, 0.145f * L, 0.064f * L), pitch: -12f, uv: UV_COAT);
-                    m.Add(Prim.Sphere, new Vector3(0f, 0.225f * L, 0.028f * L),
-                        new Vector3(0.140f * L, 0.166f * L, 0.082f * L), pitch: -12f, noOutline: true, uv: UV_COAT);
-                    m.Add(Prim.Sphere, new Vector3(0f, 0.240f * L, 0.040f * L),
-                        new Vector3(0.084f * L, 0.135f * L, 0.066f * L), pitch: -12f, noOutline: true, uv: UV_HEAD);
+                    // 2. 原版 2D 贴图完全无宽展兜帽，颈部平顺挺立与躯干等粗，颈前浅腹鳞带自然顺延
+                    m.Add(Prim.Sphere, new Vector3(0f, 0.085f * L, 0.072f * L),
+                        new Vector3(0.048f * L, 0.22f * L, 0.048f * L), pitch: -14f, noOutline: true, uv: UV_HEAD);
 
-                    var headC = new Vector3(0f, 0.365f * L, 0.052f * L);
-                    m.Add(Prim.Sphere, headC - new Vector3(0f, 0.032f * L, 0f),
-                        new Vector3(0.042f * L, 0.064f * L, 0.098f * L), uv: UV_COAT);
-                    m.Add(Prim.Sphere, headC - new Vector3(0f, 0.042f * L, 0f),
-                        new Vector3(0.098f * L, 0.082f * L, 0.114f * L), noOutline: true, uv: UV_COAT);
-                    m.Add(Prim.Sphere, headC + new Vector3(0f, -0.038f * L, 0.004f * L),
-                        new Vector3(0.072f * L, 0.042f * L, 0.092f * L), noOutline: true, uv: UV_HEAD);
-                    AddSymX(m, Prim.Sphere, 0.036f * L, headC.y - 0.004f * L, headC.z + 0.022f * L,
-                        new Vector3(0.022f * L, 0.022f * L, 0.026f * L), uv: UV_EYE, noOutline: true);
+                    // 3. 顺滑衔接的精炼卵圆形小蛇头（完全还原原版细长平顺小蛇头，无横展翼片）
+                    var headC = new Vector3(0f, 0.335f * L, 0.042f * L);
+                    m.Add(Prim.Sphere, headC - new Vector3(0f, 0.018f * L, 0f),
+                        new Vector3(0.052f * L, 0.042f * L, 0.076f * L), uv: UV_COAT);
+                    m.Add(Prim.Sphere, headC - new Vector3(0f, 0.022f * L, 0f),
+                        new Vector3(0.058f * L, 0.046f * L, 0.082f * L), noOutline: true, uv: UV_COAT);
+                    m.Add(Prim.Sphere, headC + new Vector3(0f, -0.020f * L, 0.006f * L),
+                        new Vector3(0.048f * L, 0.034f * L, 0.068f * L), noOutline: true, uv: UV_HEAD);
+                    AddSymX(m, Prim.Sphere, 0.024f * L, headC.y - 0.002f * L, headC.z + 0.016f * L,
+                        new Vector3(0.016f * L, 0.016f * L, 0.018f * L), uv: UV_EYE, noOutline: true);
                     break;
                 }
 
@@ -2127,75 +2259,56 @@ namespace RimFirstPerson3D
                         m.Add(Prim.Cone, new Vector3(0f, 0.032f * L, 0.11f * L),
                             new Vector3(0.052f * L, 0.085f * L, 0.052f * L), pitch: 108f, noOutline: true, uv: UV_COAT);
 
-                        // 2. 高拱卷曲后腹与下钩尾刺（同心球+圆柱平滑过渡消除球节鼓包，还原 _east 悬空拱腹与 _north 深色腹缘）
-                        Vector3[] abdPts = new Vector3[]
-                        {
-                            new Vector3(0f, 0.068f * L, -0.06f * L),
-                            new Vector3(0f, 0.155f * L, -0.14f * L),
-                            new Vector3(0f, 0.208f * L, -0.22f * L),
-                            new Vector3(0f, 0.168f * L, -0.28f * L),
-                        };
-                        float[] abdD = new float[] { 0.155f * L, 0.172f * L, 0.158f * L, 0.112f * L };
-                        for (int i = 0; i < abdPts.Length; i++)
-                        {
-                            float ds = abdD[i], dc = ds - 0.024f * L;
-                            m.Add(Prim.Sphere, abdPts[i] - new Vector3(0f, dc * 0.5f, 0f),
-                                new Vector3(dc * 1.18f, dc, dc * 1.12f), uv: UV_COAT);
-                            m.Add(Prim.Sphere, abdPts[i] - new Vector3(0f, ds * 0.5f, 0f),
-                                new Vector3(ds * 1.18f, ds, ds * 1.12f), noOutline: true, uv: UV_COAT);
-                            if (i < abdPts.Length - 1)
-                            {
-                                Vector3 d = abdPts[i + 1] - abdPts[i];
-                                float segLen = d.magnitude;
-                                float segPitch = -Mathf.Acos(Mathf.Clamp(d.y / segLen, -1f, 1f)) * Mathf.Rad2Deg;
-                                float dcNext = abdD[i + 1] - 0.024f * L;
-                                AddSeg(m, abdPts[i], segLen, dc * 1.12f, dcNext * 1.12f, segPitch, 0f, 0f, UV_COAT, false);
-                                m.Add(Prim.Cylinder, abdPts[i], new Vector3(ds * 1.12f, segLen, ds),
-                                    pitch: segPitch, taper: abdD[i + 1] / ds, noOutline: true, uv: UV_COAT);
-                            }
-                        }
-                        // 后腹暗褐腹底(UV_LIMB/UV_DETAIL)与下钩短尾刺
-                        m.Add(Prim.Sphere, new Vector3(0f, 0.032f * L, -0.14f * L),
-                            new Vector3(0.165f * L, 0.120f * L, 0.14f * L), pitch: -35f, noOutline: true, uv: UV_LIMB);
-                        AddSymX(m, Prim.Sphere, 0.058f * L, 0.095f * L, -0.20f * L,
-                            new Vector3(0.068f * L, 0.095f * L, 0.095f * L), pitch: -20f, uv: UV_DETAIL, noOutline: true);
-                        m.Add(Prim.Cone, new Vector3(0f, 0.148f * L, -0.29f * L),
+                        // 2. 贯穿整个后腹的一体化坚固高拱几丁质主腹甲 (Solid Chitinous Opisthosoma，彻底消除多球糖葫芦堆叠感)
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.125f * L, -0.175f * L),
+                            new Vector3(0.205f * L, 0.170f * L, 0.265f * L), pitch: -26f, uv: UV_COAT);
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.120f * L, -0.175f * L),
+                            new Vector3(0.220f * L, 0.180f * L, 0.280f * L), pitch: -26f, noOutline: true, uv: UV_COAT);
+
+                        // 腹甲背侧横向覆瓦状硬质几丁质背板 (Tergite Plates，平贴背壳，消除突起破面)
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.170f * L, -0.115f * L),
+                            new Vector3(0.185f * L, 0.024f * L, 0.075f * L), pitch: -22f, uv: UV_COAT, noOutline: true);
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.205f * L, -0.175f * L),
+                            new Vector3(0.180f * L, 0.024f * L, 0.075f * L), pitch: -26f, uv: UV_COAT, noOutline: true);
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.185f * L, -0.235f * L),
+                            new Vector3(0.160f * L, 0.024f * L, 0.070f * L), pitch: -30f, uv: UV_COAT, noOutline: true);
+
+                        // 腹底平顺暗托与下钩尾刺
+                        m.Add(Prim.Sphere, new Vector3(0f, 0.055f * L, -0.14f * L),
+                            new Vector3(0.160f * L, 0.095f * L, 0.14f * L), pitch: -35f, noOutline: true, uv: UV_LIMB);
+                        m.Add(Prim.Cone, new Vector3(0f, 0.145f * L, -0.295f * L),
                             new Vector3(0.044f * L, 0.065f * L, 0.048f * L), pitch: -148f, uv: UV_COAT);
 
-                        // 3. 宽新月形外展上扬头胸角冠（内外同心双锥消除侧视角根黑环）
-                        m.Add(Prim.Sphere, new Vector3(0f, 0.135f * L, 0.10f * L),
-                            new Vector3(0.205f * L, 0.088f * L, 0.13f * L), pitch: -18f, uv: UV_COAT);
-                        m.Add(Prim.Sphere, new Vector3(0f, 0.124f * L, 0.10f * L),
-                            new Vector3(0.232f * L, 0.110f * L, 0.155f * L), pitch: -18f, noOutline: true, uv: UV_COAT);
-                        AddSymX(m, Prim.Cone, 0.068f * L, 0.175f * L, 0.095f * L,
-                            new Vector3(0.054f * L, 0.195f * L, 0.058f * L), pitch: -36f, splay: 46f, uv: UV_COAT);
-                        AddSymX(m, Prim.Cone, 0.055f * L, 0.162f * L, 0.105f * L,
-                            new Vector3(0.088f * L, 0.215f * L, 0.092f * L), pitch: -36f, splay: 46f, uv: UV_COAT, noOutline: true);
+                        // 头胸两侧霸气上挑的新月角冠头盾（向斜上方霸气挑起，真实再现原版昆虫新月头冠）
+                        AddSymX(m, Prim.Cone, 0.080f * L, 0.165f * L, 0.105f * L,
+                            new Vector3(0.046f * L, 0.180f * L, 0.052f * L), pitch: 22f, splay: 44f, uv: UV_COAT);
+                        AddSymX(m, Prim.Cone, 0.070f * L, 0.155f * L, 0.112f * L,
+                            new Vector3(0.072f * L, 0.190f * L, 0.078f * L), pitch: 22f, splay: 44f, uv: UV_COAT, noOutline: true);
 
                         // 4. 锥形面部、多点蛛眼群、前伸额角与前下内拢巨螯
                         m.Add(Prim.Sphere, new Vector3(0f, 0.082f * L, 0.155f * L),
                             new Vector3(0.136f * L, 0.096f * L, 0.14f * L), pitch: 12f, uv: UV_COAT);
                         m.Add(Prim.Sphere, new Vector3(0f, 0.072f * L, 0.155f * L),
                             new Vector3(0.160f * L, 0.118f * L, 0.16f * L), pitch: 12f, noOutline: true, uv: UV_COAT);
-                        // 额前尖角
-                        m.Add(Prim.Cone, new Vector3(0f, 0.162f * L, 0.20f * L),
-                            new Vector3(0.014f * L, 0.125f * L, 0.036f * L), pitch: 86f, uv: UV_COAT);
-                        m.Add(Prim.Cone, new Vector3(0f, 0.162f * L, 0.19f * L),
-                            new Vector3(0.040f * L, 0.135f * L, 0.042f * L), pitch: 86f, noOutline: true, uv: UV_COAT);
+                        // 额前中央向上向前微勾的中央锐角
+                        m.Add(Prim.Cone, new Vector3(0f, 0.155f * L, 0.195f * L),
+                            new Vector3(0.018f * L, 0.110f * L, 0.032f * L), pitch: 65f, uv: UV_COAT);
+                        m.Add(Prim.Cone, new Vector3(0f, 0.155f * L, 0.185f * L),
+                            new Vector3(0.036f * L, 0.120f * L, 0.038f * L), pitch: 65f, noOutline: true, uv: UV_COAT);
                         // 蜘蛛多眼簇
-                        AddSymX(m, Prim.Sphere, 0.046f * L, 0.150f * L, 0.195f * L,
+                        AddSymX(m, Prim.Sphere, 0.046f * L, 0.145f * L, 0.195f * L,
                             new Vector3(0.025f * L, 0.025f * L, 0.025f * L), uv: UV_EYE, noOutline: true);
-                        AddSymX(m, Prim.Sphere, 0.064f * L, 0.134f * L, 0.180f * L,
+                        AddSymX(m, Prim.Sphere, 0.064f * L, 0.130f * L, 0.180f * L,
                             new Vector3(0.023f * L, 0.023f * L, 0.023f * L), uv: UV_EYE, noOutline: true);
-                        AddSymX(m, Prim.Sphere, 0.042f * L, 0.120f * L, 0.205f * L,
+                        AddSymX(m, Prim.Sphere, 0.042f * L, 0.115f * L, 0.205f * L,
                             new Vector3(0.021f * L, 0.021f * L, 0.021f * L), uv: UV_EYE, noOutline: true);
-                        // 两侧朝前下方内拢的巨螯与内侧下刺口器（还原 _south 下方并拢双螯与 _east 前伸下颚）
-                        AddSymX(m, Prim.Cone, 0.052f * L, 0.112f * L, 0.195f * L,
-                            new Vector3(0.024f * L, 0.125f * L, 0.042f * L), pitch: 112f, yaw: -12f, uv: UV_COAT);
-                        AddSymX(m, Prim.Cone, 0.052f * L, 0.112f * L, 0.188f * L,
-                            new Vector3(0.052f * L, 0.132f * L, 0.052f * L), pitch: 112f, yaw: -12f, uv: UV_COAT, noOutline: true);
-                        AddSymX(m, Prim.Cone, 0.020f * L, 0.095f * L, 0.210f * L,
-                            new Vector3(0.026f * L, 0.075f * L, 0.026f * L), pitch: 142f, noOutline: true, uv: UV_LIMB);
+                        // 额前两侧向前下方内拢的双螯
+                        AddSymX(m, Prim.Cone, 0.048f * L, 0.105f * L, 0.195f * L,
+                            new Vector3(0.024f * L, 0.115f * L, 0.038f * L), pitch: 108f, yaw: -14f, uv: UV_COAT);
+                        AddSymX(m, Prim.Cone, 0.048f * L, 0.105f * L, 0.188f * L,
+                            new Vector3(0.048f * L, 0.122f * L, 0.048f * L), pitch: 108f, yaw: -14f, uv: UV_COAT, noOutline: true);
+                        AddSymX(m, Prim.Cone, 0.018f * L, 0.088f * L, 0.210f * L,
+                            new Vector3(0.024f * L, 0.068f * L, 0.024f * L), pitch: 138f, noOutline: true, uv: UV_LIMB);
                     }
 
                     break;
@@ -2271,11 +2384,15 @@ namespace RimFirstPerson3D
             {
                 try { g = pawn.ageTracker.CurKindLifeStage.bodyGraphicData != null ? pawn.ageTracker.CurKindLifeStage.bodyGraphicData.Graphic : null; } catch { }
             }
+            if (g == null)
+            {
+                g = PawnLayer3D.ResolveGraphic(pawn, pawn.Rotation);
+            }
             if (g == null) { WarnOnce("g-null:" + DefName(pawn), "no body graphic"); return; }
             Material fallbackMat = null;
             try { fallbackMat = g.MatAt(Rot4.East, pawn); } catch { }
-            if (fallbackMat == null || fallbackMat.mainTexture == null) { try { fallbackMat = g.MatSingle; } catch { } }
-            if (fallbackMat == null) { WarnOnce("mat-null:" + DefName(pawn), "no material"); return; }
+            if (fallbackMat == null || fallbackMat.mainTexture == null || fallbackMat.NullOrBad()) { try { fallbackMat = g.MatSingle; } catch { } }
+            if (fallbackMat == null || fallbackMat.NullOrBad()) { WarnOnce("mat-null:" + DefName(pawn), "no material"); return; }
 
             float L = Mathf.Clamp(Mathf.Max(g.drawSize.x, g.drawSize.y) * Metrics3D.AnimalTextureFill, 0.35f, 4.5f);
             Built built = null;
@@ -2285,9 +2402,8 @@ namespace RimFirstPerson3D
                 WarnOnce("buildfail:" + DefName(pawn), "model build failed: " + e.GetType().Name + ": " + e.Message);
                 built = null;
             }
-            if (built == null || built.body == null)
+            if (built == null || built.body == null || !built.usesAtlas)
             {
-                WarnOnce("fallback:" + DefName(pawn), "model unavailable -> billboard");
                 Billboard(pawn, pos, camPos, g, Lighting3D.MatFor(fallbackMat, lit));
                 return;
             }

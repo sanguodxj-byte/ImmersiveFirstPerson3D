@@ -136,7 +136,6 @@ namespace RimFirstPerson3D
                 textMat = new Material(f.material);
                 textMat.SetInt("_ZWrite", 0);
                 textMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
-                textMat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
             }
             var atlas = f.material != null ? f.material.mainTexture : null;
             if (atlas == null) return;
@@ -226,7 +225,6 @@ namespace RimFirstPerson3D
             blit = new Material(shader) { name = "Fps3D_PanelBlit" };
             blit.SetInt("_ZWrite", 0);
             blit.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
-            blit.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
         }
     }
 }

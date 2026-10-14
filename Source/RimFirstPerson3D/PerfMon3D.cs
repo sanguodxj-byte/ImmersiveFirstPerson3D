@@ -12,6 +12,7 @@ namespace RimFirstPerson3D
     {
         private const int FrameWindow = 120;
         private static readonly float[] frameMs = new float[FrameWindow];
+        private static readonly float[] sortBuf = new float[FrameWindow];
         private static int frameIdx;
         private static int framesCounted;
         private static float windowTimer;
@@ -20,6 +21,9 @@ namespace RimFirstPerson3D
         private static float gcMbPerSec;
         private static float gcTimer;
         private static float fileTimer;
+        private static float hudRefreshTimer;
+        private static GUIContent cachedHudContent;
+        private static Vector2 cachedHudSize;
         private static readonly StringBuilder sb = new StringBuilder(512);
 
         private static GUIStyle hudStyle;
@@ -48,19 +52,19 @@ namespace RimFirstPerson3D
                 maxMs = mx;
                 // p95
                 int take = Mathf.Max(1, (int)(n * 0.95f));
-                float[] copy = new float[n];
-                System.Array.Copy(frameMs, copy, n);
-                System.Array.Sort(copy);
-                p95Ms = copy[Mathf.Clamp(take, 0, n - 1)];
+                System.Array.Copy(frameMs, sortBuf, n);
+                System.Array.Sort(sortBuf, 0, n);
+                p95Ms = sortBuf[Mathf.Clamp(take, 0, n - 1)];
                 windowTimer = 0f;
                 framesCounted = 0;
             }
+            hudRefreshTimer += dt;
 
             gcTimer += dt;
             if (gcTimer >= 2f)
             {
                 long now = System.GC.GetTotalMemory(false);
-                if (lastGcBytes > 0)
+                if (lastGcBytes > 0 && now >= lastGcBytes)
                 {
                     gcMbPerSec = (now - lastGcBytes) / (1024f * 1024f) / gcTimer;
                 }
@@ -150,27 +154,32 @@ namespace RimFirstPerson3D
                 hudBg.Apply();
                 hudStyle.normal.background = hudBg;
             }
-            sb.Length = 0;
-            sb.Append("FPS ").Append(fpsResult.ToString("F1"));
-            sb.Append("  avg ").Append(avgMs.ToString("F1")).Append("ms");
-            sb.Append("  p95 ").Append(p95Ms.ToString("F1")).Append("ms");
-            sb.Append("  max ").Append(maxMs.ToString("F1")).Append("ms");
-            sb.Append("  GC ").Append(gcMbPerSec.ToString("F2")).Append(" MB/s\n");
-            sb.Append("mode ").Append(Fps3DState.Mode);
-            sb.Append("  chunks ").Append(PerfCounters.TerrainMeshesDrawn);
-            sb.Append("  bld ").Append(PerfCounters.BuildingMeshesDrawn);
-            sb.Append("  hull ").Append(PerfCounters.OutlineMeshesDrawn).Append('\n');
-            sb.Append("plant ").Append(PerfCounters.PlantInstances).Append('/').Append(PerfCounters.PlantBatches);
-            sb.Append("  item ").Append(PerfCounters.ItemInstances).Append('/').Append(PerfCounters.ItemBatches);
-            sb.Append("  pawnQ ").Append(PerfCounters.PawnQuads).Append('\n');
-            sb.Append("build ms  terr ").Append(PerfCounters.LastTerrainBuildMs.ToString("F2"));
-            sb.Append("  bld ").Append(PerfCounters.LastBuildingBuildMs.ToString("F2"));
-            sb.Append("  plant ").Append(PerfCounters.LastPlantBuildMs.ToString("F2"));
+            if (cachedHudContent == null || hudRefreshTimer >= 0.25f)
+            {
+                hudRefreshTimer = 0f;
+                sb.Length = 0;
+                sb.Append("FPS ").Append(fpsResult.ToString("F1"));
+                sb.Append("  avg ").Append(avgMs.ToString("F1")).Append("ms");
+                sb.Append("  p95 ").Append(p95Ms.ToString("F1")).Append("ms");
+                sb.Append("  max ").Append(maxMs.ToString("F1")).Append("ms");
+                sb.Append("  GC ").Append(gcMbPerSec.ToString("F2")).Append(" MB/s\n");
+                sb.Append("mode ").Append(Fps3DState.Mode);
+                sb.Append("  chunks ").Append(PerfCounters.TerrainMeshesDrawn);
+                sb.Append("  bld ").Append(PerfCounters.BuildingMeshesDrawn);
+                sb.Append("  hull ").Append(PerfCounters.OutlineMeshesDrawn).Append('\n');
+                sb.Append("plant ").Append(PerfCounters.PlantInstances).Append('/').Append(PerfCounters.PlantBatches);
+                sb.Append("  item ").Append(PerfCounters.ItemInstances).Append('/').Append(PerfCounters.ItemBatches);
+                sb.Append("  pawnQ ").Append(PerfCounters.PawnQuads).Append('\n');
+                sb.Append("build ms  terr ").Append(PerfCounters.LastTerrainBuildMs.ToString("F2"));
+                sb.Append("  bld ").Append(PerfCounters.LastBuildingBuildMs.ToString("F2"));
+                sb.Append("  plant ").Append(PerfCounters.LastPlantBuildMs.ToString("F2"));
 
-            var content = new GUIContent(sb.ToString());
-            var size = hudStyle.CalcSize(content);
-            var rect = new Rect(10f, 10f, size.x, size.y);
-            GUI.Label(rect, content, hudStyle);
+                if (cachedHudContent == null) cachedHudContent = new GUIContent(sb.ToString());
+                else cachedHudContent.text = sb.ToString();
+                cachedHudSize = hudStyle.CalcSize(cachedHudContent);
+            }
+            var rect = new Rect(10f, 10f, cachedHudSize.x, cachedHudSize.y);
+            GUI.Label(rect, cachedHudContent, hudStyle);
         }
     }
 }

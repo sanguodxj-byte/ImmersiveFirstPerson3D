@@ -108,17 +108,20 @@ namespace RimFirstPerson3D
         public const float RockHeight = 2.92f;
 
         // 山体高程与坡度独立于室内层高；格距仍按一米计。
+        // 任何实际属于山体的格子高度严格大于 2 米（外沿陡壁起跳 >= 2.35m），消除可走上去的缓坡错觉。
+        public const float MountainMinHeight = 2.35f;
+        public const float MountainEdgeHeight = 2.68f;
         public const float MountainMaxHeight = 24f;
-        public const float MountainFootSlopeDegrees = 35f;
-        public const float MountainMainSlopeDegrees = 50f;
-        public const float MountainMaxSlopeDegrees = 55f;
+        public const float MountainFootSlopeDegrees = 58f;
+        public const float MountainMainSlopeDegrees = 62f;
+        public const float MountainMaxSlopeDegrees = 74f;
         public const float MountainFootDistance = 2f;
         public const float MountainShoulderDistance = 8f;
-        public const float MountainNoiseScale = 8f;
-        public const float MountainNoiseAmplitude = 1f;
-        public const int MountainSmoothingPasses = 2;
+        public const float MountainNoiseScale = 7f;
+        public const float MountainNoiseAmplitude = 2.1f;
+        public const int MountainSmoothingPasses = 1;
         public const float MountainCaveCeiling = CeilingHeight;
-        public const float MountainTextureMeters = 1f;
+        public const float MountainTextureMeters = 4f;
 
         public const float DoorHeight = 2.05f;
         public const float DoorWidth = 0.95f;
@@ -144,6 +147,9 @@ namespace RimFirstPerson3D
         public const float Gravity = 20f;
         /// <summary>身处水体时身体下沉/浮起的过渡速度（米/秒）。</summary>
         public const float WaterSinkSpeed = 4f;
+        /// <summary>可直接跨过的最大高差（米）：目标格支撑面高出脚底不超过此值才走得上去，
+        /// 超过（如桌柜面）则挡在侧面、必须跳上去。</summary>
+        public const float StepTolerance = 0.10f;
 
         // ---- 零散物件 ----
 
@@ -199,6 +205,8 @@ namespace RimFirstPerson3D
         public const float LampShadeDiameter = 0.38f;
         /// <summary>火把/壁灯灯头离地高度。</summary>
         public const float TorchHeadHeight = 1.70f;
+        /// <summary>壁挂件（壁灯/壁炬等）在 1x1 格内的统一离地安装高度（米）。</summary>
+        public const float WallAttachmentHeight = 2.00f;
 
         /// <summary>木桶：高 / 直径（发酵桶、啤酒桶）。</summary>
         public const float BarrelHeight = 0.90f;

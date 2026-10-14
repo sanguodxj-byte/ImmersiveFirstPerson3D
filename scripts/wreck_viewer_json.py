@@ -32,13 +32,14 @@ def parse_samples(text):
         parts = []
         for a in re.finditer(
             r"m\.Add\(Prim\.(\w+),\s*new Vector3\(([^)]+)\),\s*new Vector3\(([^)]+)\)"
-            r"(?:,\s*(-?\d+\.?\d*)f)?(?:,\s*(-?\d+\.?\d*)f)?\)", body):
+            r"(?:,\s*(-?\d+\.?\d*)f)?(?:,\s*(-?\d+\.?\d*)f)?(?:,\s*(-?\d+\.?\d*)f)?\)", body):
             parts.append({
                 "kind": a.group(1),
                 "pos": f3(a.group(2)),
                 "size": f3(a.group(3)),
                 "yaw": float(a.group(4)) if a.group(4) else 0.0,
                 "pitch": float(a.group(5)) if a.group(5) else 0.0,
+                "roll": float(a.group(6)) if a.group(6) else 0.0,
             })
         bounds = None
         bo = re.search(r"m\.bounds\s*=\s*new Vector3\(([^)]+)\)", body)
@@ -95,7 +96,7 @@ def main():
         }
 
     # 图集尺寸
-    atlas = os.path.join(ROOT, "1.6", "Textures", "FPS3D", "WreckageAtlas.png")
+    atlas = os.path.join(ROOT, "Textures", "FPS3D", "WreckageAtlas.png")
     from PIL import Image
     W, H = Image.open(atlas).size
 

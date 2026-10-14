@@ -4,17 +4,20 @@
 
 管线（对照家具/残骸管线的既有模式）：
     1. 从原版植物贴图取样"树皮/树叶/点缀"块，按原版色彩特征过滤串色并实心化后打包图集
-       -> 1.6/Textures/FPS3D/PlantAtlas.png（同时副本到 viewer/plant_atlas.png）
+       -> Textures/FPS3D/PlantAtlas.png（同时副本到 viewer/plant_atlas.png）
     2. 参数化生成 24 个低模原型网格（Y 轴向上、单位=米、底面中心在原点、
        右手系 CCW 面 —— ObjImporter3D 会反转绕序到 Unity 左手系）
-       -> 1.6/Assets/plants/<原型>.obj
+       -> 1.7/Assets/plants/<原型>.obj
     3. 出 viewer/plant_uv.json（图集 UV 表 + 原型表），审核页与 C# 同源
     4. 自带几何守卫：着地 / 部件连通 / UV 越界 / 面数 / 法线朝外，
        守卫不过退出码非零，不给存量背书
 
 口径：
-    - 1 格 = 1 米；树总高 3.0m、灵树 3.5m（沿用 PlantLayer3D 既有世界高度约定），
-      小株按现实尺寸 0.32~1.5m。
+    - 1 格 = 1 米；世界尺寸唯一真源 = 原版立牌占格（def 的 drawSize ×
+      visualSizeRange × 内容像素/画布像素，见 VANILLA 表）：
+      树带（含 def 归 TreeBase 的 saguaro）= 占格 × TREE_K，锚点为树带平均高
+      3.0m（沿用 PlantLayer3D 世界高度约定，灵树 3.50m 为自然落点）；
+      小株高度保留现实约定、宽度按贴图内容宽高比。
     - 坐标：右手系（x 东，y 上，z 南）；OBJ vt 原点在左下（与 Unity 一致），
       图集内取样区用 PIL 像素坐标（原点左上）标定，落图时统一翻 v。
     - 无光照 Cutout 下靠低模切面法线映射进取样区纵向明暗带，直接呈现立体分面与原版笔触。
@@ -30,8 +33,8 @@ from PIL import Image, ImageDraw
 
 VAN = r"D:\rim mod\RimWorld_Vanilla_Textures_1.6"
 MOD = r"D:\rim mod\FirstPerson3D"
-ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "PlantAtlas.png")
-OBJ_DIR = os.path.join(MOD, "1.6", "Assets", "plants")
+ATLAS_OUT = os.path.join(MOD, "Textures", "FPS3D", "PlantAtlas.png")
+OBJ_DIR = os.path.join(MOD, "1.7", "Assets", "plants")
 JSON_OUT = os.path.join(MOD, "viewer", "plant_uv.json")
 VIEW_ATLAS = os.path.join(MOD, "viewer", "plant_atlas.png")
 VIEW_OBJ_DIR = os.path.join(MOD, "viewer", "plants")
@@ -45,78 +48,158 @@ CORE = "Core/textures/things/plant"
 ROY = "Royalty/textures/things/plant"
 
 # ---------------------------------------------------------------------------
+# 原版世界占格（1 格 = 1 米）—— 世界尺寸的唯一真源
+#
+# 口径：立牌占格 = graphicData.drawSize × plant.visualSizeRange(成熟=max)
+#       世界内容尺寸 = 占格 × 内容像素/画布像素（内容 = alpha≥16 包围盒，
+#       同 docs/plants/VanillaTextureHeights.md 口径）。
+# 来源：RimWorld 1.6 Data/Core|Royalty/Defs/ThingDefs_Plants 继承链解析实测
+#       （2026-10-13）；贴图像素只给同画布档内的相对比，跨档（64/128/256）
+#       必须靠 drawSize×visualSizeRange 归一 —— 见 docs/plants/VanillaTextureWidths.md。
+# 字段：(drawSize, vsrMax, 画布px, 内容宽px, 内容高px)
+# ---------------------------------------------------------------------------
+VANILLA = {
+    # ---- 树（def 里 treeCategory=Full，IsTree）----
+    "oak":       (1.0, 2.0, 128, 109, 124),
+    "maple":     (1.0, 2.0, 128, 90, 112),
+    "poplar":    (1.0, 2.0, 128, 58, 123),
+    "pine":      (1.0, 3.0, 128, 78, 123),
+    "cypress":   (1.0, 2.3, 128, 96, 126),
+    "birch":     (1.0, 2.0, 128, 95, 121),
+    "palm":      (1.0, 2.0, 128, 128, 123),
+    "drago":     (1.0, 2.0, 128, 125, 107),
+    "teak":      (1.0, 2.4, 128, 113, 126),
+    "willow":    (1.0, 1.8, 128, 124, 123),
+    "bamboo":    (1.0, 2.0, 128, 117, 121),
+    "cocoa":     (1.0, 2.0, 128, 124, 124),
+    "cecropia":  (1.0, 2.0, 128, 126, 121),
+    "anima":     (1.0, 2.5, 256, 242, 243),
+    "saguaro":   (1.0, 2.0, 64, 48, 64),      # def 归 TreeBase：立牌 2 格高，与树同档
+    # ---- 小株（非树：保留现实高度，宽度按贴图宽高比）----
+    "bush":        (1.15, 1.10, 64, 63, 51),
+    "berry":       (1.0, 1.70, 64, 57, 49),
+    "brambles":    (1.7, 0.85, 128, 98, 83),
+    "agave":       (1.0, 1.40, 64, 63, 60),
+    "alocasia":    (2.0, 1.10, 128, 125, 112),
+    "shrublow":    (1.0, 1.05, 64, 64, 60),
+    "pincushion":  (1.0, 0.65, 64, 54, 45),
+    "healroot":    (1.0, 1.00, 64, 59, 52),
+    "devilstrand": (1.0, 1.00, 64, 61, 58),
+}
+
+TREES = ("oak", "maple", "poplar", "pine", "cypress", "birch", "palm", "drago",
+         "teak", "willow", "bamboo", "cocoa", "cecropia", "anima")
+
+# 小株现实高度约定（米，2026-10-11 过审值）：方案 B 下保持不变。
+SMALL_H = {
+    "bush": 0.55, "berry": 0.5, "brambles": 0.45, "agave": 0.8, "alocasia": 0.9,
+    "shrublow": 0.32, "pincushion": 0.38, "healroot": 0.32, "devilstrand": 0.36,
+}
+
+# 口径开关：B（默认）= 树忠实+小株现实；A = 全量忠实（小株也走占格×TREE_K）。
+# 仅用于出对照图；入库口径为 B。
+POLICY = os.environ.get("PLANT_POLICY", "B")
+
+
+def _cells(name):
+    """原版立牌的内容世界尺寸（格=米）：(宽, 高)。"""
+    ds, vsr, cv, cw, ch = VANILLA[name]
+    q = ds * vsr
+    return q * cw / cv, q * ch / cv
+
+
+# 锚点：树带平均高 = 既有世界约定 3.0m（PlantLayer3D.WorldHeightOf 的树档）。
+# 该 k 同时是"原版占格 -> 第一人称米制"的唯一换算；灵树 3.50m 为自然落点。
+TREE_K = 3.0 / (sum(_cells(t)[1] for t in TREES) / len(TREES))
+
+
+def tree_size(name):
+    w, h = _cells(name)
+    return dict(H=round(h * TREE_K, 2), D=round(w * TREE_K, 2))
+
+
+def small_size(name, H):
+    """小株：高度保留现实约定，宽度按贴图内容宽高比（= 原版立牌形状）。
+    方案 A 下高度也走占格推导（出对照图用）。"""
+    if POLICY == "A":
+        return tree_size(name)
+    _, _, cv, cw, ch = VANILLA[name]
+    return dict(H=H, D=round(H * cw / ch, 2))
+
+
+# ---------------------------------------------------------------------------
 # 原型清单：采样来源 + 世界尺寸 + 几何配方
 # 相对系数取样：(cx0, cy0, cx1, cy1) 相对内容包围盒。
 # ---------------------------------------------------------------------------
 SPEC = {
-    # ---- 树 14 ----
-    "oak":      dict(tex=f"{CORE}/treeoak/treeoaka", H=3.0, D=2.0,
+    # ---- 树 14（H/D = 原版占格 × TREE_K，宽高比与贴图严格一致）----
+    "oak":      dict(tex=f"{CORE}/treeoak/treeoaka", **tree_size("oak"),
                      build="oak", bark=(0.44, 0.62, 0.56, 0.96),
                      leaf=(0.12, 0.05, 0.48, 0.42), leaf2=(0.52, 0.14, 0.88, 0.52)),
-    "maple":    dict(tex=f"{CORE}/treemaple/treemaplea", H=3.0, D=1.9,
+    "maple":    dict(tex=f"{CORE}/treemaple/treemaplea", **tree_size("maple"),
                      build="maple", bark=(0.48, 0.76, 0.56, 0.98),
                      leaf=(0.14, 0.06, 0.48, 0.42), leaf2=(0.54, 0.14, 0.88, 0.52)),
-    "poplar":   dict(tex=f"{CORE}/treepoplar/treepoplara", H=3.0, D=1.1,
+    "poplar":   dict(tex=f"{CORE}/treepoplar/treepoplara", **tree_size("poplar"),
                      build="poplar", bark=(0.44, 0.82, 0.56, 0.98),
                      leaf=(0.28, 0.06, 0.72, 0.42), leaf2=(0.28, 0.44, 0.72, 0.78)),
-    "pine":     dict(tex=f"{CORE}/treepine/treepinea", H=3.0, D=1.7,
+    "pine":     dict(tex=f"{CORE}/treepine/treepinea", **tree_size("pine"),
                      build="pine", bark=(0.45, 0.88, 0.55, 0.99),
                      leaf=(0.34, 0.12, 0.66, 0.44), leaf2=(0.26, 0.46, 0.74, 0.78)),
-    "cypress":  dict(tex=f"{CORE}/treecypress/treecypressa", H=3.0, D=1.6,
+    "cypress":  dict(tex=f"{CORE}/treecypress/treecypressa", **tree_size("cypress"),
                      build="cypress", bark=(0.43, 0.70, 0.58, 0.96),
                      leaf=(0.18, 0.06, 0.54, 0.38), leaf2=(0.48, 0.18, 0.84, 0.52)),
-    "birch":    dict(tex=f"{CORE}/treebirch/treebircha", H=3.0, D=1.5,
+    "birch":    dict(tex=f"{CORE}/treebirch/treebircha", **tree_size("birch"),
                      build="birch", bark=(0.43, 0.56, 0.52, 0.96),
                      leaf=(0.16, 0.05, 0.52, 0.38), leaf2=(0.50, 0.14, 0.86, 0.48)),
-    "palm":     dict(tex=f"{CORE}/treepalm/treepalma", H=3.0, D=3.2,
+    "palm":     dict(tex=f"{CORE}/treepalm/treepalma", **tree_size("palm"),
                      build="palm", bark=(0.45, 0.48, 0.55, 0.96),
                      leaf=(0.08, 0.04, 0.44, 0.32), leaf2=(0.56, 0.06, 0.92, 0.36)),
-    "drago":    dict(tex=f"{CORE}/treedrago/treedragoa", H=2.8, D=2.5,
+    "drago":    dict(tex=f"{CORE}/treedrago/treedragoa", **tree_size("drago"),
                      build="drago", bark=(0.40, 0.66, 0.60, 0.96),
                      leaf=(0.18, 0.06, 0.54, 0.28), leaf2=(0.48, 0.14, 0.84, 0.36)),
-    "teak":     dict(tex=f"{CORE}/treeteak/treeteaka", H=3.0, D=2.1,
+    "teak":     dict(tex=f"{CORE}/treeteak/treeteaka", **tree_size("teak"),
                      build="teak", bark=(0.43, 0.54, 0.56, 0.96),
                      leaf=(0.14, 0.05, 0.50, 0.40), leaf2=(0.52, 0.12, 0.88, 0.48)),
-    "willow":   dict(tex=f"{CORE}/treewillow/treewillowa", H=3.0, D=2.1,
+    "willow":   dict(tex=f"{CORE}/treewillow/treewillowa", **tree_size("willow"),
                      build="willow", bark=(0.44, 0.62, 0.56, 0.96),
                      leaf=(0.14, 0.04, 0.50, 0.34), leaf2=(0.52, 0.12, 0.88, 0.46)),
-    "bamboo":   dict(tex=f"{CORE}/treebamboo/treebambooa", H=3.0, D=1.2,
+    "bamboo":   dict(tex=f"{CORE}/treebamboo/treebambooa", **tree_size("bamboo"),
                      build="bamboo", bark=(0.28, 0.62, 0.40, 0.95),
                      leaf=(0.48, 0.06, 0.86, 0.38), leaf2=(0.12, 0.14, 0.48, 0.48)),
-    "cocoa":    dict(tex=f"{CORE}/treecocoa/treecocoaa", H=3.0, D=1.9,
+    "cocoa":    dict(tex=f"{CORE}/treecocoa/treecocoaa", **tree_size("cocoa"),
                      build="cocoa", bark=(0.45, 0.72, 0.55, 0.97),
                      leaf=(0.12, 0.04, 0.48, 0.38), leaf2=(0.52, 0.10, 0.88, 0.44),
                      accent=(0.28, 0.52, 0.58, 0.82)),
-    "cecropia": dict(tex=f"{CORE}/treececropia/treececropiaa", H=3.0, D=1.9,
+    "cecropia": dict(tex=f"{CORE}/treececropia/treececropiaa", **tree_size("cecropia"),
                      build="cecropia", bark=(0.45, 0.54, 0.55, 0.96),
                      leaf=(0.10, 0.04, 0.46, 0.38), leaf2=(0.54, 0.08, 0.90, 0.42)),
-    "anima":    dict(tex=f"{ROY}/treeanima/treeanimaa", H=3.5, D=1.6,
+    "anima":    dict(tex=f"{ROY}/treeanima/treeanimaa", **tree_size("anima"),
                      build="anima", bark=(0.42, 0.68, 0.58, 0.97),
                      leaf=(0.18, 0.04, 0.54, 0.38), leaf2=(0.56, 0.18, 0.92, 0.52),
                      accent=(0.36, 0.26, 0.46, 0.36)),
-    # ---- 小株 10 ----
-    "bush":       dict(tex=f"{CORE}/bush/busha", H=0.55, D=0.9,
+    # ---- 小株 10（高度=现实约定；宽度=贴图宽高比；saguaro 按 def 归树档）----
+    "saguaro":    dict(tex=f"{CORE}/saguarocactus/saguarocactus", **tree_size("saguaro"),
+                       build="saguaro", leaf=(0.24, 0.10, 0.62, 0.54), leaf2=(0.38, 0.32, 0.78, 0.76)),
+    "bush":       dict(tex=f"{CORE}/bush/busha", **small_size("bush", 0.55),
                        build="bush", leaf=(0.14, 0.10, 0.54, 0.56), leaf2=(0.46, 0.24, 0.86, 0.72)),
-    "berry":      dict(tex=f"{CORE}/berryplant/berrybusha", H=0.5, D=0.9,
+    "berry":      dict(tex=f"{CORE}/berryplant/berrybusha", **small_size("berry", 0.5),
                        build="berry", leaf=(0.14, 0.08, 0.54, 0.48), leaf2=(0.46, 0.24, 0.86, 0.68),
                        accent=(0.22, 0.22, 0.78, 0.72)),
-    "brambles":   dict(tex=f"{CORE}/brambles/bramblesa", H=0.45, D=1.1,
+    "brambles":   dict(tex=f"{CORE}/brambles/bramblesa", **small_size("brambles", 0.45),
                        build="brambles", leaf=(0.14, 0.06, 0.52, 0.44), leaf2=(0.48, 0.18, 0.86, 0.56),
                        bark=(0.24, 0.62, 0.76, 0.94)),
-    "agave":      dict(tex=f"{CORE}/agave/agavea", H=0.8, D=1.0,
+    "agave":      dict(tex=f"{CORE}/agave/agavea", **small_size("agave", 0.8),
                        build="agave", leaf=(0.16, 0.12, 0.54, 0.58), leaf2=(0.46, 0.28, 0.84, 0.74)),
-    "alocasia":   dict(tex=f"{CORE}/alocasia/alocasiaa", H=0.9, D=1.0,
+    "alocasia":   dict(tex=f"{CORE}/alocasia/alocasiaa", **small_size("alocasia", 0.9),
                        build="alocasia", leaf=(0.12, 0.08, 0.52, 0.54), leaf2=(0.48, 0.22, 0.88, 0.70)),
-    "shrublow":   dict(tex=f"{CORE}/shrublow/shrublowa", H=0.32, D=0.8,
+    "shrublow":   dict(tex=f"{CORE}/shrublow/shrublowa", **small_size("shrublow", 0.32),
                        build="shrublow", leaf=(0.16, 0.12, 0.54, 0.56), leaf2=(0.46, 0.24, 0.84, 0.68)),
-    "pincushion": dict(tex=f"{CORE}/pincushioncactus/pincushioncactus", H=0.38, D=0.6,
+    "pincushion": dict(tex=f"{CORE}/pincushioncactus/pincushioncactus", **small_size("pincushion", 0.38),
                        build="pincushion", leaf=(0.18, 0.14, 0.58, 0.60), leaf2=(0.42, 0.28, 0.82, 0.74)),
-    "saguaro":    dict(tex=f"{CORE}/saguarocactus/saguarocactus", H=1.5, D=0.7,
-                       build="saguaro", leaf=(0.24, 0.10, 0.62, 0.54), leaf2=(0.38, 0.32, 0.78, 0.76)),
-    "healroot":   dict(tex=f"{CORE}/healroot/healroota", H=0.32, D=0.6,
+    "healroot":   dict(tex=f"{CORE}/healroot/healroota", **small_size("healroot", 0.32),
                        build="healroot", bark=(0.38, 0.56, 0.62, 0.94),
                        leaf=(0.22, 0.06, 0.78, 0.42), leaf2=(0.12, 0.28, 0.88, 0.68)),
-    "devilstrand": dict(tex=f"{CORE}/devilstrand/devilstranda", H=0.36, D=0.5,
+    "devilstrand": dict(tex=f"{CORE}/devilstrand/devilstranda", **small_size("devilstrand", 0.36),
                         build="devilstrand", bark=(0.36, 0.60, 0.64, 0.95),
                         leaf=(0.18, 0.06, 0.82, 0.46), leaf2=(0.22, 0.48, 0.78, 0.66)),
 }
@@ -362,7 +445,7 @@ def lowpoly_blob(out, region, center, rx, ry, rz, lon=7, lat=4, seed=1,
 
     for x in range(lon):
         nx_ = (x + 1) % lon
-        add_faceted_tri(out, bot_pt, rings[0][nx_], rings[0][x], region,
+        add_faceted_tri(out, bot_pt, rings[0][x], rings[0][nx_], region,
                         shade_bias=shade_bias - 0.16, u_seed=(x + 0.5) / lon)
 
     for y in range(len(rings) - 1):
@@ -372,13 +455,13 @@ def lowpoly_blob(out, region, center, rx, ry, rz, lon=7, lat=4, seed=1,
         for x in range(lon):
             nx_ = (x + 1) % lon
             u_s = 0.15 + 0.70 * ((x + 0.5) / lon)
-            add_faceted_tri(out, r0[x], r0[nx_], r1[x], region, shade_bias=sb, u_seed=u_s)
-            add_faceted_tri(out, r0[nx_], r1[nx_], r1[x], region, shade_bias=sb + 0.03, u_seed=u_s)
+            add_faceted_tri(out, r0[x], r1[x], r0[nx_], region, shade_bias=sb, u_seed=u_s)
+            add_faceted_tri(out, r0[nx_], r1[x], r1[nx_], region, shade_bias=sb + 0.03, u_seed=u_s)
 
     top_ring = rings[-1]
     for x in range(lon):
         nx_ = (x + 1) % lon
-        add_faceted_tri(out, top_ring[x], top_ring[nx_], top_pt, region,
+        add_faceted_tri(out, top_ring[x], top_pt, top_ring[nx_], region,
                         shade_bias=shade_bias + 0.16, u_seed=(x + 0.5) / lon)
 
 
@@ -412,8 +495,8 @@ def arched_frond(out, region, origin, yaw_deg, length, width, thickness,
         rings.append((p_top, p_right, p_bot, p_left))
 
     r0 = rings[0]
-    add_faceted_tri(out, r0[0], r0[3], r0[1], region, shade_bias=shade_bias - 0.10)
-    add_faceted_tri(out, r0[2], r0[1], r0[3], region, shade_bias=shade_bias - 0.15)
+    add_faceted_tri(out, r0[0], r0[1], r0[3], region, shade_bias=shade_bias - 0.10)
+    add_faceted_tri(out, r0[2], r0[3], r0[1], region, shade_bias=shade_bias - 0.15)
 
     for k in range(segs):
         a = rings[k]
@@ -421,15 +504,15 @@ def arched_frond(out, region, origin, yaw_deg, length, width, thickness,
         sb = shade_bias + 0.08 * (1.0 - k / segs)
         if k == segs - 1:
             tip = b[0]
-            add_faceted_tri(out, a[0], a[1], tip, region, shade_bias=sb + 0.08, u_seed=0.35)
-            add_faceted_tri(out, a[1], a[2], tip, region, shade_bias=sb - 0.12, u_seed=0.65)
-            add_faceted_tri(out, a[2], a[3], tip, region, shade_bias=sb - 0.12, u_seed=0.35)
-            add_faceted_tri(out, a[3], a[0], tip, region, shade_bias=sb + 0.06, u_seed=0.65)
+            add_faceted_tri(out, a[0], tip, a[1], region, shade_bias=sb + 0.08, u_seed=0.35)
+            add_faceted_tri(out, a[1], tip, a[2], region, shade_bias=sb - 0.12, u_seed=0.65)
+            add_faceted_tri(out, a[2], tip, a[3], region, shade_bias=sb - 0.12, u_seed=0.35)
+            add_faceted_tri(out, a[3], tip, a[0], region, shade_bias=sb + 0.06, u_seed=0.65)
         else:
-            add_faceted_quad(out, a[0], a[1], b[1], b[0], region, shade_bias=sb + 0.08, u_seed=0.35)
-            add_faceted_quad(out, a[1], a[2], b[2], b[1], region, shade_bias=sb - 0.12, u_seed=0.65)
-            add_faceted_quad(out, a[2], a[3], b[3], b[2], region, shade_bias=sb - 0.12, u_seed=0.35)
-            add_faceted_quad(out, a[3], a[0], b[0], b[3], region, shade_bias=sb + 0.06, u_seed=0.65)
+            add_faceted_quad(out, a[0], b[0], b[1], a[1], region, shade_bias=sb + 0.08, u_seed=0.35)
+            add_faceted_quad(out, a[1], b[1], b[2], a[2], region, shade_bias=sb - 0.12, u_seed=0.65)
+            add_faceted_quad(out, a[2], b[2], b[3], a[3], region, shade_bias=sb - 0.12, u_seed=0.35)
+            add_faceted_quad(out, a[3], b[3], b[0], a[0], region, shade_bias=sb + 0.06, u_seed=0.65)
 
 
 # ---------------------------------------------------------------------------
@@ -559,10 +642,10 @@ def _pine_saw_cone(o, region, y0, h, r_out, r_in, lobes=8, twist_deg=0.0, shade_
         inner.append((math.cos(a) * r_in * 0.32, y0 + h * 0.04, math.sin(a) * r_in * 0.32))
     for i in range(n2):
         j = (i + 1) % n2
-        add_faceted_tri(o, rim[i], rim[j], apex, region,
+        add_faceted_tri(o, rim[i], apex, rim[j], region,
                         shade_bias=shade_bias + (0.05 if i % 2 == 0 else -0.04),
                         u_seed=(i + 0.5) / n2)
-        add_faceted_quad(o, inner[i], inner[j], rim[j], rim[i], region,
+        add_faceted_quad(o, inner[i], rim[i], rim[j], inner[j], region,
                          shade_bias=shade_bias - 0.18, u_seed=(i + 0.5) / n2)
 
 
@@ -1066,25 +1149,25 @@ def _alocasia_broad_leaf(o, reg_leaf, reg_stem, yaw_deg, length, width, arch_y, 
     r0b, r1b, r2b = _add(r0, dn), _add(r1, dn), _add(r2, dn)
     l0b, l1b, l2b = _add(l0, dn), _add(l1, dn), _add(l2, dn)
 
-    add_faceted_tri(o, c0, r0, c1, reg_leaf, shade_bias=shade_bias + 0.04, u_seed=0.35)
-    add_faceted_tri(o, r0, r1, c1, reg_leaf, shade_bias=shade_bias + 0.06, u_seed=0.45)
-    add_faceted_quad(o, c1, r1, r2, c2, reg_leaf, shade_bias=shade_bias + 0.05, u_seed=0.40)
-    add_faceted_tri(o, c2, r2, c3, reg_leaf, shade_bias=shade_bias + 0.02, u_seed=0.50)
+    add_faceted_tri(o, c0, c1, r0, reg_leaf, shade_bias=shade_bias + 0.04, u_seed=0.35)
+    add_faceted_tri(o, r0, c1, r1, reg_leaf, shade_bias=shade_bias + 0.06, u_seed=0.45)
+    add_faceted_quad(o, c1, c2, r2, r1, reg_leaf, shade_bias=shade_bias + 0.05, u_seed=0.40)
+    add_faceted_tri(o, c2, c3, r2, reg_leaf, shade_bias=shade_bias + 0.02, u_seed=0.50)
 
-    add_faceted_tri(o, c0, c1, l0, reg_leaf, shade_bias=shade_bias + 0.10, u_seed=0.65)
-    add_faceted_tri(o, l0, c1, l1, reg_leaf, shade_bias=shade_bias + 0.12, u_seed=0.55)
+    add_faceted_tri(o, c0, l0, c1, reg_leaf, shade_bias=shade_bias + 0.10, u_seed=0.65)
+    add_faceted_tri(o, l0, l1, c1, reg_leaf, shade_bias=shade_bias + 0.12, u_seed=0.55)
     add_faceted_quad(o, c1, l1, l2, c2, reg_leaf, shade_bias=shade_bias + 0.10, u_seed=0.60)
-    add_faceted_tri(o, c2, c3, l2, reg_leaf, shade_bias=shade_bias + 0.07, u_seed=0.50)
+    add_faceted_tri(o, c2, l2, c3, reg_leaf, shade_bias=shade_bias + 0.07, u_seed=0.50)
 
-    add_faceted_tri(o, c0b, c1b, r0b, reg_stem, shade_bias=-0.14)
-    add_faceted_tri(o, r0b, c1b, r1b, reg_stem, shade_bias=-0.14)
-    add_faceted_quad(o, c1b, c2b, r2b, r1b, reg_stem, shade_bias=-0.14)
-    add_faceted_tri(o, c2b, c3b, r2b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, c0b, r0b, c1b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, r0b, r1b, c1b, reg_stem, shade_bias=-0.14)
+    add_faceted_quad(o, c1b, r1b, r2b, c2b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, c2b, r2b, c3b, reg_stem, shade_bias=-0.14)
 
-    add_faceted_tri(o, c0b, l0b, c1b, reg_stem, shade_bias=-0.14)
-    add_faceted_tri(o, l0b, l1b, c1b, reg_stem, shade_bias=-0.14)
-    add_faceted_quad(o, c1b, l2b, l1b, c2b, reg_stem, shade_bias=-0.14)
-    add_faceted_tri(o, c2b, l2b, c3b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, c0b, c1b, l0b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, l0b, c1b, l1b, reg_stem, shade_bias=-0.14)
+    add_faceted_quad(o, c1b, c2b, l2b, l1b, reg_stem, shade_bias=-0.14)
+    add_faceted_tri(o, c2b, c3b, l2b, reg_stem, shade_bias=-0.14)
 
     edges = [(c0, r0, r0b, c0b), (r0, r1, r1b, r0b), (r1, r2, r2b, r1b), (r2, c3, c3b, r2b),
              (c3, l2, l2b, c3b), (l2, l1, l1b, l2b), (l1, l0, l0b, l1b), (l0, c0, c0b, l0b)]
@@ -1153,20 +1236,20 @@ def build_pincushion(o, g, regions):
     top_pt = (0.0, H * 0.92, 0.0)
     for i in range(n2):
         j = (i + 1) % n2
-        add_faceted_tri(o, bot_pt, rings[0][j], rings[0][i], regions["leaf2"], shade_bias=-0.16)
+        add_faceted_tri(o, bot_pt, rings[0][i], rings[0][j], regions["leaf2"], shade_bias=-0.16)
     for y in range(len(rings) - 1):
         r0, r1 = rings[y], rings[y + 1]
         sb = -0.08 + 0.20 * (y / (len(rings) - 1))
         for i in range(n2):
             j = (i + 1) % n2
             rk = "leaf" if i % 2 == 0 else "leaf2"
-            add_faceted_quad(o, r0[i], r0[j], r1[j], r1[i], regions[rk],
+            add_faceted_quad(o, r0[i], r1[i], r1[j], r0[j], regions[rk],
                              shade_bias=sb + (0.05 if i % 2 == 0 else -0.05),
                              u_seed=(i + 0.5) / n2)
     top_ring = rings[-1]
     for i in range(n2):
         j = (i + 1) % n2
-        add_faceted_tri(o, top_ring[i], top_ring[j], top_pt, regions["leaf"], shade_bias=0.10)
+        add_faceted_tri(o, top_ring[i], top_pt, top_ring[j], regions["leaf"], shade_bias=0.10)
 
 
 def build_saguaro(o, g, regions):
@@ -1250,8 +1333,8 @@ def _build_one_devilstrand(o, regions, cx, cz, h, d):
                  cz + (frill_pts[i][2] - cz) * (r_in / (d * 0.35)))
         p_in1 = (cx + (frill_pts[j][0] - cx) * (r_in / (d * 0.35)), h * 0.42,
                  cz + (frill_pts[j][2] - cz) * (r_in / (d * 0.35)))
-        add_faceted_tri(o, frill_pts[i], frill_pts[j], top_c, regions["leaf2"], shade_bias=0.10)
-        add_faceted_quad(o, p_in0, p_in1, frill_pts[j], frill_pts[i], regions["leaf2"], shade_bias=-0.04)
+        add_faceted_tri(o, frill_pts[i], top_c, frill_pts[j], regions["leaf2"], shade_bias=0.10)
+        add_faceted_quad(o, p_in0, frill_pts[i], frill_pts[j], p_in1, regions["leaf2"], shade_bias=-0.04)
 
     # 饱满圆拱的鲜红大菌盖（0.48h ~ 1.0h），直接构建带共面纯白斑点的低模伞盖网格（零飞碟凸起）
     r_cap = d * 0.48
@@ -1277,7 +1360,7 @@ def _build_one_devilstrand(o, regions, cx, cz, h, d):
     top_pt = (cx, cy + ry_cap * 2.0, cz)
     for x in range(lon):
         nx_ = (x + 1) % lon
-        add_faceted_tri(o, bot_pt, rings[0][nx_], rings[0][x], regions["leaf"], shade_bias=-0.12)
+        add_faceted_tri(o, bot_pt, rings[0][x], rings[0][nx_], regions["leaf"], shade_bias=-0.12)
 
     def _emit_cap_tri(p0, p1, p2, sb, with_spot=False):
         if not with_spot:
@@ -1303,13 +1386,13 @@ def _build_one_devilstrand(o, regions, cx, cz, h, d):
             nx_ = (x + 1) % lon
             spot_a = (y == 1 and x in (0, 3, 6))
             spot_b = (y == 1 and x in (1, 4, 7))
-            _emit_cap_tri(r0[x], r0[nx_], r1[x], sb, with_spot=spot_a)
-            _emit_cap_tri(r0[nx_], r1[nx_], r1[x], sb + 0.03, with_spot=spot_b)
+            _emit_cap_tri(r0[x], r1[x], r0[nx_], sb, with_spot=spot_a)
+            _emit_cap_tri(r0[nx_], r1[x], r1[nx_], sb + 0.03, with_spot=spot_b)
 
     top_ring = rings[-1]
     for x in range(lon):
         nx_ = (x + 1) % lon
-        _emit_cap_tri(top_ring[x], top_ring[nx_], top_pt, 0.16, with_spot=(x in (1, 5, 8)))
+        _emit_cap_tri(top_ring[x], top_pt, top_ring[nx_], 0.16, with_spot=(x in (1, 5, 8)))
 
 
 def build_devilstrand(o, g, regions):
@@ -1619,6 +1702,18 @@ def main():
             if not (-0.001 <= u <= 1.001 and -0.001 <= v <= 1.001):
                 guard_fail.append(f"{name}: UV 越界 ({u:.3f},{v:.3f})")
                 break
+        # 世界尺寸口径守卫：宽高比必须等于贴图内容宽高比；高度按口径（树/小株）核对
+        _, _, _cv, cw, ch = VANILLA[name]
+        aspect = cw / ch
+        if abs(g["D"] / g["H"] - aspect) > 0.02:
+            guard_fail.append(f"{name}: 宽高比偏离贴图 D/H={g['D'] / g['H']:.3f} vs {aspect:.3f}")
+        if name in TREES or name == "saguaro" or POLICY == "A":
+            ew, eh = _cells(name)
+            if (abs(g["H"] - round(eh * TREE_K, 2)) > 1e-9
+                    or abs(g["D"] - round(ew * TREE_K, 2)) > 1e-9):
+                guard_fail.append(f"{name}: 世界尺寸偏离原版占格推导 H={g['H']} D={g['D']}")
+        elif abs(g["H"] - SMALL_H[name]) > 1e-9:
+            guard_fail.append(f"{name}: 小株高度偏离现实约定 {g['H']} != {SMALL_H[name]}")
         arch_meta.append(dict(name=name, H=g["H"], D=g["D"], tris=len(o.f),
                               verts=len(o.v), build=g["build"]))
         obj_path = os.path.join(OBJ_DIR, name + ".obj")

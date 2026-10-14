@@ -107,6 +107,106 @@ namespace RimFirstPerson3D
             }
         }
 
+        private static Material blueprintOutlineMat;
+        public static Material BlueprintOutlineMat
+        {
+            get
+            {
+                if (blueprintOutlineMat != null) return blueprintOutlineMat;
+                var m = new Material(ShaderDatabase.Cutout);
+                m.mainTexture = WhiteTex;
+                m.color = new Color(0.06f, 0.32f, 0.76f, 1f);
+                blueprintOutlineMat = m;
+                return blueprintOutlineMat;
+            }
+        }
+
+        private static readonly Dictionary<int, Material> blueprintMats = new Dictionary<int, Material>();
+
+        // 将建筑/家具图集重映射为蓝色全息投影材质：保留全部明暗纹理细节与 ZWrite 深度遮挡，色相统一为全息亮蓝。
+        public static Material BlueprintMatFor(Texture srcTex, FilterMode filterMode = FilterMode.Bilinear)
+        {
+            if (srcTex == null) srcTex = WhiteTex;
+            int key = (srcTex.GetInstanceID() * 3) ^ (int)filterMode;
+            if (blueprintMats.TryGetValue(key, out var cached) && cached != null) return cached;
+
+            Texture holoTex = BuildHologramTexture(srcTex, filterMode);
+            var mat = new Material(ShaderDatabase.Cutout)
+            {
+                name = "Fps3D_Blueprint_" + srcTex.name,
+                mainTexture = holoTex ?? srcTex,
+                color = holoTex != null ? Color.white : new Color(0.28f, 0.72f, 1f, 1f)
+            };
+            blueprintMats[key] = mat;
+            return mat;
+        }
+
+        private static Texture2D BuildHologramTexture(Texture source, FilterMode filterMode)
+        {
+            if (source == null) return null;
+            int w = Mathf.Max(1, source.width);
+            int h = Mathf.Max(1, source.height);
+            try
+            {
+                Color32[] px = null;
+                if (source is Texture2D srcT2d)
+                {
+                    try { px = srcT2d.GetPixels32(); } catch { px = null; }
+                }
+                var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+                {
+                    name = "Fps3D_Holo_" + source.name,
+                    filterMode = filterMode,
+                    wrapMode = source.wrapMode
+                };
+                if (px == null || px.Length != w * h)
+                {
+                    var rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+                    var prev = RenderTexture.active;
+                    try
+                    {
+                        Graphics.Blit(source, rt);
+                        RenderTexture.active = rt;
+                        tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                        px = tex.GetPixels32();
+                    }
+                    finally
+                    {
+                        RenderTexture.active = prev;
+                        RenderTexture.ReleaseTemporary(rt);
+                    }
+                }
+                if (px == null || px.Length != w * h) return null;
+                for (int y = 0; y < h; y++)
+                {
+                    float scan = (y & 3) == 0 ? 1.08f : 0.94f;
+                    int row = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        var c = px[row + x];
+                        if (c.a < 24)
+                        {
+                            px[row + x] = new Color32(0, 0, 0, 0);
+                            continue;
+                        }
+                        float luma = (0.299f * c.r + 0.587f * c.g + 0.114f * c.b) * (1f / 255f);
+                        float v = Mathf.Clamp01((0.46f + 0.54f * luma) * scan);
+                        byte r = (byte)Mathf.Clamp(Mathf.RoundToInt(48f + 68f * v), 0, 255);
+                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(115f + 118f * v), 0, 255);
+                        byte b = (byte)Mathf.Clamp(Mathf.RoundToInt(195f + 60f * v), 0, 255);
+                        px[row + x] = new Color32(r, g, b, 255);
+                    }
+                }
+                tex.SetPixels32(px);
+                tex.Apply(false, true);
+                return tex;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         // 实例化绘制专用材质缓存：克隆原版材质并开启 instancing（原版材质默认未开）。
         private static readonly Dictionary<Material, Material> instancedMats = new Dictionary<Material, Material>();
         public static Material InstancedMatFor(Material src)
@@ -201,6 +301,60 @@ namespace RimFirstPerson3D
         private static readonly Dictionary<Mesh, int[]> srcTris = new Dictionary<Mesh, int[]>();
         private static readonly Dictionary<Mesh, Color32[]> srcColors = new Dictionary<Mesh, Color32[]>();
 
+        private static int[] scratchBaseW = new int[2048];
+        private static int[] scratchSunW = new int[2048];
+
+        private static void EnsureScratchWeights(int vn, Color32[] sc, Vector3[] sv, LightField3D field, SkyScenery.Env env)
+        {
+            if (scratchBaseW.Length < vn)
+            {
+                int cap = Mathf.Max(vn, scratchBaseW.Length * 2);
+                scratchBaseW = new int[cap];
+                scratchSunW = new int[cap];
+            }
+            if (field != null && env.glow > 0.02f)
+            {
+                float baseLift = Mathf.Lerp(1.02f, 1.24f, env.glow);
+                float sx = env.sunDir.x, sz = env.sunDir.z;
+                for (int i = 0; i < vn; i++)
+                {
+                    float c01 = sc[i].r * (1f / 255f);
+                    float h01 = Mathf.Clamp01((sc[i].r - 135f) * (1f / 120f));
+                    var sv0 = sv[i];
+                    float ndl = sv0.x * sx + sv0.z * sz;
+                    scratchBaseW[i] = (int)(c01 * baseLift * 1024f + 0.5f);
+                    scratchSunW[i] = (int)(c01 * (0.42f * h01 + 0.18f * Mathf.Clamp01(ndl + 0.35f)) * 1024f + 0.5f);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < vn; i++)
+                {
+                    scratchBaseW[i] = (int)(sc[i].r * (1024f / 255f) + 0.5f);
+                    scratchSunW[i] = 0;
+                }
+            }
+        }
+
+        private static Color32 ApplyInstanceTint(Color32 lit, byte tint, byte minB)
+        {
+            if (tint == 1)
+            {
+                byte r = (byte)Mathf.Max(minB, (lit.r * 230 + 127) >> 8);
+                byte g = (byte)Mathf.Max(minB, (lit.g * 246 + 127) >> 8);
+                byte b = (byte)Mathf.Max(minB, (lit.b * 205 + 127) >> 8);
+                return new Color32(r, g, b, lit.a);
+            }
+            if (tint == 2)
+            {
+                byte r = (byte)Mathf.Max(minB, (lit.r * 205 + 127) >> 8);
+                byte g = (byte)Mathf.Max(minB, (lit.g * 225 + 127) >> 8);
+                byte b = (byte)Mathf.Max(minB, (lit.b * 189 + 127) >> 8);
+                return new Color32(r, g, b, lit.a);
+            }
+            return lit;
+        }
+
         /// <summary>
         /// field 非空时（F013）逐实例取该处放置亮度并乘进顶点色：实例矩阵的平移减去 worldOffset
         /// 就是它在图内的局部位置，立牌朝向相机的旋转不参与取样。源网格自带的顶点色（模型原型的形体明暗）
@@ -208,11 +362,11 @@ namespace RimFirstPerson3D
         /// </summary>
         public static Mesh BuildInstancedMesh(Mesh src, List<Matrix4x4> mats, LightField3D field = null, Vector3 worldOffset = default)
         {
-            return BuildInstancedMesh(src, mats, field, worldOffset, out _, out _, 0f);
+            return BuildInstancedMesh(src, mats, field, worldOffset, out _, out _, 0f, null);
         }
 
         public static Mesh BuildInstancedMesh(Mesh src, List<Matrix4x4> mats, LightField3D field, Vector3 worldOffset,
-            out Vector3[] instPositions, out Color32[] colorBuffer, float sampleOffsetY = 0f)
+            out Vector3[] instPositions, out Color32[] colorBuffer, float sampleOffsetY = 0f, byte[] instTints = null)
         {
             instPositions = null;
             colorBuffer = null;
@@ -236,8 +390,16 @@ namespace RimFirstPerson3D
             var posArr = new Vector3[n];
             var tris = new int[tn * n];
             byte floorByte = (byte)Mathf.RoundToInt(Lighting3D.LightFloor * 255f);
+            byte minB = field != null ? floorByte : (byte)0;
             var env = Lighting3D.Current;
             bool sunActive = field != null && env.glow > 0.01f && env.sunDir.y > 0.01f;
+            bool useShading = hasCol && (!Lighting3D.CarrierProbe || field == null);
+            bool useTints = instTints != null && instTints.Length == n && !Lighting3D.CarrierProbe;
+            if (useShading)
+                EnsureScratchWeights(vn, sc, sv, field, env);
+            var baseW = scratchBaseW;
+            var sunW = scratchSunW;
+
             int vi = 0, ti = 0;
             for (int k = 0; k < n; k++)
             {
@@ -247,6 +409,7 @@ namespace RimFirstPerson3D
                 var localPos = new Vector3(mp.x - worldOffset.x, mp.y - worldOffset.y + sampleOffsetY, mp.z - worldOffset.z);
                 posArr[k] = localPos;
                 var lit = field != null ? Lighting3D.To32(field.Placement(localPos)) : new Color32(255, 255, 255, 255);
+                if (useTints) lit = ApplyInstanceTint(lit, instTints[k], minB);
                 float sunLit = sunActive ? field.SunLitAt(localPos, Vector3.up) * env.glow : 0f;
                 if (hasUv)
                 {
@@ -257,27 +420,20 @@ namespace RimFirstPerson3D
                     for (int i = 0; i < vn; i++) { verts[vi] = m.MultiplyPoint3x4(sv[i]); vi++; }
                 }
                 int v0 = vi - vn;
-                if (hasCol && (!Lighting3D.CarrierProbe || field == null))
+                if (useShading)
                 {
+                    int sunLitQ = (int)(sunLit * 1024f + 0.5f);
+                    int litR = lit.r, litG = lit.g, litB = lit.b;
                     for (int i = 0; i < vn; i++)
                     {
-                        var c0 = sc[i];
-                        float scale = c0.r / 255f;
-                        if (field != null && env.glow > 0.05f)
-                        {
-                            float h01 = Mathf.Clamp01((c0.r - 135f) / 120f);
-                            var sv0 = sv[i];
-                            float ndl = sv0.x * env.sunDir.x + sv0.z * env.sunDir.z;
-                            float boost = sunLit > 0.01f
-                                ? (1f + sunLit * (0.55f * h01 + 0.22f * Mathf.Clamp01(ndl + 0.3f)))
-                                : Mathf.Lerp(1f, 0.82f, env.glow);
-                            scale *= boost;
-                        }
-                        byte minB = field != null ? floorByte : (byte)0;
-                        byte r = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.r * scale), minB, 255);
-                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.g * scale), minB, 255);
-                        byte bl = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.b * scale), minB, 255);
-                        cols[v0 + i] = new Color32(r, g, bl, c0.a);
+                        int w = baseW[i] + ((sunW[i] * sunLitQ) >> 10);
+                        int r = (litR * w + 512) >> 10;
+                        int g = (litG * w + 512) >> 10;
+                        int bl = (litB * w + 512) >> 10;
+                        if (r < minB) r = minB; else if (r > 255) r = 255;
+                        if (g < minB) g = minB; else if (g > 255) g = 255;
+                        if (bl < minB) bl = minB; else if (bl > 255) bl = 255;
+                        cols[v0 + i] = new Color32((byte)r, (byte)g, (byte)bl, sc[i].a);
                     }
                 }
                 else
@@ -302,7 +458,7 @@ namespace RimFirstPerson3D
         /// <summary>
         /// 光照变化时原地重刷合并网格的顶点色（零 Mesh 重建、零顶点/三角数组分配）。
         /// </summary>
-        public static void RecolorInstancedMesh(Mesh mesh, Mesh src, Vector3[] instPositions, Color32[] cols, LightField3D field)
+        public static void RecolorInstancedMesh(Mesh mesh, Mesh src, Vector3[] instPositions, Color32[] cols, LightField3D field, byte[] instTints = null)
         {
             if (mesh == null || src == null || instPositions == null || cols == null) return;
             if (!srcVerts.TryGetValue(src, out var sv))
@@ -318,32 +474,34 @@ namespace RimFirstPerson3D
             byte floorByte = field != null ? (byte)Mathf.RoundToInt(Lighting3D.LightFloor * 255f) : (byte)0;
             var env = Lighting3D.Current;
             bool sunActive = field != null && env.glow > 0.01f && env.sunDir.y > 0.01f;
+            bool useShading = hasCol && (!Lighting3D.CarrierProbe || field == null);
+            bool useTints = instTints != null && instTints.Length == n && !Lighting3D.CarrierProbe;
+            if (useShading)
+                EnsureScratchWeights(vn, sc, sv, field, env);
+            var baseW = scratchBaseW;
+            var sunW = scratchSunW;
+
             for (int k = 0; k < n; k++)
             {
                 var lp = instPositions[k];
                 var lit = field != null ? Lighting3D.To32(field.Placement(lp)) : new Color32(255, 255, 255, 255);
+                if (useTints) lit = ApplyInstanceTint(lit, instTints[k], floorByte);
                 float sunLit = sunActive ? field.SunLitAt(lp, Vector3.up) * env.glow : 0f;
                 int v0 = k * vn;
-                if (hasCol && (!Lighting3D.CarrierProbe || field == null))
+                if (useShading)
                 {
+                    int sunLitQ = (int)(sunLit * 1024f + 0.5f);
+                    int litR = lit.r, litG = lit.g, litB = lit.b;
                     for (int i = 0; i < vn; i++)
                     {
-                        var c0 = sc[i];
-                        float scale = c0.r / 255f;
-                        if (field != null && env.glow > 0.05f)
-                        {
-                            float h01 = Mathf.Clamp01((c0.r - 135f) / 120f);
-                            var sv0 = sv[i];
-                            float ndl = sv0.x * env.sunDir.x + sv0.z * env.sunDir.z;
-                            float boost = sunLit > 0.01f
-                                ? (1f + sunLit * (0.55f * h01 + 0.22f * Mathf.Clamp01(ndl + 0.3f)))
-                                : Mathf.Lerp(1f, 0.82f, env.glow);
-                            scale *= boost;
-                        }
-                        byte r = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.r * scale), floorByte, 255);
-                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.g * scale), floorByte, 255);
-                        byte bl = (byte)Mathf.Clamp(Mathf.RoundToInt(lit.b * scale), floorByte, 255);
-                        cols[v0 + i] = new Color32(r, g, bl, c0.a);
+                        int w = baseW[i] + ((sunW[i] * sunLitQ) >> 10);
+                        int r = (litR * w + 512) >> 10;
+                        int g = (litG * w + 512) >> 10;
+                        int bl = (litB * w + 512) >> 10;
+                        if (r < floorByte) r = floorByte; else if (r > 255) r = 255;
+                        if (g < floorByte) g = floorByte; else if (g > 255) g = 255;
+                        if (bl < floorByte) bl = floorByte; else if (bl > 255) bl = 255;
+                        cols[v0 + i] = new Color32((byte)r, (byte)g, (byte)bl, sc[i].a);
                     }
                 }
                 else
@@ -526,14 +684,14 @@ namespace RimFirstPerson3D
         public static Mesh BuildBoxHullInverted(float w, float h, float d, float inflate)
         {
             var mesh = BuildBox(w + inflate * 2f, h + inflate, d + inflate * 2f, 1f);
-            var tris = mesh.GetTriangles(0);
+            var tris = mesh.triangles;
             for (int i = 0; i < tris.Length; i += 3)
             {
                 int t = tris[i];
                 tris[i] = tris[i + 2];
                 tris[i + 2] = t;
             }
-            mesh.SetTriangles(tris, 0, false);
+            mesh.triangles = tris;
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             return mesh;

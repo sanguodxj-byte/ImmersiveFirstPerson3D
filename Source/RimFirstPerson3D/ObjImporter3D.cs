@@ -15,6 +15,12 @@ namespace RimFirstPerson3D
         {
             public Mesh mesh;
             public List<string> groups = new List<string>(); // 与 submesh 一一对应的 usemtl 名
+            // 原始数据（不经 Mesh 回读）。1.7（Waylith/UnityStubs）下 Mesh 的多 submesh 读写不可靠：
+            // 需要按材质组重建网格的调用方（HandTerminal3D）直接吃这些列表，不要从 Mesh 读回。
+            public List<Vector3> verts;
+            public List<Vector2> uvs;
+            public List<Vector3> normals;
+            public List<List<int>> groupTris = new List<List<int>>();
         }
 
         public static ImportResult Load(string path)
@@ -45,7 +51,13 @@ namespace RimFirstPerson3D
 
                 if (key == "v")
                 {
-                    if (TryVec3(body, out var p)) positions.Add(p);
+                    if (TryVec3(body, out var p))
+                    {
+                        // 右手系 OBJ 转 Unity 左手系：Z 取反，让正面（bezel/screen）朝向 -Z（正对位于原点的第一人称相机），
+                        // 背面（battery/vent）留在 +Z 背侧。
+                        p.z = -p.z;
+                        positions.Add(p);
+                    }
                 }
                 else if (key == "vt")
                 {
@@ -53,13 +65,14 @@ namespace RimFirstPerson3D
                 }
                 else if (key == "vn")
                 {
-                    if (TryVec3(body, out var n)) normals.Add(n.normalized);
+                    if (TryVec3(body, out var n))
+                    {
+                        n.z = -n.z;
+                        normals.Add(n.normalized);
+                    }
                 }
                 else if (key == "o")
                 {
-                    // 握把是底部黑手柄。电池包贴在壳体背面、朝向相机，
-                    // 内侧面会盖住屏幕中部。screen 面留着：它在机身正面之前，
-                    // 正面壳板在它后面，地图实际画在这块面上。
                     skipObj = body == "grip_l" || body == "grip_r" || body == "battery";
                     if (skipObj) cur = null;
                 }
@@ -71,8 +84,8 @@ namespace RimFirstPerson3D
                         cur = new List<int>(512);
                         groupTris.Add(new KeyValuePair<string, List<int>>("", cur));
                     }
-                    // 三角扇：首顶点 + 相邻两顶点。绕序反转：OBJ 右手系 CCW 为正面，
-                    // Unity 左手系需 CW，直接沿用会整模被背面剔除（实机踩坑：终端完全不可见）。
+                    // Z 轴已取反（正面朝向 -Z 相机），由于 X/Y 未取反，屏幕 2D 投影仍保持右手系的逆时针（CCW）；
+                    // Unity 左手系要求正面为顺时针（CW），因此翻转绕序为 (fanA, vi, fanB) 与翻转后的 -Z 法线一致。
                     int fanA = -1, fanB = -1;
                     int seg = 0;
                     foreach (var tok in body.Split(' '))
@@ -111,8 +124,12 @@ namespace RimFirstPerson3D
                 mesh.SetTriangles(groupTris[i].Value, i);
             mesh.RecalculateBounds();
 
-            var res = new ImportResult { mesh = mesh };
-            foreach (var g in groupTris) res.groups.Add(g.Key);
+            var res = new ImportResult { mesh = mesh, verts = verts, uvs = vertUvs, normals = vertNormals };
+            foreach (var g in groupTris)
+            {
+                res.groups.Add(g.Key);
+                res.groupTris.Add(g.Value);
+            }
             Log.Message(ModEntry.LogPrefix + "obj imported: " + verts.Count + "v/"
                 + groupTris.Count + "grp " + watch.ElapsedMilliseconds + "ms (" + path + ")");
             return res;

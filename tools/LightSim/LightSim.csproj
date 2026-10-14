@@ -4,7 +4,7 @@
        不复制、不改写、不留第二套规范），所以这里通过才有资格进游戏实测。
        用法：在仓库根执行 dotnet run 加参数 project=tools/LightSim（退出码非 0 表示未通过） -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <LangVersion>latest</LangVersion>
     <AssemblyName>LightSim</AssemblyName>
@@ -13,8 +13,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>D:\Steam\steamapps\common\RimWorld\RimWorldWin64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    <Reference Include="UnityStubs">
+      <HintPath>D:\Steam\steamapps\common\RimWorld\UnityStubs.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>
@@ -26,6 +26,9 @@
     <Compile Include="..\..\Source\RimFirstPerson3D\LightShade.cs" Link="LightShade.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\HitFxMath.cs" Link="HitFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\ShotFxMath.cs" Link="ShotFxMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\Metrics3D.cs" Link="Metrics3D.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\MountainShape3D.cs" Link="MountainShape3D.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\MountainMesh3D.cs" Link="MountainMesh3D.cs" />
   </ItemGroup>
 
 </Project>

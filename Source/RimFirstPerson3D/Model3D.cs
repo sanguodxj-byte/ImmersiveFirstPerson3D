@@ -107,6 +107,7 @@ namespace RimFirstPerson3D
         public float taper;      // 圆柱顶底半径比（<=0 时按 Cylinder=1 / Cone=0.02）
         public bool noOutline;   // 参与渲染但不产生描边（如贴地薄片）
         public bool noTop;       // 顶面不贴图（如埋在别的部件下面）
+        public bool noBottom;    // 底面不贴图（如坐落在别的部件上面）
         /// <summary>取样规格下标（ModelBuilder 的 UvSpec 列表）。</summary>
         public int uv;
     }
@@ -118,9 +119,25 @@ namespace RimFirstPerson3D
         /// <summary>模型整体尺寸（宽, 高, 深），用于顶面 UV 与描边归一化。</summary>
         public Vector3 bounds;
 
+        /// <summary>3 轴欧拉旋转重载（yaw 绕Y，pitch 绕X，roll 绕Z）。</summary>
+        public Model3D Add(Prim kind, Vector3 pos, Vector3 size,
+            float yaw, float pitch, float roll)
+        {
+            parts.Add(new Part
+            {
+                kind = kind,
+                pos = pos,
+                size = size,
+                yaw = yaw,
+                pitch = pitch,
+                roll = roll,
+            });
+            return this;
+        }
+
         public Model3D Add(Prim kind, Vector3 pos, Vector3 size,
             float yaw = 0f, float pitch = 0f, bool noOutline = false, int uv = 0,
-            float roll = 0f, float taper = 0f)
+            float roll = 0f, float taper = 0f, bool noTop = false, bool noBottom = false)
         {
             parts.Add(new Part
             {
@@ -132,6 +149,8 @@ namespace RimFirstPerson3D
                 roll = roll,
                 taper = taper,
                 noOutline = noOutline,
+                noTop = noTop,
+                noBottom = noBottom,
                 uv = uv
             });
             return this;
@@ -216,12 +235,12 @@ namespace RimFirstPerson3D
                 case Prim.Box: AddBox(matrix, local, p.size, p); break;
                 case Prim.Cylinder: AddCylinder(matrix, local, p.size, p, false); break;
                 case Prim.Cone: AddCylinder(matrix, local, p.size, p, true); break;
-                case Prim.Wedge: AddWedge(matrix, p.size, p); break;
+                case Prim.Wedge: AddWedge(matrix, local, p.size, p); break;
                 case Prim.Sphere: AddSphere(matrix, p.size, p); break;
             }
 
-            if (!p.noOutline) EmitHull(hullStart);
-            else hullVerts.RemoveRange(hullStart, hullVerts.Count - hullStart);
+            // 内部不画黑线，描边仅限于最外边缘：全模型 Part 累积后在 ToHull/AppendToLists 时一次性合并
+            if (p.noOutline) hullVerts.RemoveRange(hullStart, hullVerts.Count - hullStart);
         }
 
         public void AddAll(Model3D model)
@@ -254,10 +273,16 @@ namespace RimFirstPerson3D
             uvs.Add(ua); uvs.Add(ub); uvs.Add(uc); uvs.Add(ud);
             tris.Add(i); tris.Add(i + 1); tris.Add(i + 2);
             tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
-            hullVerts.Add(m.MultiplyPoint3x4(a));
-            hullVerts.Add(m.MultiplyPoint3x4(b));
-            hullVerts.Add(m.MultiplyPoint3x4(c));
-            hullVerts.Add(m.MultiplyPoint3x4(d));
+            var ma = m.MultiplyPoint3x4(a);
+            var mb = m.MultiplyPoint3x4(b);
+            var mc = m.MultiplyPoint3x4(c);
+            var md = m.MultiplyPoint3x4(d);
+            hullVerts.Add(ma);
+            hullVerts.Add(mb);
+            hullVerts.Add(mc);
+            hullVerts.Add(ma);
+            hullVerts.Add(mc);
+            hullVerts.Add(md);
         }
 
         /// <summary>写入一个带平滑法线的顶点（曲面用）。</summary>
@@ -320,6 +345,7 @@ namespace RimFirstPerson3D
         {
             if (wholeCell) return new Vector4(0f, 0f, 1f, 1f);
             var r = uv.top;
+            if (uv.modelXZ.x <= 0.001f) return r;
             float mx = Mathf.Max(0.0001f, uv.modelXZ.x), mz = Mathf.Max(0.0001f, uv.modelXZ.y);
             a = m.MultiplyPoint3x4(a); b = m.MultiplyPoint3x4(b);
             c = m.MultiplyPoint3x4(c); d = m.MultiplyPoint3x4(d);
@@ -355,6 +381,17 @@ namespace RimFirstPerson3D
                     new Vector2(r.x, r.w), new Vector2(r.z, r.w),
                     new Vector2(r.z, r.y), new Vector2(r.x, r.y), m);
             }
+            if (!p.noBottom && m.MultiplyPoint3x4(Vector3.zero).y > 0.005f)
+            {
+                var ba = new Vector3(-hw, 0f, -hd);
+                var bb = new Vector3(hw, 0f, -hd);
+                var bc = new Vector3(hw, 0f, hd);
+                var bd = new Vector3(-hw, 0f, hd);
+                var r = TopRectFor(local, ba, bd, bc, bb);
+                Quad(ba, bb, bc, bd,
+                    new Vector2(r.x, r.y), new Vector2(r.z, r.y),
+                    new Vector2(r.z, r.w), new Vector2(r.x, r.w), m);
+            }
             // 四个侧面（绕序沿用 BuildingLayer3D.MeshBuilderX 的既有写法）
             // dir: 0北 1南 2东 3西 —— 与 UvSpec.side4 的下标一致
             SideQuads(new Vector3(hw, 0, -hd), new Vector3(-hw, 0, -hd),
@@ -367,27 +404,36 @@ namespace RimFirstPerson3D
                 new Vector3(hw, h, -hd), new Vector3(hw, h, hd), m, 2);           // 东 +X
         }
 
-        private void AddWedge(Matrix4x4 m, Vector3 s, Part p)
+        private void AddWedge(Matrix4x4 m, Matrix4x4 local, Vector3 s, Part p)
         {
             float hw = s.x * 0.5f, hd = s.z * 0.5f, h = s.y;
-            // 斜面：从 -z 端高度 0 升到 +z 端高度 h
+            // 斜面：从 -z 端高度 0 升到 +z 端高度 h。顺时针外法线朝斜上方 (+Y, -Z)
             var a = new Vector3(-hw, 0f, -hd);
-            var b = new Vector3(hw, 0f, -hd);
+            var b = new Vector3(-hw, h, hd);
             var c = new Vector3(hw, h, hd);
-            var d = new Vector3(-hw, h, hd);
-            SideQuads(a, b, c, d, m);                                   // 斜面
-            SideQuads(new Vector3(hw, 0, hd), new Vector3(-hw, 0, hd),
-                new Vector3(-hw, h, hd), new Vector3(hw, h, hd), m);     // 南立面
-            // 两侧三角
-            Tri3(new Vector3(-hw, 0, -hd), new Vector3(-hw, 0, hd), new Vector3(-hw, h, hd), m);
-            Tri3(new Vector3(hw, 0, hd), new Vector3(hw, 0, -hd), new Vector3(hw, h, hd), m);
-            // 底面
-            Quad(new Vector3(-hw, 0, hd), new Vector3(hw, 0, hd),
-                 new Vector3(hw, 0, -hd), new Vector3(-hw, 0, -hd),
-                 Vector2.zero, Vector2.right, Vector2.one, Vector2.up, m);
+            var d = new Vector3(hw, 0f, -hd);
+            var r = TopRectFor(local, a, b, c, d);
+            Quad(a, b, c, d,
+                new Vector2(r.x, r.y), new Vector2(r.x, r.w),
+                new Vector2(r.z, r.w), new Vector2(r.z, r.y), m);
+            // 南立面：面向 +Z，顺时针外法线朝南 (+Z)
+            SideQuads(new Vector3(-hw, 0f, hd), new Vector3(hw, 0f, hd),
+                new Vector3(hw, h, hd), new Vector3(-hw, h, hd), m, 1);
+            // 两侧三角：西侧朝 -X，东侧朝 +X
+            Tri3(new Vector3(-hw, 0f, -hd), new Vector3(-hw, 0f, hd), new Vector3(-hw, h, hd), uv.SideFor(3), m);
+            Tri3(new Vector3(hw, 0f, hd), new Vector3(hw, 0f, -hd), new Vector3(hw, h, hd), uv.SideFor(2), m);
+            // 底面：面向 -Y，顺时针外法线朝下 (-Y)
+            if (!p.noBottom)
+            {
+                var rBot = wholeCell ? new Vector4(0f, 0f, 1f, 1f) : uv.side;
+                Quad(new Vector3(-hw, 0f, -hd), new Vector3(hw, 0f, -hd),
+                     new Vector3(hw, 0f, hd), new Vector3(-hw, 0f, hd),
+                     new Vector2(rBot.x, rBot.y), new Vector2(rBot.z, rBot.y),
+                     new Vector2(rBot.z, rBot.w), new Vector2(rBot.x, rBot.w), m);
+            }
         }
 
-        private void Tri3(Vector3 a, Vector3 b, Vector3 c, Matrix4x4 m)
+        private void Tri3(Vector3 a, Vector3 b, Vector3 c, Vector4 rect, Matrix4x4 m)
         {
             var va = m.MultiplyPoint3x4(a);
             var vb = m.MultiplyPoint3x4(b);
@@ -396,7 +442,10 @@ namespace RimFirstPerson3D
             verts.Add(va); verts.Add(vb); verts.Add(vc);
             var n = Vector3.Cross(vb - va, vc - va).normalized;
             normals.Add(n); normals.Add(n); normals.Add(n);
-            uvs.Add(new Vector2(0, 0)); uvs.Add(new Vector2(1, 0)); uvs.Add(new Vector2(0.5f, 1));
+            var ua = new Vector2(rect.x, rect.y);
+            var ub = new Vector2(rect.z, rect.y);
+            var uc = new Vector2((rect.x + rect.z) * 0.5f, rect.w);
+            uvs.Add(ua); uvs.Add(ub); uvs.Add(uc);
             tris.Add(i); tris.Add(i + 1); tris.Add(i + 2);
             hullVerts.Add(va); hullVerts.Add(vb); hullVerts.Add(vc);
         }
@@ -423,7 +472,8 @@ namespace RimFirstPerson3D
                     new Vector2(Mathf.Lerp(rSide.x, rSide.z, u0), rSide.w),
                     new Vector2(Mathf.Lerp(rSide.x, rSide.z, u1), rSide.w), m);
             }
-            float mx = Mathf.Max(0.0001f, uv.modelXZ.x), mz = Mathf.Max(0.0001f, uv.modelXZ.y);
+            float mx = uv.modelXZ.x <= 0.001f ? Mathf.Max(0.0001f, s.x) : Mathf.Max(0.0001f, uv.modelXZ.x);
+            float mz = uv.modelXZ.y <= 0.001f ? Mathf.Max(0.0001f, s.z) : Mathf.Max(0.0001f, uv.modelXZ.y);
             // 顶盖（圆锥时退化为尖点，跳过）
             if (!cone && !p.noTop && ratio > 0.04f)
             {
@@ -446,6 +496,7 @@ namespace RimFirstPerson3D
                 }
             }
             // 底盖（闭合圆柱与圆锥底面，使反绕描边壳在底缘处与 viewer/animals.html 完全同口径）
+            if (!p.noBottom)
             {
                 var br = TopRectFor(local, new Vector3(-r, 0f, rz), new Vector3(r, 0f, rz),
                     new Vector3(r, 0f, -rz), new Vector3(-r, 0f, -rz));
@@ -476,7 +527,7 @@ namespace RimFirstPerson3D
 
         private void AddSphere(Matrix4x4 m, Vector3 s, Part p)
         {
-            const int lon = 14, lat = 10;
+            const int lon = 24, lat = 16;
             float rx = s.x * 0.5f, ry = s.y * 0.5f, rz = s.z * 0.5f;
             var rTop = wholeCell ? new Vector4(0, 0, 1, 1) : uv.top;
             int start = verts.Count;
@@ -596,9 +647,20 @@ namespace RimFirstPerson3D
             return mesh;
         }
 
+        /// <summary>
+        /// 全局统一焊接描边外壳：整件建筑作为连通实体合并顶点与法线。
+        /// 内部相贴合的面法线相反互相抵消，描边仅出现在模型最外轮廓边缘，内部绝对不画黑线。
+        /// </summary>
+        private void EnsureGlobalHull()
+        {
+            if (hullUnique.Count > 0 || hullVerts.Count < 3) return;
+            EmitHull(0);
+        }
+
         /// <summary>产出描边外壳网格：唯一顶点沿平均法线外扩 width。</summary>
         public Mesh ToHull(float width)
         {
+            EnsureGlobalHull();
             if (hullTris.Count == 0) return null;
             var v = new List<Vector3>(hullUnique.Count);
             for (int i = 0; i < hullUnique.Count; i++)
@@ -617,6 +679,7 @@ namespace RimFirstPerson3D
             List<Vector3> dstHullVerts, List<Vector3> dstHullNormals, List<Vector2> dstHullUvs, List<int> dstHullTris,
             float hullWidth)
         {
+            EnsureGlobalHull();
             if (tris.Count > 0 && dstVerts != null)
             {
                 int baseV = dstVerts.Count;

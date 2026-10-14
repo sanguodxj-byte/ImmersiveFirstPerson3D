@@ -20,6 +20,22 @@ namespace RimFirstPerson3D
         public const float MarginRightFrac = 0.24f;   // 掌心离右边缘，占屏高
         public const float MarginBottomFrac = 0.26f;  // 掌心离下边缘，占屏高
 
+        public static Vector2 HandCenter =>
+            new Vector2(UI.screenWidth - UI.screenHeight * MarginRightFrac,
+                        UI.screenHeight - UI.screenHeight * MarginBottomFrac);
+
+        public static void DrawHandAt(Vector2 center, float size, Color light)
+        {
+            var pawn = CameraRig3D.Possessed;
+            if (pawn == null) return;
+            EnsureTex();
+            var r = new Rect(center.x - size * 0.5f, center.y - size * 0.5f, size, size);
+            var prev = GUI.color;
+            GUI.color = SkinOf(pawn) * light;
+            GUI.DrawTexture(r, _tex, ScaleMode.StretchToFill, true);
+            GUI.color = prev;
+        }
+
         public static void Draw()
         {
             if (Viewmodel3D.Armed) return;              // 持械：隐藏手

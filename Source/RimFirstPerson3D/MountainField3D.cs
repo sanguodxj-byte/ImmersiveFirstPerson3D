@@ -12,6 +12,8 @@ namespace RimFirstPerson3D
         private bool shapeDirty;
         private bool capsDirty = true;
         private bool[] footprint;
+        private bool[] enclosedRoofs;
+        private bool roofRoomsDirty = true;
         private ushort[] rockKinds;
         private List<ThingDef> rockDefs = new List<ThingDef>();
         private string savedKinds;
@@ -93,6 +95,7 @@ namespace RimFirstPerson3D
             if (initialized || map == null || map.Disposed || map.Size.x <= 0 || map.Size.z <= 0) return;
             int count = map.Size.x * map.Size.z;
             footprint = new bool[count];
+            enclosedRoofs = new bool[count];
             rockKinds = new ushort[count];
             Cells = new byte[count];
             Ceilings = new float[count];
@@ -109,7 +112,6 @@ namespace RimFirstPerson3D
                             if (code > 0 && code <= rockDefs.Count)
                             {
                                 rockKinds[i] = (ushort)code;
-                                footprint[i] = true;
                             }
                         }
                 }
@@ -126,15 +128,99 @@ namespace RimFirstPerson3D
                 if (rock)
                 {
                     rockKinds[i] = CodeFor(ed.def);
-                    footprint[i] = true;
                 }
-                if (roof) footprint[i] = true;
+                footprint[i] = rock || roof;
                 Cells[i] = rock ? (byte)1 : roof ? (byte)2 : (byte)0;
             }
             FillRoofMaterials();
             if (seed == 0) seed = unchecked(map.uniqueID * 73856093 + 19349663);
             initialized = true;
             shapeDirty = true;
+        }
+
+        private static bool IsEnclosingEdifice(Thing ed)
+        {
+            if (ed == null || ed is Blueprint || ed is Frame || ed.def == null) return false;
+            return IsRock(ed.def) || ed.def.Fillage == FillCategory.Full || ed.def.IsDoor;
+        }
+
+        private bool StripExposedOverhangs()
+        {
+            int sx = map.Size.x, sz = map.Size.z, count = sx * sz;
+            var visited = new bool[count];
+            var queue = new int[count];
+            int read = 0, write = 0;
+            var rg = map.roofGrid;
+            var eg = map.edificeGrid;
+            var roomClosure = new Dictionary<Room, bool>();
+            bool anyChanged = false;
+
+            // Re-evaluate all natural roofs: a wall change can close a room far beyond the changed cell.
+            for (int i = 0; i < count; i++)
+            {
+                var ed = eg[i];
+                bool rock = IsRock(ed);
+                bool roof = NaturalRoof(rg.RoofAt(i));
+                bool enclosed = false;
+                if (roof && !rock)
+                {
+                    var c = new IntVec3(i % sx, 0, i / sx);
+                    var room = c.GetRoom(map);
+                    if (room != null && !roomClosure.TryGetValue(room, out enclosed))
+                    {
+                        enclosed = room.ProperRoom;
+                        roomClosure.Add(room, enclosed);
+                    }
+                }
+                if (enclosedRoofs[i] != enclosed)
+                {
+                    enclosedRoofs[i] = enclosed;
+                    anyChanged = true;
+                    changed.Add(i);
+                }
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                var ed = eg[i];
+                if (!IsEnclosingEdifice(ed) && rg.RoofAt(i) == null)
+                {
+                    visited[i] = true;
+                    queue[write++] = i;
+                }
+            }
+
+            while (read < write)
+            {
+                int i = queue[read++];
+                int x = i % sx, z = i / sx;
+                if (x > 0) TryEnqueueOpen(i - 1, visited, queue, ref write, eg);
+                if (x + 1 < sx) TryEnqueueOpen(i + 1, visited, queue, ref write, eg);
+                if (z > 0) TryEnqueueOpen(i - sx, visited, queue, ref write, eg);
+                if (z + 1 < sz) TryEnqueueOpen(i + sx, visited, queue, ref write, eg);
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                bool rock = IsRock(eg[i]);
+                bool roof = NaturalRoof(rg.RoofAt(i));
+                byte type = rock ? (byte)1 : roof && (!visited[i] || enclosedRoofs[i]) ? (byte)2 : (byte)0;
+                bool inFootprint = type != 0;
+                if (Cells[i] == type && footprint[i] == inFootprint) continue;
+                Cells[i] = type;
+                footprint[i] = inFootprint;
+                anyChanged = true;
+                changed.Add(i);
+            }
+            return anyChanged;
+        }
+
+        private static void TryEnqueueOpen(int idx, bool[] visited, int[] queue, ref int write, EdificeGrid eg)
+        {
+            if (visited[idx]) return;
+            if (IsEnclosingEdifice(eg[idx])) return;
+            visited[idx] = true;
+            queue[write++] = idx;
         }
 
         private void FillRoofMaterials()
@@ -165,7 +251,9 @@ namespace RimFirstPerson3D
 
         public void NotifyCell(IntVec3 c)
         {
-            if (c.InBounds(map)) pending.Add(c.z * map.Size.x + c.x);
+            if (!c.InBounds(map)) return;
+            pending.Add(c.z * map.Size.x + c.x);
+            roofRoomsDirty = true;
         }
 
         public void NotifyThing(Thing t)
@@ -187,23 +275,24 @@ namespace RimFirstPerson3D
                 var c = new IntVec3(i % map.Size.x, 0, i / map.Size.x);
                 var ed = c.GetEdifice(map);
                 bool rock = IsRock(ed);
-                bool roof = NaturalRoof(map.roofGrid.RoofAt(c));
-                if ((rock || roof) && !footprint[i])
-                {
-                    footprint[i] = true;
-                    shapeDirty = true;
-                }
                 if (rock) rockKinds[i] = CodeFor(ed.def);
-                if (footprint[i] && rockKinds[i] == 0) rockKinds[i] = CodeFor(DefaultRock());
-                Cells[i] = rock ? (byte)1 : roof ? (byte)2 : (byte)0;
                 changed.Add(i);
             }
             pending.Clear();
+            if (roofRoomsDirty)
+            {
+                roofRoomsDirty = false;
+                if (StripExposedOverhangs())
+                {
+                    shapeDirty = true;
+                    FillRoofMaterials();
+                }
+            }
             if (shapeDirty)
             {
                 long start = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (Shape == null) Shape = new MountainShape3D(map.Size.x, map.Size.z, seed);
-                Shape.Build(footprint);
+                Shape.Build(footprint, enclosedRoofs);
                 LastBuildMs = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0
                     / System.Diagnostics.Stopwatch.Frequency);
                 shapeDirty = false;
@@ -251,11 +340,32 @@ namespace RimFirstPerson3D
             }
         }
 
+        public ThingDef DefaultRockDef() => DefaultRock();
+
         public ThingDef RockDefAt(int x, int z)
         {
             if (!Ready || x < 0 || z < 0 || x >= map.Size.x || z >= map.Size.z) return null;
             int code = rockKinds[z * map.Size.x + x];
             return code > 0 && code <= rockDefs.Count ? rockDefs[code - 1] : null;
+        }
+
+        public ThingDef HostRockDefAt(int x, int z)
+        {
+            var d = RockDefAt(x, z);
+            if (d != null && d.building != null && !d.building.isResourceRock) return d;
+            if (Ready)
+            {
+                for (int r = 1; r <= 5; r++)
+                {
+                    for (int dz = -r; dz <= r; dz += r)
+                        for (int dx = -r; dx <= r; dx += r)
+                        {
+                            var nd = RockDefAt(x + dx, z + dz);
+                            if (nd != null && nd.building != null && !nd.building.isResourceRock) return nd;
+                        }
+                }
+            }
+            return DefaultRock() ?? d;
         }
 
         public bool TryInterval(float x, float z, out float bottom, out float top)

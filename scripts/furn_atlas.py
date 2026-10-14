@@ -12,7 +12,7 @@
   front」，其余三面取各自朝向图的 front（东/西共用 east，水平镜像）。
 
 产物：
-    1.6/Textures/FPS3D/FurnitureAtlas.png   图集（只含原版像素，黑描边已剥离）
+    Textures/FPS3D/FurnitureAtlas.png   图集（只含原版像素，黑描边已剥离）
     Source/RimFirstPerson3D/FurnitureUVGen.cs  图集 UV 常量表（生成，勿手改）
     docs/furniture/uv/<item>_<view>.png     放大图上画绿框 = 该图被取样的区域
 """
@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 TEX = r"D:\rim mod\RimWorld_Vanilla_Textures_1.6"
 MOD = r"D:\rim mod\FirstPerson3D"
-ATLAS_OUT = os.path.join(MOD, "1.6", "Textures", "FPS3D", "FurnitureAtlas.png")
+ATLAS_OUT = os.path.join(MOD, "Textures", "FPS3D", "FurnitureAtlas.png")
 CS_OUT = os.path.join(MOD, "Source", "RimFirstPerson3D", "FurnitureUVGen.cs")
 UV_OUT = os.path.join(MOD, "docs", "furniture", "uv")
 # 检查器页面（viewer/ 是 http://127.0.0.1:8899 的根）共用的产物：
@@ -55,11 +55,14 @@ SPEC = {
     # 交界线 = 目视判读的"俯视段/立面段"分界（见 docs/furniture/uv/*.png 绿框）。
     "bed": {
         "south": {"path": f"{FB}/bed_south.png",
-                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125), "wood": (55, 114, 75, 122)},
+                  "top": (35, 36, 93, 110), "pillow": (42, 7, 86, 32),
+                  "front": (35, 110, 93, 123), "wood": (42, 116, 86, 122)},
         "north": {"path": f"{FB}/bed_north.png",
-                  "top": (33, 0, 95, 110), "front": (33, 110, 95, 125)},
+                  "top": (35, 6, 93, 80), "pillow": (42, 82, 86, 107),
+                  "front": (35, 110, 93, 123)},
         "east": {"path": f"{FB}/bed_east.png",
-                 "top": (10, 28, 120, 88), "front": (10, 88, 120, 95)},
+                 "top": (36, 32, 118, 86), "pillow": (11, 36, 35, 80),
+                 "front": (36, 88, 118, 95), "wood": (45, 40, 110, 76)},
     },
     "stool": {
         "north": {"path": f"{F}/stool_north.png",
@@ -70,19 +73,18 @@ SPEC = {
     },
     "endtable": {
         "south": {"path": f"{F}/endtable_south.png",
-                  "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
-                  "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
-                              (10, 33, 20, 39), (36, 33, 53, 40),
-                              (10, 40, 53, 64)], "wood": (14, 10, 30, 20)},
+                  "top": (10, 5, 53, 28), "front": (20, 30, 44, 46),
+                  "discard": [(10, 28, 53, 30),
+                              (10, 30, 20, 46), (44, 30, 53, 46),
+                              (10, 46, 53, 64)], "wood": (14, 10, 30, 20)},
         "north": {"path": f"{F}/endtable_north.png",
-                  "top": (10, 5, 53, 28), "front": (20, 33, 36, 39),
+                  "top": (10, 5, 53, 28), "front": (20, 33, 44, 39),
                   "discard": [(10, 28, 53, 33), (10, 39, 53, 40),
-                              (10, 33, 20, 39), (36, 33, 53, 40),
+                              (10, 33, 20, 39), (44, 33, 53, 40),
                               (10, 40, 53, 64)]},
-        # 东视图的下半带是"腿+轮廓"线稿带（笔画占 37%），不配当材质：
-        # 整带声明丢弃，侧立面改取南视图的 front（同为该柜体的木面）。
         "east": {"path": f"{F}/endtable_east.png",
-                 "top": (17, 0, 47, 28), "discard": [(17, 28, 47, 64)]},
+                 "top": (17, 4, 47, 28), "front": (27, 36, 37, 46),
+                 "discard": [(17, 28, 47, 36), (17, 46, 47, 64)]},
     },
     "dresser": {
         "south": {"path": f"{F}/dresser_south.png",
@@ -133,6 +135,191 @@ SPEC = {
                   "edge": (65, 64, 255, 72), "top": (65, 72, 255, 256),
                   "front": (74, 256, 83, 271), "wood": (100, 110, 220, 240)},
     },
+    # ---- production phase 1: exact vanilla workbench samples ----
+    # A vanilla production bench is a 3x1 sprite: the south/north canvas has
+    # a 192x64 top projection and the east canvas has a 64x192 projection.
+    # Keep those aspect ratios intact. The lower 9px strip is the only
+    # rectangular source for the vertical apron; do not use the transparent
+    # canvas around it as a material sample.
+    #
+    # The generated atlas/UV file remains the only runtime source; no
+    # generated FurnitureUVGen.cs or FurnitureAtlas.png edits belong here.
+    "tablebutcher": {
+        "south": {"path": f"Core/textures/things/building/production/tablebutcher_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 85)},
+        "north": {"path": f"Core/textures/things/building/production/tablebutcher_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 74, 85)},
+        "east": {"path": f"Core/textures/things/building/production/tablebutcher_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 205, 72, 213)},
+    },
+    "tablesculpting": {
+        "south": {"path": f"Core/textures/things/building/production/tablesculpting_south.png",
+                   "top": (19, 18, 130, 77), "front": (24, 77, 114, 85),
+                   "stone": (94, 42, 112, 58), "stone_s": (148, 52, 166, 66)},
+        "north": {"path": f"Core/textures/things/building/production/tablesculpting_north.png",
+                   "top": (94, 18, 205, 77), "front": (110, 77, 200, 85),
+                   "stone": (112, 42, 130, 58), "stone_s": (26, 26, 42, 40)},
+        "east": {"path": f"Core/textures/things/building/production/tablesculpting_east.png",
+                  "top": (19, 92, 77, 205), "front": (24, 205, 72, 213),
+                  "stone": (44, 116, 60, 132), "stone_s": (48, 22, 62, 34)},
+    },
+    "tablesmithingfueled": {
+        "south": {"path": f"Core/textures/things/building/production/tablesmithingfueled_south.png",
+                   "top": (75, 36, 205, 74), "front": (158, 76, 198, 86),
+                   "box_top": (20, 16, 70, 44), "box_front": (20, 44, 70, 73),
+                   "hood": (92, 22, 130, 34)},
+        "north": {"path": f"Core/textures/things/building/production/tablesmithingfueled_north.png",
+                   "top": (19, 21, 149, 60), "front": (136, 22, 148, 36),
+                   "box_top": (154, 16, 204, 44), "box_front": (154, 44, 204, 73),
+                   "hood": (98, 62, 128, 74)},
+        "east": {"path": f"Core/textures/things/building/production/tablesmithingfueled_east.png",
+                  "top": (36, 19, 74, 141), "front": (62, 36, 72, 48),
+                  "box_top": (20, 146, 70, 172), "box_front": (20, 172, 70, 196),
+                  "hood": (22, 92, 34, 128)},
+    },
+    "tablesmithingelectric": {
+        "south": {"path": f"Core/textures/things/building/production/tablesmithingelectric_south.png",
+                   "top": (19, 36, 205, 74), "front": (158, 76, 198, 86),
+                   "box_top": (38, 30, 70, 52), "box_front": (38, 52, 70, 70),
+                   "hood": (92, 22, 130, 34)},
+        "north": {"path": f"Core/textures/things/building/production/tablesmithingelectric_north.png",
+                   "top": (19, 21, 205, 60), "front": (136, 22, 148, 36),
+                   "box_top": (154, 16, 186, 38), "box_front": (154, 38, 186, 54),
+                   "hood": (98, 62, 128, 74)},
+        "east": {"path": f"Core/textures/things/building/production/tablesmithingelectric_east.png",
+                  "top": (36, 19, 74, 201), "front": (62, 36, 72, 48),
+                  "box_top": (42, 144, 72, 172), "box_front": (42, 172, 72, 198),
+                  "hood": (22, 92, 34, 128)},
+    },
+    "tablestoveelectric": {
+        "south": {"path": f"Core/textures/things/building/production/tablestoveelectric_south.png",
+                   "top": (19, 17, 147, 74), "front": (24, 72, 72, 78),
+                   "box_top": (152, 16, 202, 42), "box_front": (152, 44, 202, 76)},
+        "north": {"path": f"Core/textures/things/building/production/tablestoveelectric_north.png",
+                   "top": (77, 17, 205, 74), "front": (154, 73, 200, 78),
+                   "box_top": (21, 16, 74, 42), "box_front": (21, 44, 74, 78)},
+        "east": {"path": f"Core/textures/things/building/production/tablestoveelectric_east.png",
+                  "top": (19, 74, 77, 202), "front": (24, 200, 72, 206),
+                  "box_top": (22, 17, 74, 42), "box_front": (22, 44, 74, 68)},
+    },
+    "tablestovefueled": {
+        "south": {"path": f"Core/textures/things/building/production/tablestovefueled_south.png",
+                   "top": (75, 17, 205, 74), "front": (152, 73, 200, 78),
+                   "box_top": (21, 16, 72, 42), "box_front": (22, 44, 72, 80)},
+        "north": {"path": f"Core/textures/things/building/production/tablestovefueled_north.png",
+                   "top": (19, 17, 149, 74), "front": (46, 73, 80, 78),
+                   "box_top": (152, 16, 203, 42), "box_front": (152, 44, 202, 80)},
+        "east": {"path": f"Core/textures/things/building/production/tablestovefueled_east.png",
+                  "top": (19, 19, 77, 144), "front": (66, 24, 75, 68),
+                  "box_top": (21, 146, 74, 172), "box_front": (22, 172, 72, 204)},
+    },
+    "tabletailorhand": {
+        "south": {"path": f"Core/textures/things/building/production/tabletailorhand_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 81)},
+        "north": {"path": f"Core/textures/things/building/production/tabletailorhand_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 81)},
+        "east": {"path": f"Core/textures/things/building/production/tabletailorhand_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 205, 72, 209)},
+    },
+    "tabletailorelectric": {
+        "south": {"path": f"Core/textures/things/building/production/tabletailorelectric_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 81),
+                   "mach": (91, 14, 136, 28), "mach_s": (88, 39, 138, 46)},
+        "north": {"path": f"Core/textures/things/building/production/tabletailorelectric_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 81),
+                   "mach": (88, 35, 133, 49), "mach_s": (87, 60, 137, 67)},
+        "east": {"path": f"Core/textures/things/building/production/tabletailorelectric_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 205, 72, 209),
+                  "mach": (40, 84, 56, 134), "mach_s": (34, 134, 61, 143)},
+    },
+    "tablestonecutter": {
+        "south": {"path": f"Core/textures/things/building/production/tablestonecutter_south.png",
+                   "top": (19, 41, 205, 77), "front": (24, 77, 200, 84),
+                   "disc": (94, 28, 134, 58)},
+        "north": {"path": f"Core/textures/things/building/production/tablestonecutter_north.png",
+                   "top": (19, 19, 205, 47), "front": (22, 47, 50, 54),
+                   "disc": (92, 32, 132, 62)},
+        "east": {"path": f"Core/textures/things/building/production/tablestonecutter_east.png",
+                  "top": (45, 19, 77, 205), "front": (46, 205, 74, 213),
+                  "disc": (28, 92, 58, 132)},
+    },
+    "tablemachining": {
+        "south": {"path": f"Core/textures/things/building/production/tablemachining_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 85),
+                   "body": (82, 58, 122, 74), "pad": (76, 19, 146, 51)},
+        "north": {"path": f"Core/textures/things/building/production/tablemachining_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 77, 200, 85),
+                   "body": (102, 20, 142, 36), "pad": (78, 43, 148, 75)},
+        "east": {"path": f"Core/textures/things/building/production/tablemachining_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 205, 72, 213),
+                  "body": (58, 106, 74, 142), "pad": (20, 76, 52, 146)},
+    },
+    "tabledruglab": {
+        "south": {"path": f"Core/textures/things/building/production/tabledruglab_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 78, 200, 85),
+                   "pad": (168, 46, 198, 70), "col": (180, 18, 188, 56),
+                   "vat": (96, 44, 122, 68), "grn": (66, 20, 84, 36), "blu": (44, 44, 60, 62)},
+        "north": {"path": f"Core/textures/things/building/production/tabledruglab_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 78, 200, 85),
+                   "pad": (24, 46, 54, 70), "col": (36, 18, 44, 56),
+                   "vat": (100, 32, 126, 56), "grn": (140, 50, 158, 66), "blu": (162, 34, 178, 52)},
+        "east": {"path": f"Core/textures/things/building/production/tabledruglab_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 206, 72, 213),
+                  "pad": (26, 40, 48, 62), "col": (34, 18, 42, 50),
+                  "vat": (48, 86, 70, 112), "grn": (24, 134, 42, 150), "blu": (48, 156, 62, 172)},
+    },
+    "tablebrewery": {
+        "south": {"path": f"Core/textures/things/building/production/tablebrewery_south.png",
+                   "top": (19, 17, 141, 77), "front": (24, 77, 138, 85),
+                   "vat": (154, 42, 182, 66), "vat_s": (154, 60, 182, 82)},
+        "north": {"path": f"Core/textures/things/building/production/tablebrewery_north.png",
+                   "top": (83, 17, 205, 77), "front": (86, 77, 200, 85),
+                   "vat": (42, 42, 70, 66), "vat_s": (42, 60, 70, 82)},
+        "east": {"path": f"Core/textures/things/building/production/tablebrewery_east.png",
+                  "top": (19, 80, 77, 205), "front": (24, 205, 72, 213),
+                  "vat": (46, 42, 74, 66), "vat_s": (46, 58, 74, 78)},
+    },
+    "electricsmelter": {
+        "south": {"path": f"Core/textures/things/building/production/electricsmelter_south.png",
+                   "top": (19, 17, 205, 77), "front": (24, 78, 68, 85),
+                   "hood": (84, 38, 140, 44), "hood_s": (84, 52, 140, 68)},
+        "north": {"path": f"Core/textures/things/building/production/electricsmelter_north.png",
+                   "top": (19, 17, 205, 77), "front": (24, 78, 68, 85),
+                   "hood": (84, 44, 140, 58), "hood_s": (84, 22, 140, 38)},
+        "east": {"path": f"Core/textures/things/building/production/electricsmelter_east.png",
+                  "top": (19, 17, 77, 205), "front": (24, 206, 72, 213),
+                  "hood": (38, 84, 44, 140), "hood_s": (52, 84, 68, 140)},
+    },
+    "researchbenchsimple": {
+        "south": {"path": f"Core/textures/things/building/production/researchbenchsimple_south.png",
+                   "top": (67, 66, 253, 189), "front": (70, 189, 250, 197)},
+        "north": {"path": f"Core/textures/things/building/production/researchbenchsimple_north.png",
+                   "top": (67, 66, 253, 189), "front": (70, 189, 250, 197)},
+        "east": {"path": f"Core/textures/things/building/production/researchbenchsimple_east.png",
+                  "top": (66, 66, 190, 253), "front": (70, 253, 186, 261)},
+    },
+    "researchbenchhitech": {
+        "south": {"path": f"Core/textures/things/building/production/researchbenchhitech_south.png",
+                   "top": (66, 66, 382, 189), "front": (70, 189, 378, 197),
+                   "tray": (324, 90, 358, 166), "flask": (102, 140, 120, 158)},
+        "north": {"path": f"Core/textures/things/building/production/researchbenchhitech_north.png",
+                   "top": (66, 66, 382, 189), "front": (70, 189, 378, 197),
+                   "tray": (90, 90, 124, 166), "flask": (328, 140, 346, 158)},
+        "east": {"path": f"Core/textures/things/building/production/researchbenchhitech_east.png",
+                  "top": (66, 66, 190, 381), "front": (70, 381, 186, 389),
+                  "tray": (90, 90, 166, 124), "flask": (98, 328, 116, 346)},
+    },
+    "fabricationbench": {
+        "south": {"path": f"Core/textures/things/building/production/fabricationbench_south.png",
+                   "top": (66, 68, 382, 189), "front": (70, 191, 378, 197),
+                   "body": (70, 172, 130, 186), "mach": (156, 108, 194, 152)},
+        "north": {"path": f"Core/textures/things/building/production/fabricationbench_north.png",
+                   "top": (66, 68, 382, 189), "front": (214, 191, 240, 197),
+                   "body": (368, 74, 380, 110), "mach": (156, 72, 194, 116)},
+        "east": {"path": f"Core/textures/things/building/production/fabricationbench_east.png",
+                  "top": (66, 66, 190, 381), "front": (132, 382, 184, 389),
+                  "body": (166, 68, 186, 80), "mach": (140, 150, 178, 188)},
+    },
     # ---- 书柜家族（正面 = 厚框 + 亮内腔，读作一块大面板；只声明 south/east，
     # north 是素背板，交给 south->north->east 回退）----
     "bookcase": {
@@ -165,30 +352,33 @@ SPEC = {
     },
     "armchair": {
         "south": {"path": f"{F}/armchair_south.png",
-                  "top": (96, 81, 161, 110), "back": (91, 110, 166, 136),
-                  "front": (86, 136, 171, 175), "wood": (100, 132, 160, 168)},
+                  "back": (96, 84, 160, 112), "top": (104, 132, 152, 160),
+                  "arml": (88, 136, 98, 162), "armr": (158, 136, 168, 162),
+                  "front": (92, 164, 164, 173), "wood": (106, 136, 150, 158)},
         "north": {"path": f"{F}/armchair_north.png",
                   "arml": (84, 105, 99, 112), "armr": (156, 105, 172, 112),
-                  "top": (83, 112, 173, 128), "back": (87, 128, 169, 172),
-                  "wood": (100, 134, 160, 166)},
+                  "top": (100, 112, 156, 124), "back": (92, 132, 164, 168),
+                  "front": (92, 140, 164, 168), "wood": (104, 140, 152, 164)},
         "east": {"path": f"{F}/armchair_east.png",
-                 "back": (94, 81, 108, 96), "arml": (88, 96, 113, 120),
-                 "top": (87, 120, 159, 176), "wood": (100, 126, 140, 140)},
+                 "back": (92, 86, 106, 156), "arml": (114, 142, 156, 158),
+                 "top": (114, 124, 156, 156), "front": (92, 162, 156, 172),
+                 "wood": (116, 126, 152, 138)},
     },
     # ---- 沙发：与扶手椅同一配方（箱体 + 靠背 + 两端扶手），只是 2x1 长轴上多两个坐垫。
     # south 是长边（坐垫/靠背/裙板三条横带 + 两端扶手柱），east 是端视（靠背立柱 + 箱体）。
     "couch": {
         "south": {"path": f"{F}/couch_south.png",
-                  "back": (56, 84, 200, 112), "top": (62, 112, 196, 162),
-                  "arml": (51, 112, 62, 162), "armr": (196, 128, 207, 162),
-                  "front": (48, 162, 207, 174), "wood": (100, 120, 160, 150)},
+                  "back": (62, 84, 194, 110), "top": (68, 116, 188, 158),
+                  "arml": (53, 128, 61, 158), "armr": (196, 128, 205, 158),
+                  "front": (54, 163, 202, 172), "wood": (100, 120, 160, 150)},
         "north": {"path": f"{F}/couch_north.png",
-                  "arml": (43, 103, 61, 112), "armr": (195, 102, 214, 112),
-                  "back": (45, 112, 211, 146),
-                  "front": (48, 146, 208, 172), "wood": (100, 120, 160, 140)},
+                  "arml": (45, 104, 59, 111), "armr": (197, 104, 211, 111),
+                  "back": (64, 114, 192, 144),
+                  "front": (54, 148, 202, 170), "wood": (100, 120, 160, 140)},
         "east": {"path": f"{F}/couch_east.png",
-                 "top": (108, 59, 159, 150), "back": (86, 23, 108, 213),
-                 "front": (108, 150, 162, 213), "wood": (120, 90, 150, 130)},
+                 "top": (116, 62, 156, 146), "back": (90, 28, 106, 206),
+                 "arml": (116, 156, 156, 176), "front": (116, 198, 158, 210),
+                 "wood": (120, 90, 150, 130)},
     },
     # ---- 餐椅：座面是画出来的椭圆（同凳：圆柱面 + 木侧），靠背 = 顶栏那条白带，
     # 腿带是线稿 -> 只取一条腿做立面，其余整带声明丢弃。
@@ -208,44 +398,44 @@ SPEC = {
     # front = 图底部那条立面带（床尾栏）。south 头在图上端，east 头在图左端。
     "doublebed": {
         "south": {"path": f"{FB}/doublebed_south.png",
-                  "top": (4, 28, 124, 112), "pillow": (4, 4, 124, 28),
+                  "top": (4, 28, 124, 112), "pillow": (16, 7, 56, 26),
                   "front": (4, 112, 124, 124), "wood": (40, 60, 90, 100)},
         "east": {"path": f"{FB}/doublebed_east.png",
-                 "top": (32, 5, 124, 112), "pillow": (4, 5, 32, 124),
+                 "top": (32, 5, 124, 112), "pillow": (7, 16, 26, 56),
                  "front": (32, 112, 124, 124), "wood": (60, 40, 100, 90)},
     },
     "royalbed": {
         "south": {"path": f"{FB}/royalbed_south.png",
-                  "top": (5, 42, 123, 112), "pillow": (4, 5, 124, 42),
+                  "top": (5, 42, 123, 112), "pillow": (18, 10, 56, 34),
                   "front": (4, 112, 124, 126), "wood": (40, 60, 90, 100)},
         "east": {"path": f"{FB}/royalbed_east.png",
-                 "top": (32, 5, 124, 112), "pillow": (4, 5, 32, 124),
+                 "top": (32, 5, 124, 112), "pillow": (10, 18, 30, 56),
                  "front": (39, 112, 124, 126), "wood": (60, 40, 100, 90)},
     },
     "hospitalbed": {
         "south": {"path": f"{FB}/hospitalbed_south.png",
-                  "top": (32, 38, 96, 112), "pillow": (35, 4, 93, 38),
+                  "top": (32, 38, 96, 112), "pillow": (42, 7, 86, 33),
                   "front": (31, 112, 97, 124), "wood": (50, 60, 80, 100)},
         "east": {"path": f"{FB}/hospitalbed_east.png",
-                 "top": (32, 31, 124, 90), "pillow": (4, 33, 32, 97),
+                 "top": (32, 31, 124, 90), "pillow": (7, 36, 30, 80),
                  "front": (37, 90, 124, 98), "wood": (60, 50, 100, 80)},
     },
     # ---- 地铺（bedroll / sleeping spot）：没有床架、床头板，就一条薄垫 + 枕头 ----
     "bedroll": {
         "south": {"path": f"{FB}/bedroll_south.png",
-                  "top": (8, 38, 60, 113), "pillow": (7, 7, 58, 38),
+                  "top": (8, 38, 60, 113), "pillow": (14, 10, 52, 34),
                   "front": (9, 113, 59, 121), "wood": (20, 60, 45, 100)},
         "east": {"path": f"{FB}/bedroll_east.png",
-                 "top": (40, 9, 122, 50), "pillow": (6, 7, 40, 57),
+                 "top": (40, 9, 122, 50), "pillow": (10, 13, 36, 48),
                  "front": (40, 50, 122, 57), "wood": (70, 20, 110, 45)},
     },
     "bedrolldouble": {
         "south": {"path": f"{FB}/bedrolldouble_south.png",
-                  "top": (9, 56, 121, 113), "pillow": (9, 7, 121, 56),
+                  "top": (10, 34, 120, 113), "pillow": (18, 10, 60, 28),
                   "front": (9, 113, 121, 121), "wood": (60, 80, 110, 110)},
         "east": {"path": f"{FB}/bedrolldouble_east.png",
-                 "top": (40, 10, 122, 50), "pillow": (6, 11, 40, 120),
-                 "front": (40, 50, 122, 121), "wood": (70, 20, 110, 45)},
+                 "top": (34, 10, 120, 113), "pillow": (10, 18, 28, 60),
+                 "front": (34, 113, 120, 120), "wood": (70, 20, 110, 45)},
     },
     # ---- 第三批（草稿，坐标待 _furn_fit.py fix 收缩）：单图型 Graphic_Single ----
     # 这类件原版只画一张立面图（四向共用），所以 front = 图里那条带，
@@ -274,7 +464,7 @@ SPEC = {
         "south": {"path": f"{F}/floodlight.png",
                   "top": (67, 52, 190, 92), "pole": (111, 92, 145, 184),
                   "basel": (97, 150, 111, 178), "baser": (145, 150, 159, 178),
-                  "wood": (69, 57, 187, 83)},
+                  "wood": (112, 57, 144, 72)},
     },
     # ---- 第四批草稿（坐标待 _furn_fit.py fix 收缩）：Royalty 大件 + 石碑 ----
     "throne": {
@@ -285,9 +475,9 @@ SPEC = {
     },
     "grandthrone": {
         "south": {"path": f"{ROY}/grandthrone_south.png",
-                  "spire": (115, 34, 141, 66), "gold": (105, 57, 115, 66),
-                  "front": (30, 66, 225, 150), "top": (30, 150, 225, 196),
-                  "wood": (60, 160, 200, 180)},
+                  "spire": (118, 42, 138, 66), "gold": (115, 70, 141, 110),
+                  "front": (34, 176, 100, 194), "top": (105, 148, 150, 172),
+                  "wood": (105, 148, 150, 172)},
     },
     "drape": {
         "south": {"path": f"{ROY}/drape_south.png",
@@ -430,12 +620,19 @@ def pack(items):
     for key, path, (x0, y0, x1, y1), (ax, ay, aw, ah) in placed:
         src = load(path)
         sub = src[y0:y1, x0:x1].copy()
-        # 透明像素也要补实：模型的面是一整块，留 alpha=0 会在 Cutout 下穿洞、
-        # 在不透明材质下直接渲成黑。取值仍来自本区原图像素。
-        holes = sub[:, :, 3] < 128
-        if holes.any():
-            sub = strip_stroke(sub, holes)
-        mask = black_mask(src)[y0:y1, x0:x1] | holes
+        # 透明像素与原版黑描边（含 1~2px 半透明/抗锯齿暗晕）一并用内侧真实材质补绘掉：
+        lum_full = src[:, :, :3].astype(np.float32).mean(axis=2)
+        raw_full = (src[:, :, 3] < 180) | black_mask(src)
+        raw_sub = raw_full[y0:y1, x0:x1]
+        lum_sub = lum_full[y0:y1, x0:x1]
+        mask = raw_sub.copy()
+        if (~raw_sub).any():
+            med = float(np.median(lum_sub[~raw_sub]))
+            d1 = dilate(raw_full)[y0:y1, x0:x1] & (lum_sub < min(150.0, med * 0.82))
+            d2 = dilate(dilate(raw_full))[y0:y1, x0:x1] & (lum_sub < min(130.0, med * 0.74))
+            cand = raw_sub | d1 | d2
+            if (~cand).any():
+                mask = cand
         n_stroke = int(mask.sum())
         core = strip_stroke(sub, mask) if n_stroke else sub
         core[:, :, 3] = 255
