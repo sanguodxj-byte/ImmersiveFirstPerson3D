@@ -11,7 +11,7 @@ namespace RimFirstPerson3D
     // 建筑资产模型：外部 OBJ 接管
     // ============================================================
     //
-    // 【来源】FPS3D-Uncompleted-Textures 仓库的 91 个待建模建筑 glb，
+    // 【来源】FPS3D-Uncompleted-Textures 仓库的 152 个待建模建筑 glb，
     //         经资产管线转成三角化 OBJ + MTL + PNG，落盘
     //         1.7\Assets\buildings\Building_<DefName>[__变体].obj。
     //         每个 OBJ 恰好两组：Body（带贴图本体）与 Outline（反绕描边壳）。
