@@ -47,6 +47,7 @@ namespace RimFirstPerson3D.LightSim
             L6();
             Console.WriteLine("-- F016 L7 天空与天气 --");
             L7(f);
+            SkyChecks.Run();
             Console.WriteLine("-- F016 L9 屏幕层 --");
             L9();
         }

@@ -75,6 +75,18 @@ namespace RimFirstPerson3D
         private static readonly int PropExposure = Shader.PropertyToID("_Exposure");
         private static readonly int PropSkyTint = Shader.PropertyToID("_SkyTint");
         private static readonly int PropGroundColor = Shader.PropertyToID("_GroundColor");
+        private static readonly int PropSkyColor = Shader.PropertyToID("_SkyColor");
+        private static readonly int PropMidSkyColor = Shader.PropertyToID("_MidSkyColor");
+        private static readonly int PropHorizonColor = Shader.PropertyToID("_HorizonColor");
+        private static readonly int PropSunGlowHorizon = Shader.PropertyToID("_SunGlowHorizon");
+        private static readonly int PropSunGlowUpper = Shader.PropertyToID("_SunGlowUpper");
+        private static readonly int PropAntiSunHorizon = Shader.PropertyToID("_AntiSunHorizon");
+        private static readonly int PropSunDir = Shader.PropertyToID("_SunDir");
+        private static readonly int PropSunWarm = Shader.PropertyToID("_SunWarm");
+        private static readonly int PropSkyParams = Shader.PropertyToID("_Params");
+        private static readonly int PropCloudParams = Shader.PropertyToID("_CloudParams");
+        private static bool usingPerPixelSky;
+        private static bool usingPerPixelCloud;
         private static float lastSkyGlow = -1f;
         private static float lastSkyTwilight = -1f;
         private static float lastSkyFog = -1f;
@@ -211,13 +223,23 @@ namespace RimFirstPerson3D
             Shader addShader = ShaderDatabase.MoteGlow ?? ShaderDatabase.WorldOverlayAdditive ?? transNoDepth;
 
             // 1. 无接缝 3D 体积积云穹顶（天顶连续平展映射 + 地平线顶点 Alpha 平滑归零，彻底杜绝星球晨昏斜切线、圆弧接缝与地平线截断线）
+            Shader customCloudShader = DefDatabase<ShaderDef>.GetNamedSilentFail("FirstPersonSkyCloud")?.Shader ?? Shader.Find("FirstPersonSkyCloud");
+            usingPerPixelCloud = customCloudShader != null;
+            Shader cloudShader = customCloudShader ?? transNoDepth;
+
             seamlessCloudTex = MakeSeamlessCloudTex(512);
-            gpuCloudMat = new Material(transNoDepth)
+            gpuCloudMat = new Material(cloudShader)
             { name = "FirstPerson3D_GpuCloudsSeamless", mainTexture = seamlessCloudTex, renderQueue = 1015 };
+            if (usingPerPixelCloud)
+            {
+                gpuCloudMat.SetVector(PropCloudParams, new Vector4(0.35f, 0.32f, 0.08f, 0.38f));
+            }
             gpuCloudMesh = BuildSeamlessCloudDome(72, 32, 540f, 1.45f);
 
             // 远景大地地平线延展裙边 + 360°x180° 全闭合瑞利/米氏大气散射天穹（不依赖被剥离的 Skybox/Procedural）
-            Shader vColShader = ShaderDatabase.VertexColor ?? transNoDepth;
+            Shader customSkyShader = DefDatabase<ShaderDef>.GetNamedSilentFail("FirstPersonSkyDome")?.Shader ?? Shader.Find("FirstPersonSkyDome");
+            usingPerPixelSky = customSkyShader != null;
+            Shader vColShader = customSkyShader ?? ShaderDatabase.VertexColor ?? transNoDepth;
             gpuSkyDomeMat = new Material(vColShader) { name = "FirstPerson3D_SeamlessSkyDome", renderQueue = 1001 };
             skyDomeMesh = BuildSeamlessSkyDomeMesh(64, 40, 678f);
             lastDomeGlow = -1f;
@@ -822,47 +844,37 @@ namespace RimFirstPerson3D
             return t;
         }
 
-        // 无接缝球面体积积云贴图（512x256，U 轴经度严格周期 Repeat，V 轴仰角 Clamp 并将地平线消光直接烘焙入 Alpha，零极点奇点、零边界接缝）
+        // 512x512 方形两轴 Repeat 双轴 tileable value-noise FBM 纹理，RGB 保留云体明暗与光照斜率、Alpha 软边
         private static Texture2D MakeSeamlessCloudTex(int n)
         {
             int w = n;
-            int h = n / 2;
+            int h = n;
             var t = new Texture2D(w, h, TextureFormat.RGBA32, false)
             {
-                wrapModeU = TextureWrapMode.Repeat,
-                wrapModeV = TextureWrapMode.Clamp,
+                wrapMode = TextureWrapMode.Repeat,
                 filterMode = FilterMode.Bilinear,
                 name = "FirstPerson3D_SeamlessCloud"
             };
             var px = new Color32[w * h];
+            float invW = 1f / w;
+            float invH = 1f / h;
             for (int y = 0; y < h; y++)
             {
-                float v = y / (float)(h - 1); // 0 地平线 .. 1 天顶
-                float phi = (1f - v) * (Mathf.PI * 0.5f);
-                float sp = Mathf.Sin(phi), dy = Mathf.Cos(phi);
-                // 地平线处 (dy <= 0.08) Alpha 严格为 0，随仰角上升平滑渐显，彻底杜绝地平线云层截断硬边
-                float horizonFade = SmoothStep01(0.08f, 0.38f, dy);
-                if (horizonFade <= 0.001f) continue;
-
-                float proj = 1.35f / Mathf.Max(0.28f, dy + 0.32f);
+                float v = y * invH;
                 for (int x = 0; x < w; x++)
                 {
-                    float theta = (x / (float)w) * Mathf.PI * 2f;
-                    float dx = sp * Mathf.Cos(theta), dz = sp * Mathf.Sin(theta);
-                    float uCoord = dx * proj * 0.35f + 10f;
-                    float vCoord = dz * proj * 0.35f + 10f;
-
-                    float macro = PeriodicFbm(uCoord, vCoord, 4, 4, 101);
-                    float billow = PeriodicFbm(uCoord * 2f + 0.17f, vCoord * 2f + 0.31f, 4, 4, 211);
-                    float fine = PeriodicFbm(uCoord * 4f + 0.41f, vCoord * 4f + 0.19f, 3, 4, 353);
-                    float h0 = macro * 0.54f + billow * 0.30f + fine * 0.16f;
-
-                    float hSun = PeriodicFbm(uCoord + 0.025f, vCoord - 0.025f, 4, 4, 101) * 0.65f
-                               + PeriodicFbm((uCoord + 0.025f) * 2f + 0.17f, (vCoord - 0.025f) * 2f + 0.31f, 3, 4, 211) * 0.35f;
+                    float u = x * invW;
+                    float h0 = SkyMath.CloudNoise(u, v);
+                    // 采样太阳背光斜率差分（偏移0.025周期）
+                    float hSun = SkyMath.CloudNoise(u + 0.025f, v - 0.025f);
                     float slope = Mathf.Clamp01((h0 - hSun) * 5.2f + 0.58f);
 
-                    float d = SmoothStep01(0.42f, 0.76f, h0) * horizonFade;
-                    if (d <= 0.002f) continue;
+                    float d = SkyMath.SmoothStep01(0.38f, 0.72f, h0);
+                    if (d <= 0.002f)
+                    {
+                        px[y * w + x] = new Color32(0, 0, 0, 0);
+                        continue;
+                    }
                     float shade = Mathf.Lerp(0.76f, 1.0f, slope) * Mathf.Lerp(0.86f, 1.0f, d);
                     byte lum = (byte)Mathf.RoundToInt(Mathf.Clamp01(shade) * 255f);
                     byte alpha = (byte)Mathf.RoundToInt(Mathf.Pow(d, 0.85f) * 230f);
@@ -874,42 +886,41 @@ namespace RimFirstPerson3D
             return t;
         }
 
-        // 无接缝球面经纬云层穹顶（同纬圈顶点 V 恒定，与 MakeSeamlessCloudTex 严格匹配）
+        // 无接缝球面经纬云层穹顶（天顶严格同点、经线闭合严格同点、跳过极点退化三角形，保留双绕序）
         private static Mesh BuildSeamlessCloudDome(int lon, int lat, float radius, float uvScale)
         {
-            const float maxPhi = Mathf.PI * 0.50f;
             var verts = new List<Vector3>((lon + 1) * (lat + 1));
             var uvs = new List<Vector2>((lon + 1) * (lat + 1));
             var colors = new List<Color32>((lon + 1) * (lat + 1));
             var tris = new List<int>(lon * lat * 12);
             for (int y = 0; y <= lat; y++)
             {
-                float t = y / (float)lat;
-                float phi = t * maxPhi;
-                float sp = Mathf.Sin(phi), cp = Mathf.Cos(phi);
-                float horFade = SmoothStep01(0.06f, 0.36f, cp);
-                byte aByte = (byte)Mathf.RoundToInt(horFade * 255f);
-                var vc = new Color32(255, 255, 255, aByte);
                 for (int x = 0; x <= lon; x++)
                 {
-                    float u = x / (float)lon;
-                    float theta = u * Mathf.PI * 2f;
-                    float dx = sp * Mathf.Cos(theta), dz = sp * Mathf.Sin(theta);
-                    verts.Add(new Vector3(dx * radius, cp * radius, dz * radius));
-                    uvs.Add(new Vector2(u, 1f - t));
-                    colors.Add(vc);
+                    Vector3 dir = SkyMath.SphereDirection(x, y, lon, lat, true);
+                    float horFade = SkyMath.SmoothStep01(0.06f, 0.36f, dir.y);
+                    byte aByte = (byte)Mathf.RoundToInt(horFade * 255f);
+
+                    verts.Add(dir * radius);
+                    uvs.Add(SkyMath.CloudUv(dir, 0.35f));
+                    colors.Add(new Color32(255, 255, 255, aByte));
                 }
             }
             int stride = lon + 1;
             for (int y = 0; y < lat; y++)
+            {
                 for (int x = 0; x < lon; x++)
                 {
                     int a = y * stride + x, b = a + stride;
-                    tris.Add(a); tris.Add(a + 1); tris.Add(b);
+                    if (y > 0)
+                    {
+                        tris.Add(a); tris.Add(a + 1); tris.Add(b);
+                        tris.Add(a); tris.Add(b); tris.Add(a + 1);
+                    }
                     tris.Add(a + 1); tris.Add(b + 1); tris.Add(b);
-                    tris.Add(a); tris.Add(b); tris.Add(a + 1);
                     tris.Add(a + 1); tris.Add(b); tris.Add(b + 1);
                 }
+            }
             var m = new Mesh { name = "FirstPerson3D_SeamlessCloudDome" };
             m.SetVertices(verts);
             m.SetUVs(0, uvs);
@@ -996,54 +1007,83 @@ namespace RimFirstPerson3D
             horizonSkirtMesh.SetColors(skirtColorsBuf);
         }
 
-        // 360°x180° 全闭合瑞利/米氏散射天穹网格（零 UV 边界、零极点挤压、地平线上下半球颜色 100% 连续）
+        // 360°x180° 全闭合瑞利/米氏散射天穹网格（零 UV 边界、极点去退化、双绕序保证 CullBack 正常显示）
         private static Mesh BuildSeamlessSkyDomeMesh(int lon, int lat, float radius)
         {
             int count = (lon + 1) * (lat + 1);
             var verts = new Vector3[count];
             skyDomeDirs = new Vector3[count];
             skyDomeCols = new Color32[count];
-            var tris = new int[lon * lat * 12];
+            var tris = new List<int>(lon * lat * 12);
 
             int idx = 0;
             for (int y = 0; y <= lat; y++)
             {
-                float v = y / (float)lat;
-                float phi = v * Mathf.PI;
-                float sp = Mathf.Sin(phi), cp = Mathf.Cos(phi);
                 for (int x = 0; x <= lon; x++)
                 {
-                    float u = x / (float)lon;
-                    float theta = u * Mathf.PI * 2f;
-                    Vector3 dir = new Vector3(sp * Mathf.Cos(theta), cp, sp * Mathf.Sin(theta));
+                    Vector3 dir = SkyMath.SphereDirection(x, y, lon, lat, false);
                     skyDomeDirs[idx] = dir;
                     verts[idx] = dir * radius;
-                    skyDomeCols[idx] = new Color32(120, 165, 220, 255);
+                    skyDomeCols[idx] = usingPerPixelSky ? new Color32(255, 255, 255, 255) : new Color32(120, 165, 220, 255);
                     idx++;
                 }
             }
-            int ti = 0;
+
             int stride = lon + 1;
             for (int y = 0; y < lat; y++)
+            {
                 for (int x = 0; x < lon; x++)
                 {
                     int a = y * stride + x, b = a + stride;
-                    tris[ti++] = a; tris[ti++] = a + 1; tris[ti++] = b;
-                    tris[ti++] = a + 1; tris[ti++] = b + 1; tris[ti++] = b;
-                    tris[ti++] = a; tris[ti++] = b; tris[ti++] = a + 1;
-                    tris[ti++] = a + 1; tris[ti++] = b; tris[ti++] = b + 1;
+                    if (y > 0)
+                    {
+                        // 跳过 y==0（北极圈）处的退化三角形 (a, a+1, b)
+                        tris.Add(a); tris.Add(a + 1); tris.Add(b);
+                        tris.Add(a); tris.Add(b); tris.Add(a + 1);
+                    }
+                    if (y < lat - 1)
+                    {
+                        // 跳过 y==lat-1（南极圈）处的退化三角形 (a+1, b+1, b)
+                        tris.Add(a + 1); tris.Add(b + 1); tris.Add(b);
+                        tris.Add(a + 1); tris.Add(b); tris.Add(b + 1);
+                    }
                 }
+            }
+
             var m = new Mesh { name = "FirstPerson3D_SeamlessSkyDome" };
             m.vertices = verts;
             m.colors32 = skyDomeCols;
-            m.triangles = tris;
+            m.triangles = tris.ToArray();
             m.RecalculateBounds();
             return m;
         }
 
         private static void UpdateSkyDomeColors(Env env)
         {
-            if (skyDomeMesh == null || skyDomeDirs == null || skyDomeCols == null) return;
+            if (skyDomeMesh == null || gpuSkyDomeMat == null) return;
+
+            Vector3 sun = env.sunDir.normalized;
+            Vector2 sunH = new Vector2(sun.x, sun.z);
+            if (sunH.sqrMagnitude > 0.0001f) sunH.Normalize();
+            float clearFactor = (1f - env.cloudiness * 0.78f) * (1f - env.fog * 0.85f) * (1f - env.sand * 0.85f);
+            float sunVis = Mathf.Clamp01((sun.y + 0.10f) / 0.22f) * clearFactor;
+            Color sunWarm = Color.Lerp(new Color(1f, 0.97f, 0.90f), new Color(1f, 0.50f, 0.18f), Mathf.Clamp01(1f - sun.y * 1.8f));
+
+            if (usingPerPixelSky)
+            {
+                gpuSkyDomeMat.SetColor(PropSkyColor, env.sky);
+                gpuSkyDomeMat.SetColor(PropMidSkyColor, env.midSky);
+                gpuSkyDomeMat.SetColor(PropHorizonColor, env.horizon);
+                gpuSkyDomeMat.SetColor(PropGroundColor, env.ground);
+                gpuSkyDomeMat.SetColor(PropSunGlowHorizon, env.sunGlowHorizon);
+                gpuSkyDomeMat.SetColor(PropSunGlowUpper, env.sunGlowUpper);
+                gpuSkyDomeMat.SetColor(PropAntiSunHorizon, env.antiSunHorizon);
+                gpuSkyDomeMat.SetVector(PropSunDir, new Vector4(sun.x, sun.y, sun.z, sunVis));
+                gpuSkyDomeMat.SetColor(PropSunWarm, sunWarm);
+                gpuSkyDomeMat.SetVector(PropSkyParams, new Vector4(env.twilight, env.fog, env.flash, 0f));
+                return;
+            }
+
             float g = Mathf.Clamp01(env.glow);
             if (Mathf.Abs(g - lastDomeGlow) < 0.001f
                 && Mathf.Abs(env.twilight - lastDomeTwilight) < 0.001f
@@ -1061,15 +1101,9 @@ namespace RimFirstPerson3D
             lastDomeSunDir = env.sunDir;
             lastDomeSky = env.sky;
             lastDomeHor = env.horizon;
-
-            Vector3 sun = env.sunDir.normalized;
-            Vector2 sunH = new Vector2(sun.x, sun.z);
-            if (sunH.sqrMagnitude > 0.0001f) sunH.Normalize();
-            float clearFactor = (1f - env.cloudiness * 0.78f) * (1f - env.fog * 0.85f) * (1f - env.sand * 0.85f);
-            float sunVis = Mathf.Clamp01((sun.y + 0.10f) / 0.22f) * clearFactor;
-            Color sunWarm = Color.Lerp(new Color(1f, 0.97f, 0.90f), new Color(1f, 0.50f, 0.18f), Mathf.Clamp01(1f - sun.y * 1.8f));
             Color flashCol = new Color(0.84f, 0.91f, 1.0f);
 
+            if (skyDomeDirs == null || skyDomeCols == null) return;
             int n = skyDomeDirs.Length;
             for (int i = 0; i < n; i++)
             {
@@ -1110,7 +1144,7 @@ namespace RimFirstPerson3D
 
                 if (dy < 0f)
                 {
-                    float kd = SmoothStep01(0f, 0.24f, -dy);
+                    float kd = SkyMath.SmoothStep01(0f, 0.24f, -dy);
                     col = Color.Lerp(col, env.ground, kd);
                 }
 
@@ -1846,12 +1880,17 @@ namespace RimFirstPerson3D
             lastCloudTime = now;
             var wind = new Vector2(Mathf.Cos(env.windAngle), Mathf.Sin(env.windAngle)) * Mathf.Max(0.15f, env.wind);
 
+            var cam = CameraRig3D.Cam;
+            // 天体（sky/stars/galaxy/aurora/sunmoon/cloud）以相机位置为原点（零平移视差，消除边缘畸变）；
+            // 反射副cam等特殊阶段若cam为null则回退到mapOrigin；雷击和降水保留mapOrigin保持空间语义。
+            Vector3 celestialOrigin = cam != null ? cam.transform.position : mapOrigin;
+
             // 0. 360°x180° 全闭合瑞利/米氏散射天穹底衬（renderQueue = 1001，零接缝覆盖整个天空球面）
             if (skyDomeMesh != null && gpuSkyDomeMat != null)
             {
                 UpdateSkyDomeColors(env);
                 gpuSkyDomeMat.color = Color.white;
-                Graphics.DrawMesh(skyDomeMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuSkyDomeMat, 0);
+                Graphics.DrawMesh(skyDomeMesh, Matrix4x4.TRS(celestialOrigin, Quaternion.identity, Vector3.one), gpuSkyDomeMat, 0);
             }
 
             if (starMesh != null && gpuStarMat != null && env.glow < 0.58f)
@@ -1859,7 +1898,7 @@ namespace RimFirstPerson3D
                 float a = Mathf.Clamp01((0.58f - env.glow) / 0.46f) * (1f - env.cloudiness * 0.65f) * (1f - env.fog);
                 gpuStarMat.color = new Color(1f, 1f, 1f, a * 0.98f);
                 if (a > 0.02f)
-                    Graphics.DrawMesh(starMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuStarMat, 0);
+                    Graphics.DrawMesh(starMesh, Matrix4x4.TRS(celestialOrigin, Quaternion.identity, Vector3.one), gpuStarMat, 0);
             }
 
             // 夜间全彩银河星云带（仅暗天空可见，云/雾/沙尘遮挡）
@@ -1870,7 +1909,7 @@ namespace RimFirstPerson3D
                 if (mwA > 0.02f)
                 {
                     gpuMilkyWayMat.color = new Color(0.86f, 0.90f, 1.0f, 1f) * (mwA * 0.92f);
-                    Graphics.DrawMesh(milkyWayMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuMilkyWayMat, 0);
+                    Graphics.DrawMesh(milkyWayMesh, Matrix4x4.TRS(celestialOrigin, Quaternion.identity, Vector3.one), gpuMilkyWayMat, 0);
                 }
             }
 
@@ -1885,12 +1924,12 @@ namespace RimFirstPerson3D
                     float pulse = 0.88f + 0.12f * Mathf.Sin(now * 1.35f);
                     gpuAuroraMat.mainTextureOffset = new Vector2((now * 0.032f) % 1f, 0f);
                     gpuAuroraMat.color = new Color(1f, 1f, 1f, aAmt * 0.92f * pulse);
-                    Graphics.DrawMesh(auroraMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuAuroraMat, 0);
+                    Graphics.DrawMesh(auroraMesh, Matrix4x4.TRS(celestialOrigin, Quaternion.identity, Vector3.one), gpuAuroraMat, 0);
                 }
             }
 
-            DrawSunAndMoon(mapOrigin, env);
-            DrawClouds(mapOrigin, env, wind, dt);
+            DrawSunAndMoon(celestialOrigin, env);
+            DrawClouds(celestialOrigin, env, wind, dt);
             DrawLightning(mapOrigin, env);
             DrawPrecip(map, mapOrigin, env, wind, dt);
         }
@@ -1947,8 +1986,8 @@ namespace RimFirstPerson3D
             // 确保禁用原版 World/Clouds 的轨道晨昏分界线（消除横贯天幕的橙黑斜向割裂带）
             Shader.SetGlobalFloat(ShaderPropertyIDs.PlanetSunLightEnabled, 0f);
 
-            cloudScroll.x = (cloudScroll.x + wind.x * dt * 0.0024f) % 1f;
-            cloudScroll.y = (cloudScroll.y + wind.y * dt * 0.0024f) % 1f;
+            cloudScroll.x = SkyMath.Wrap01(cloudScroll.x + wind.x * dt * 0.0024f);
+            cloudScroll.y = SkyMath.Wrap01(cloudScroll.y + wind.y * dt * 0.0024f);
 
             float dayFactor = Mathf.Clamp01(env.glow * 1.25f);
             bool clearNight = env.glow < 0.22f && env.rain < 0.1f && env.snow < 0.1f && env.storm < 0.1f;
@@ -1965,7 +2004,14 @@ namespace RimFirstPerson3D
             if (env.flash > 0.05f)
                 cloudTint = Color.Lerp(cloudTint, new Color(0.88f, 0.94f, 1.0f), Mathf.Clamp01(env.flash * 0.75f));
 
-            gpuCloudMat.mainTextureOffset = new Vector2(cloudScroll.x, 0f);
+            if (usingPerPixelCloud)
+            {
+                gpuCloudMat.mainTextureOffset = new Vector2(SkyMath.Wrap01(cloudScroll.x * 4f), SkyMath.Wrap01(cloudScroll.y * 4f));
+            }
+            else
+            {
+                gpuCloudMat.mainTextureOffset = new Vector2(cloudScroll.x, 0f);
+            }
             gpuCloudMat.color = new Color(cloudTint.r, cloudTint.g, cloudTint.b, cloudOp);
             // F016 L7：云层按太阳打光（银边、云底、晨昏霞光），顶点色乘在云色上
             Weather3D.LightClouds(gpuCloudMesh, env);

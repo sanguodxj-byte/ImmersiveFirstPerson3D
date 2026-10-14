@@ -12,35 +12,35 @@ namespace RimFirstPerson3D
     public static class Weather3D
     {
         // ---- 云层打光 ----
+        private static Mesh cachedCloudMesh;
         private static Color32[] cloudBase;
         private static Vector3[] cloudDirs;
         private static Color32[] cloudBuf;
-        private static float cloudPoll = 99f;
         private static bool cloudLit;
 
         public static void LightClouds(Mesh dome, SkyScenery.Env env)
         {
             if (dome == null) return;
-            if (cloudBase == null || cloudBase.Length != dome.vertexCount)
+            if (cloudBase == null || cachedCloudMesh != dome || cloudBase.Length != dome.vertexCount)
             {
                 try
                 {
+                    cachedCloudMesh = dome;
                     cloudBase = dome.colors32;
                     var v = dome.vertices;
                     cloudDirs = new Vector3[v.Length];
                     for (int i = 0; i < v.Length; i++) cloudDirs[i] = v[i].normalized;
                     cloudBuf = new Color32[v.Length];
+                    cloudLit = false;
                 }
-                catch { cloudBase = null; return; }
+                catch { cloudBase = null; cachedCloudMesh = null; return; }
             }
             if (!Shaderpack3D.CloudLight)
             {
                 if (cloudLit) { dome.colors32 = cloudBase; cloudLit = false; }
                 return;
             }
-            cloudPoll += Time.deltaTime;
-            if (cloudPoll < 0.5f && cloudLit) return;
-            cloudPoll = 0f;
+
             Shaderpack3D.Begin();
             try
             {

@@ -33,6 +33,7 @@
     <Compile Include="..\..\Source\RimFirstPerson3D\AoMath.cs" Link="AoMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\WaterMath.cs" Link="WaterMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\WeatherMath.cs" Link="WeatherMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\SkyMath.cs" Link="SkyMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\ScreenFxMath.cs" Link="ScreenFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\HitFxMath.cs" Link="HitFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\ShotFxMath.cs" Link="ShotFxMath.cs" />

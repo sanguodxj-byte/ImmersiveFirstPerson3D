@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+
+  <ShaderDef>
+    <defName>FirstPersonSkyDome</defName>
+    <shaderProgram>
+      <vertexShaderFileName>SceneDefault.vert.glsl</vertexShaderFileName>
+      <fragmentShaderFileName>FirstPersonSkyDome.frag.glsl</fragmentShaderFileName>
+      <useTexture>false</useTexture>
+      <transparent>true</transparent>
+      <depthWrite>false</depthWrite>
+      <renderQueue>1001</renderQueue>
+    </shaderProgram>
+  </ShaderDef>
+
+  <ShaderDef>
+    <defName>FirstPersonSkyCloud</defName>
+    <shaderProgram>
+      <vertexShaderFileName>SceneDefault.vert.glsl</vertexShaderFileName>
+      <fragmentShaderFileName>FirstPersonSkyCloud.frag.glsl</fragmentShaderFileName>
+      <flipTextureST>false</flipTextureST>
+      <transparent>true</transparent>
+      <depthWrite>false</depthWrite>
+      <renderQueue>1015</renderQueue>
+      <textureWrapOverrides>
+        <li>
+          <key>_MainTex</key>
+          <value>Repeat</value>
+        </li>
+      </textureWrapOverrides>
+    </shaderProgram>
+  </ShaderDef>
+
+</Defs>
