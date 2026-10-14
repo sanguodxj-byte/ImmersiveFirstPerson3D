@@ -38,6 +38,46 @@ namespace RimFirstPerson3D
         }
 
         private readonly List<Src> srcs = new List<Src>(64);
+
+        // ---- F016：按图公开的光源表（灯影 L3、光晕遮挡 L4、动态光 L8 共用，不另扫一遍） ----
+        public struct PublicSrc
+        {
+            public Vector3 local;     // 图内局部坐标，y = 灯头离地高度 + baseY
+            public float radius;
+            public Color color;
+            public bool flame;
+        }
+
+        private static readonly Dictionary<int, List<PublicSrc>> published = new Dictionary<int, List<PublicSrc>>();
+
+        public static List<PublicSrc> SourcesOf(Map m)
+        {
+            if (m == null) return null;
+            published.TryGetValue(m.uniqueID, out var l);
+            return l;
+        }
+
+        /// <summary>离 local 最近、且 local 落在其半径内的灯。</summary>
+        public static bool Nearest(Map m, Vector3 local, float maxDist, out Vector3 lampLocal, out float radius, out float luma)
+        {
+            lampLocal = Vector3.zero; radius = 0f; luma = 0f;
+            var l = SourcesOf(m);
+            if (l == null) return false;
+            float best = float.MaxValue;
+            int bi = -1;
+            for (int i = 0; i < l.Count; i++)
+            {
+                float dx = l[i].local.x - local.x, dz = l[i].local.z - local.z;
+                float d2 = dx * dx + dz * dz;
+                float r = Mathf.Min(l[i].radius, maxDist);
+                if (d2 < r * r && d2 < best) { best = d2; bi = i; }
+            }
+            if (bi < 0) return false;
+            lampLocal = l[bi].local;
+            radius = l[bi].radius;
+            luma = Mathf.Clamp01(Lighting3D.LampStrength);
+            return true;
+        }
         private float poll = RescanSec;
 
         private static Material glowMat;
@@ -144,12 +184,64 @@ namespace RimFirstPerson3D
                 catch { }
                 srcs.Add(new Src { x = sx, z = sz, r = r, h = h, col = col, isFlame = isFlame, flameScale = flameScale });
             }
+            if (!published.TryGetValue(map.uniqueID, out var pub))
+            {
+                pub = new List<PublicSrc>(srcs.Count);
+                published[map.uniqueID] = pub;
+            }
+            pub.Clear();
+            for (int i = 0; i < srcs.Count; i++)
+            {
+                var q = srcs[i];
+                pub.Add(new PublicSrc { local = new Vector3(q.x, baseY + q.h, q.z), radius = q.r, color = q.col, flame = q.isFlame });
+            }
+        }
+
+        // F016 L4-A：逐光源可见度（相机→灯头的实心高度场射线），0.1 s 重测、0.15 s 渐变。
+        // 键用灯头所在格（Rescan 每 0.5 s 重排列表，下标不稳定）。
+        private readonly Dictionary<int, float> visNow = new Dictionary<int, float>();
+        private readonly Dictionary<int, float> visTarget = new Dictionary<int, float>();
+        private float visPoll;
+
+        private int VisKey(in Src s) => ((int)s.z << 16) ^ (int)s.x ^ ((int)(s.h * 10f) << 28);
+
+        private void UpdateVisibility(Vector3 camWorld)
+        {
+            visPoll += Time.deltaTime;
+            bool retest = visPoll >= 0.1f;
+            if (retest) visPoll = 0f;
+            var camLocal = camWorld - worldOffset;
+            for (int i = 0; i < srcs.Count; i++)
+            {
+                var s = srcs[i];
+                int k = VisKey(s);
+                if (retest || !visTarget.ContainsKey(k))
+                {
+                    float t = 1f;
+                    if (light != null && Shaderpack3D.Sprites)
+                    {
+                        var head = new Vector3(s.x, baseY + s.h, s.z);
+                        t = light.SegmentOpen(camLocal, head, 0.4f) ? 1f : 0f;
+                    }
+                    visTarget[k] = t;
+                }
+                visNow.TryGetValue(k, out float cur);
+                if (!visNow.ContainsKey(k)) cur = visTarget[k];
+                visNow[k] = FlareMath.Approach(cur, visTarget[k], Time.deltaTime, 0.05f);
+            }
+            if (visNow.Count > MaxGlowers * 4) { visNow.Clear(); visTarget.Clear(); }
         }
 
         public void Draw()
         {
             if (!Lighting3D.GlowQuadsOn || srcs.Count == 0) return;
             if (!EnsureAssets()) return;
+            var cam = CameraRig3D.Cam;
+            Vector3 camWorld = cam != null ? cam.transform.position : Vector3.zero;
+            float fov = cam != null ? cam.fieldOfView : 72f;
+            float screenH = Mathf.Max(1f, Screen.height);
+            Shaderpack3D.Begin();
+            try { UpdateVisibility(camWorld); } finally { Shaderpack3D.End(); }
             float lampGain = Mathf.Clamp01(Lighting3D.LampStrength);
             if (lampGain <= 0.001f) return;
             // 白昼下发光光晕柔和收敛，夜里饱满清晰
@@ -161,9 +253,12 @@ namespace RimFirstPerson3D
                 if (!Frustum3D.VisiblePoint(wpos, s.r + 2f)) continue;
 
                 float phase = Time.time * 8.5f + (s.x * 3.7f + s.z * 5.3f);
+                // F016 L4-A：火光 1/f 闪烁（均值 1，不进烘焙）
                 float flicker = s.isFlame
-                    ? (1.0f + 0.07f * Mathf.Sin(phase * 1.35f) + 0.04f * Mathf.Cos(phase * 2.75f))
+                    ? FlareMath.Flicker(Time.time, s.x * 0.37f + s.z * 0.91f, Shaderpack3D.Sprites ? 0.16f : 0.08f)
                     : 1.0f;
+                visNow.TryGetValue(VisKey(s), out float vis);
+                if (!Shaderpack3D.Sprites) vis = 1f;
 
                 // 断电/未点燃的灯不会进 srcs（Rescan 里已按 Glows 过滤），这里只画灯自身的色相。
                 var poolTint = s.col * (0.30f * dayDim * lampGain * flicker);
@@ -195,8 +290,10 @@ namespace RimFirstPerson3D
                     var outerRot = Quaternion.Euler(swayX, (phase * 12f) % 360f, swayZ);
                     var outerCol = Color.Lerp(s.col, new Color(1f, 0.58f, 0.14f, 1f), 0.45f) * (1.15f * lampGain);
                     outerCol.a = 1f;
-                    Graphics.DrawMesh(flameMesh, Matrix4x4.TRS(fPos, outerRot, new Vector3(fw, fh, fw)),
-                        Lighting3D.MatFor(flameMat, outerCol), 0);
+                    var outerM = Matrix4x4.TRS(fPos, outerRot, new Vector3(fw, fh, fw));
+                    var outerMat = Lighting3D.MatFor(flameMat, outerCol);
+                    Graphics.DrawMesh(flameMesh, outerM, outerMat, 0);
+                    Bloom3D.Emit(flameMesh, outerM, outerMat);
 
                     var innerRot = Quaternion.Euler(-swayZ * 0.6f, ((phase * 18f) + 30f) % 360f, swayX * 0.6f);
                     var innerCol = Color.Lerp(s.col, Color.white, 0.65f) * (1.25f * lampGain);
@@ -211,16 +308,31 @@ namespace RimFirstPerson3D
                     ? Mathf.Clamp(s.flameScale * 1.42f, 0.44f, 0.88f)
                     : Mathf.Clamp(0.48f + s.r * 0.06f, 0.58f, 1.18f);
                 float haloCenterY = hy + (s.isFlame ? s.flameScale * 0.48f : 0f);
+                if (Shaderpack3D.Sprites)
+                {
+                    // F016 L4-A（关 F013 AC-7）：世界半径 GlowRadius×K，屏上不小于 6 px、不大于屏高 12%
+                    float dist = Vector3.Distance(camWorld, new Vector3(wpos.x, haloCenterY, wpos.z));
+                    hs = FlareMath.HaloWorldSize(s.r, ShaderpackDefaults.HaloWorldK, dist, fov, screenH,
+                        ShaderpackDefaults.HaloMinPx, ShaderpackDefaults.HaloMaxScreenFrac);
+                    haloTint *= vis;
+                    haloTint.a = 1f;
+                    if (vis <= 0.01f) { PerfCounters.GlowDraws++; continue; }
+                }
                 var hm = Matrix4x4.TRS(new Vector3(wpos.x, haloCenterY, wpos.z),
                     Quaternion.identity, new Vector3(hs, hs * 0.90f, hs));
-                Graphics.DrawMesh(haloMesh, hm, Lighting3D.MatFor(glowMat, haloTint), 0);
+                var haloM = Lighting3D.MatFor(glowMat, haloTint);
+                Graphics.DrawMesh(haloMesh, hm, haloM, 0);
+                Bloom3D.Emit(haloMesh, hm, haloM);   // F016 L4-B：真泛光开时灯头也进泛光层
                 PerfCounters.GlowDraws++;
             }
         }
 
         public LightField3D light;
 
-        public void Dispose() { }
+        public void Dispose()
+        {
+            try { published.Remove(map.uniqueID); } catch { }
+        }
 
         private static bool EnsureAssets()
         {

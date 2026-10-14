@@ -83,6 +83,9 @@ namespace RimFirstPerson3D
 
         // ---- 纹理与动画缓存 ----
         private static Texture2D seamlessCloudTex;
+        /// <summary>F016 L7：云影与云层共用同一张云图（滚动同步）。</summary>
+        public static Texture2D CloudTexture => seamlessCloudTex;
+        public static Vector2 CloudScroll => cloudScroll;
         private static Texture2D starAtlasTex;
         private static Texture2D sandCurtainTex;
         private static Texture2D auroraRayTex;
@@ -1964,6 +1967,8 @@ namespace RimFirstPerson3D
 
             gpuCloudMat.mainTextureOffset = new Vector2(cloudScroll.x, 0f);
             gpuCloudMat.color = new Color(cloudTint.r, cloudTint.g, cloudTint.b, cloudOp);
+            // F016 L7：云层按太阳打光（银边、云底、晨昏霞光），顶点色乘在云色上
+            Weather3D.LightClouds(gpuCloudMesh, env);
             Graphics.DrawMesh(gpuCloudMesh, Matrix4x4.TRS(mapOrigin, Quaternion.identity, Vector3.one), gpuCloudMat, 0);
         }
 

@@ -203,6 +203,21 @@ namespace RimFirstPerson3D
                 plants.MarkCellColorDirty(ch[i]);
                 grass.MarkCellColorDirty(ch[i]);
             }
+            // F016 L8：随身光源挪动 -> 新旧两处标脏（与灯具变化同一条通路）
+            var dyn = DynamicLights3D.Tick(map, Time.deltaTime);
+            if (dyn != null)
+            {
+                for (int i = 0; i < dyn.Count; i++)
+                {
+                    terrain.MarkCellColorDirty(dyn[i]);
+                    buildings.MarkCellColorDirty(dyn[i]);
+                    water.MarkCellColorDirty(dyn[i]);
+                    plants.MarkCellColorDirty(dyn[i]);
+                    grass.MarkCellColorDirty(dyn[i]);
+                    mountains.MarkCellColorDirty(dyn[i]);
+                }
+                if (dyn.Count > 0) items.MarkBatchDirty();
+            }
             var lc = field.LampChanged;
             for (int i = 0; i < lc.Count; i++)
             {
@@ -272,6 +287,8 @@ namespace RimFirstPerson3D
             var s = FirstPerson3DMod.settings;
             // 逐件对象的实例乘子在绘制时才取样，先把本帧环境指回本图（同帧同图有缓存，不重复算）
             Lighting3D.BeginMap(map);
+            // F016 L3：本图的投影上下文（各逐件绘制点 Cast 时用）
+            Shadows3D.BeginScene(map, field, baseY, worldOffset);
             if (Fps3DState.DrawTerrain)
             {
                 try { terrain.Draw(); } catch (System.Exception e) { Report("terrain", e); }
@@ -307,6 +324,7 @@ namespace RimFirstPerson3D
 
         public void Dispose()
         {
+            DynamicLights3D.Forget(map);
             terrain.Dispose();
             buildings.Dispose();
             mountains.Dispose();

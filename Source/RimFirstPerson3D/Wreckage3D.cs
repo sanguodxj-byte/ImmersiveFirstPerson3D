@@ -145,6 +145,7 @@ namespace RimFirstPerson3D
             var matrix = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
             Graphics.DrawMesh(b.body, matrix, Lighting3D.MatFor(m, lit), 0);
             PerfCounters.BuildingMeshesDrawn++;
+            Shadows3D.Cast(b.body, matrix, pos, null);   // F016 L3
             if (Fps3DState.DrawOutlines && b.hull != null)
             {
                 Graphics.DrawMesh(b.hull, matrix, Util3D.OutlineMat, 0);

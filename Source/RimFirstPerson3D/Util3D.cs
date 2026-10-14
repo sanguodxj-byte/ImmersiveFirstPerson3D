@@ -721,6 +721,8 @@ namespace RimFirstPerson3D
         public static int ItemInstances;
         public static int ItemBatches;
         public static int PawnQuads;
+        public static int PawnDarkenQuads;   // 遮罩门控材质（CutoutComplex 系）的叠加压暗面片
+        public static int EntityQuads;
         public static int OutlineMeshesDrawn;
         public static int WaterQuads;
         public static int GrassInstances;
@@ -744,6 +746,8 @@ namespace RimFirstPerson3D
             ItemInstances = 0;
             ItemBatches = 0;
             PawnQuads = 0;
+            PawnDarkenQuads = 0;
+            EntityQuads = 0;
             OutlineMeshesDrawn = 0;
             WaterQuads = 0;
             GrassInstances = 0;

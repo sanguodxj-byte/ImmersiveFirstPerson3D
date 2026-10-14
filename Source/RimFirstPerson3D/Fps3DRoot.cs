@@ -85,6 +85,8 @@ namespace RimFirstPerson3D
             {
                 PerfCounters.ResetFrame();
             }
+            Bloom3D.Prepare(CameraRig3D.Cam);
+            if (!Shaderpack3D.WaterMirror) WaterFx3D.Release();
             foreach (var m in Streaming3D.RenderMaps(Find.CurrentMap))
             {
                 if (m == null || m.Disposed) continue;
@@ -109,6 +111,13 @@ namespace RimFirstPerson3D
                     Log.Warning(ModEntry.LogPrefix + "scene " + m.uniqueID + " error: " + e);
                 }
             }
+            // F016：所有地图画完之后的整帧层（大气、光束、眩光、屏幕层），再结算本帧预算
+            if (CameraRig3D.Cam != null)
+            {
+                try { ShaderpackFrame3D.Draw(CameraRig3D.Cam); }
+                catch (System.Exception e) { Log.WarningOnce(ModEntry.LogPrefix + "F016 frame error: " + e, 0x1F016); }
+            }
+            Shaderpack3D.EndFrame(Time.deltaTime);
             PerfMon3D.Update();
 
             pruneTimer += Time.deltaTime;
@@ -178,6 +187,7 @@ namespace RimFirstPerson3D
             ShotFx3D.Clear();
             VanillaSuppressor.RestoreCameras();
             SkyScenery.Restore();
+            ShaderpackFrame3D.Restore();
             if (forceOff)
                 Fps3DState.ResetInMemory();
             if (forceCloseScreen)
@@ -216,6 +226,7 @@ namespace RimFirstPerson3D
                     if (isRepaint)
                     {
                         // 受击红雾压在场景之上、准星之下：准星和 HUD 必须一直读得出来
+                        ScreenFx3D.DrawGUI();   // F016 L9：适应闪、常驻暗角、水下（画在受击暗角与准星之前）
                         HitFx3D.DrawVignette();
                         Crosshair3D.Draw();
                         NameLabels3D.Draw();
@@ -250,6 +261,7 @@ namespace RimFirstPerson3D
                 else if (a == "unloadStreamed") Streaming3D.UnloadStreamed();
                 else if (a == "mapScreen") MapScreen3D.Toggle();
                 else if (a == "interact") CameraRig3D.Interact();
+                else if (a == "probeCaps") DebugActions3D.ProbeRenderCaps();
                 else if (a == "camdiag")
                 {
                     if (s != null) s.diagCross = VanillaSuppressor.CameraDiagnose();

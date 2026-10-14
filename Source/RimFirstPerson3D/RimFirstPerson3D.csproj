@@ -43,6 +43,22 @@
       <HintPath>$(HarmonyPath)\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Brutal.Vulkan">
+      <HintPath>$(RimWorldPath)\Brutal.Vulkan.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Brutal.Vulkan.Abstractions">
+      <HintPath>$(RimWorldPath)\Brutal.Vulkan.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Brutal.Core.Numerics">
+      <HintPath>$(RimWorldPath)\Brutal.Core.Numerics.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Brutal.Core.Common">
+      <HintPath>$(RimWorldPath)\Brutal.Core.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <Target Name="ValidateRimWorldReferences" BeforeTargets="ResolveAssemblyReferences">

@@ -545,6 +545,7 @@ namespace RimFirstPerson3D
                     var surf = chunk.surfaces[s];
                     if (surf.mesh == null) continue;
                     Graphics.DrawMesh(surf.mesh, matrix, surf.material, 0);
+                    Bloom3D.Occluder(surf.mesh, matrix);   // F016 L4-B
                     PerfCounters.BuildingMeshesDrawn++;
                     PerfCounters.BuildingQuads += (surf.triCount + 1) / 2;
                 }

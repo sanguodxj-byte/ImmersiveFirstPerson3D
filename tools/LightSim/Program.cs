@@ -127,9 +127,9 @@ namespace RimFirstPerson3D.LightSim
             return e;
         }
 
-        static float Luma(Color c) { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }
+        internal static float Luma(Color c) { return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b; }
 
-        static void Check(string name, bool ok, string detail)
+        internal static void Check(string name, bool ok, string detail)
         {
             if (ok) { passed++; Console.WriteLine("  [ok ] " + name + "  " + detail); }
             else { fails.Add(name); Console.WriteLine("  [FAIL] " + name + "  " + detail); }
@@ -474,6 +474,9 @@ namespace RimFirstPerson3D.LightSim
             }
             Check("35 山体外沿首格直接拔升至 > 2.0m 陡峭岩壁",
                 maxEdgeCellTop > 2.0f, "edgeCellTop=" + maxEdgeCellTop.ToString("0.00") + "m");
+
+            // F016 光影包级画面：各层纯函数判据（ShaderpackChecks.cs）
+            ShaderpackChecks.Run(f);
 
             Console.WriteLine("== 结果: " + (fails.Count == 0 ? "全部通过" : "未通过 " + string.Join(", ", fails))
                               + "（通过 " + passed + " 条）==");

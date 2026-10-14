@@ -105,6 +105,32 @@ namespace RimFirstPerson3D
         public bool shotFx = true;          // 总开关
         public float shotFxScale = 1.0f;    // 浓度/长度倍率，只缩放不改曲线
 
+        // ---- 光影包级画面（F016，规范见 docs/features/F016-shaderpack-look.md）----
+        // shaderQuality: off / low / medium / high / ultra。各层开关由档位决定，下面的单项可覆盖。
+        public string shaderQuality = "medium";
+        public bool shaderAutoDowngrade = true;   // p95 超预算连续 5 s 自动逐层降级
+        public string renderCaps = "";            // P0 引擎能力探针结果（JSON），probe 动作写入
+        public int capsMainCamRT = -1;            // -1 未测 / 0 不可用 / 1 可用（持久化，档位门控用）
+        public int capsBlitBilinear = -1;
+        public int capsEngineFog = -1;
+        public int capsOblique = -1;
+        // L1 胶片色调
+        public bool lightToneMap = true;
+        public bool lightKelvinSun = true;
+        public float lightExposure = ShaderpackDefaults.Exposure;
+        public float lightWhitePoint = ShaderpackDefaults.WhitePoint;
+        public float lightHighlightDesat = ShaderpackDefaults.HighlightDesat;
+        public float lightSplitTone = ShaderpackDefaults.SplitTone;
+        public float lightSaturation = ShaderpackDefaults.Saturation;
+        public float lightNightDesat = ShaderpackDefaults.NightDesat;
+        // L3 投影
+        public float shadowAlpha = ShaderpackDefaults.ShadowAlpha;
+        // L4 泛光
+        public float bloomIntensity = ShaderpackDefaults.BloomIntensity;
+        // L5 大气
+        public float fogDensity = ShaderpackDefaults.FogDensity;
+        public float shaftGain = ShaderpackDefaults.ShaftGain;
+
         public override void ExposeData()
         {
             Scribe_Values.Look(ref mode, "mode", "Off");
@@ -167,6 +193,24 @@ namespace RimFirstPerson3D
             Scribe_Values.Look(ref hitFxScale, "hitFxScale", 1.0f);
             Scribe_Values.Look(ref shotFx, "shotFx", true);
             Scribe_Values.Look(ref shotFxScale, "shotFxScale", 1.0f);
+            Scribe_Values.Look(ref shaderQuality, "shaderQuality", "medium");
+            Scribe_Values.Look(ref shaderAutoDowngrade, "shaderAutoDowngrade", true);
+            Scribe_Values.Look(ref capsMainCamRT, "capsMainCamRT", -1);
+            Scribe_Values.Look(ref capsBlitBilinear, "capsBlitBilinear", -1);
+            Scribe_Values.Look(ref capsEngineFog, "capsEngineFog", -1);
+            Scribe_Values.Look(ref capsOblique, "capsOblique", -1);
+            Scribe_Values.Look(ref lightToneMap, "lightToneMap", true);
+            Scribe_Values.Look(ref lightKelvinSun, "lightKelvinSun", true);
+            Scribe_Values.Look(ref lightExposure, "lightExposure", ShaderpackDefaults.Exposure);
+            Scribe_Values.Look(ref lightWhitePoint, "lightWhitePoint", ShaderpackDefaults.WhitePoint);
+            Scribe_Values.Look(ref lightHighlightDesat, "lightHighlightDesat", ShaderpackDefaults.HighlightDesat);
+            Scribe_Values.Look(ref lightSplitTone, "lightSplitTone", ShaderpackDefaults.SplitTone);
+            Scribe_Values.Look(ref lightSaturation, "lightSaturation", ShaderpackDefaults.Saturation);
+            Scribe_Values.Look(ref lightNightDesat, "lightNightDesat", ShaderpackDefaults.NightDesat);
+            Scribe_Values.Look(ref shadowAlpha, "shadowAlpha", ShaderpackDefaults.ShadowAlpha);
+            Scribe_Values.Look(ref bloomIntensity, "bloomIntensity", ShaderpackDefaults.BloomIntensity);
+            Scribe_Values.Look(ref fogDensity, "fogDensity", ShaderpackDefaults.FogDensity);
+            Scribe_Values.Look(ref shaftGain, "shaftGain", ShaderpackDefaults.ShaftGain);
             FirstPerson3DMod.settings = this;
             base.ExposeData();
         }

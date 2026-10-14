@@ -1884,6 +1884,8 @@ namespace RimFirstPerson3D
             }
             Graphics.DrawMesh(b.body, matrix, Lighting3D.MatFor(m, lit), 0);
             PerfCounters.BuildingMeshesDrawn++;
+            // F016 L3：闭合网格，两面都有，直接压扁投影（剪影实心，不需要贴图 alpha）
+            Shadows3D.Cast(b.body, matrix, pos, null);
             if (Fps3DState.DrawOutlines && b.hull != null)
             {
                 Graphics.DrawMesh(b.hull, matrix, Util3D.OutlineMat, 0);

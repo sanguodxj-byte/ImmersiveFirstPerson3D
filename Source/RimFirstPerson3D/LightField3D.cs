@@ -44,6 +44,9 @@ namespace RimFirstPerson3D
         private readonly float[] treeTopH;
         private readonly byte[] sunLo;
         private readonly byte[] sunHi;
+        // F016 L2：低带射线第一次碰到遮挡的步数（1 步 = 水平 1 m），0 = 没碰到。半影宽按它算。
+        private readonly byte[] sunLoDist;
+        private int lastHitK;
         private readonly Color32[] lamp;
 
         // 本帧扫完后收集到的变化格，由 Scene3D 消费并标脏对应 chunk。
@@ -71,6 +74,7 @@ namespace RimFirstPerson3D
             treeTopH = new float[n];
             sunLo = new byte[n];
             sunHi = new byte[n];
+            sunLoDist = new byte[n];
             lamp = new Color32[n];
         }
 
@@ -154,10 +158,12 @@ namespace RimFirstPerson3D
         {
             // 对太阳方向做 1/24 分档量化（约 2.4° 一档），避免连续浮点漂移导致远距投影边界每帧翻转标脏。
             var raw = env.sunDir;
+            // F016 L2：软阴影档量化细到 1/48（约 1.2°），影子换档不再一跳 2.4°
+            float qn = Shaderpack3D.SoftShadows ? 48f : 24f;
             Vector3 d = new Vector3(
-                Mathf.Round(raw.x * 24f) / 24f,
-                Mathf.Round(raw.y * 24f) / 24f,
-                Mathf.Round(raw.z * 24f) / 24f);
+                Mathf.Round(raw.x * qn) / qn,
+                Mathf.Round(raw.y * qn) / qn,
+                Mathf.Round(raw.z * qn) / qn);
             if (d.sqrMagnitude > 1e-4f) d.Normalize();
             else d = raw;
             float hl = Mathf.Sqrt(d.x * d.x + d.z * d.z);
@@ -248,13 +254,16 @@ namespace RimFirstPerson3D
             int i = z * sizeX + x;
             byte sv = skyVis[i];
             byte lo = 255, hi = 255;
+            sunLoDist[i] = 0;
             if (Lighting3D.ShadowsOn && sv > 0)
             {
                 if (sunActive)
                 {
                     // 射线高度用世界绝对 Y：TopY 也是绝对的（baseY + 顶高），上层图的 baseY 不为 0，
                     // 拿「离地高度」去比「绝对 Y」会把整图判成全阴影。
+                    lastHitK = 0;
                     lo = RayLitLow(x, z, baseY + ShadowSampleLow);
+                    sunLoDist[i] = (byte)Mathf.Clamp(lastHitK, 0, 255);
                     hi = RayLitHi(x, z, baseY + ShadowSampleHigh());
                 }
             }
@@ -352,6 +361,7 @@ namespace RimFirstPerson3D
                 float occTop = baseY + topH[idx];
                 if (y >= baseY + bottomH[idx] && occTop > y)
                 {
+                    if (lastHitK == 0) lastHitK = k;
                     float pen = occTop - y;
                     if (pen < 0.45f && k >= 2)
                     {
@@ -372,6 +382,7 @@ namespace RimFirstPerson3D
                     float tr = treeTopH[idx];
                     if (tr > 1.2f && baseY + tr > y)
                     {
+                        if (lastHitK == 0) lastHitK = k;
                         byte treeShadow = (byte)Mathf.RoundToInt(95f + (k - 1) * 11f);
                         if (treeShadow < res) res = treeShadow;
                     }
@@ -421,15 +432,38 @@ namespace RimFirstPerson3D
         {
             Bilinear(x, z, out int a, out int b, out int c, out int d, out float tx, out float tz);
             Color A = lamp[a], B = lamp[b], C = lamp[c], D = lamp[d];
-            return Color.Lerp(Color.Lerp(A, B, tx), Color.Lerp(C, D, tx), tz);
+            var g = Color.Lerp(Color.Lerp(A, B, tx), Color.Lerp(C, D, tx), tz);
+            // F016 L8：随身光源（不在 glowGrid 里的那些）叠在格子光上
+            if (Shaderpack3D.DynLights)
+            {
+                var v = DynamicLights3D.At(map.uniqueID, x, z);
+                g.r += v.r; g.g += v.g; g.b += v.b;
+            }
+            return g;
         }
 
         public float SunLitAt(Vector3 p, Vector3 n)
         {
             var q = p + n * 0.5f;
-            var arr = (q.y - baseY) > Fps3DState.WallHeight * 0.5f ? sunHi : sunLo;
-            Bilinear(q.x, q.z, out int a, out int b, out int c, out int d, out float tx, out float tz);
-            return Mathf.Lerp(Mathf.Lerp(Lerp(arr[a], arr[b], tx), Lerp(arr[c], arr[d], tx), tz), 1f, 0f);
+            bool high = (q.y - baseY) > Fps3DState.WallHeight * 0.5f;
+            var arr = high ? sunHi : sunLo;
+            float v0 = SampleSun(arr, q.x, q.z);
+            if (high || !Shaderpack3D.SoftShadows || !sunActive) return v0;
+            // F016 L2：接触变硬的半影 —— 宽度按遮挡距离，垂直于太阳方向取 3 点平均
+            int ci = Mathf.Clamp((int)q.z, 0, sizeZ - 1) * sizeX + Mathf.Clamp((int)q.x, 0, sizeX - 1);
+            int k = sunLoDist[ci];
+            if (k == 0) return v0;
+            float w = AoMath.PenumbraWidth(k, ShaderpackDefaults.PenumbraK, ShaderpackDefaults.PenumbraMin, ShaderpackDefaults.PenumbraMax);
+            float px = -hsz * w * 0.5f, pz = hsx * w * 0.5f;
+            float v1 = SampleSun(arr, q.x + px, q.z + pz);
+            float v2 = SampleSun(arr, q.x - px, q.z - pz);
+            return (v0 + v1 + v2) / 3f;
+        }
+
+        private float SampleSun(byte[] arr, float x, float z)
+        {
+            Bilinear(x, z, out int a, out int b, out int c, out int d, out float tx, out float tz);
+            return Mathf.Lerp(Lerp(arr[a], arr[b], tx), Lerp(arr[c], arr[d], tx), tz);
         }
 
         // 点是否落在实心体里（直接查预计算的 bottomH/topH 表，O(1) 零分配）。
@@ -441,6 +475,44 @@ namespace RimFirstPerson3D
             return y >= baseY + bottomH[i] && TopY(i) > y;
         }
 
+        /// <summary>
+        /// F016 L4/L5：线段是否不被实心高度场挡住（图内局部坐标，步长 0.5 m）。
+        /// 光晕遮挡、太阳可见度、光束起点都走这条；出图边按通畅算。
+        /// </summary>
+        public bool SegmentOpen(Vector3 a, Vector3 b, float skipEnds = 0.3f)
+        {
+            var d = b - a;
+            float len = d.magnitude;
+            if (len < 1e-3f) return true;
+            var dir = d / len;
+            int steps = Mathf.Min(256, Mathf.CeilToInt((len - 2f * skipEnds) / 0.5f));
+            for (int k = 0; k <= steps; k++)
+            {
+                float t = skipEnds + k * 0.5f;
+                if (t > len - skipEnds) break;
+                var p = a + dir * t;
+                if (OccAt(p.x, p.y, p.z)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>该格是否被屋顶覆盖（skyVis &lt; 1）。光束找「屋顶开洞」用。</summary>
+        public bool Roofed(int x, int z)
+        {
+            if (x < 0 || z < 0 || x >= sizeX || z >= sizeZ) return false;
+            return skyVis[z * sizeX + x] < 250;
+        }
+
+        public bool Solid(int x, int z)
+        {
+            if (x < 0 || z < 0 || x >= sizeX || z >= sizeZ) return false;
+            return topH[z * sizeX + x] >= Fps3DState.WallHeight - 0.01f && bottomH[z * sizeX + x] <= 0.01f;
+        }
+
+        public int SizeX => sizeX;
+        public int SizeZ => sizeZ;
+        public float BaseY => baseY;
+
         /// <summary>接触阴影：顶点所在角四周四格的占用比例（0=全空 1=全被围）。</summary>
         public float OccFraction(Vector3 p, Vector3 n)
         {
@@ -450,6 +522,16 @@ namespace RimFirstPerson3D
             else if (Mathf.Abs(n.x) > 0.5f) { u = Vector3.forward; v = Vector3.up; }
             else { u = Vector3.right; v = Vector3.up; }
             var q = p + n * 0.5f;
+            if (Shaderpack3D.SmoothAo)
+            {
+                // F016 L2：对称 MC 规则（AoMath.SharedVertex）：顶点四周四格，对角都挡 = 满
+                var hu = u * 0.5f; var hv = v * 0.5f;
+                bool oa = OccAt(q.x + hu.x + hv.x, q.y + hu.y + hv.y, q.z + hu.z + hv.z);
+                bool ob = OccAt(q.x + hu.x - hv.x, q.y + hu.y - hv.y, q.z + hu.z - hv.z);
+                bool oc = OccAt(q.x - hu.x + hv.x, q.y - hu.y + hv.y, q.z - hu.z + hv.z);
+                bool od = OccAt(q.x - hu.x - hv.x, q.y - hu.y - hv.y, q.z - hu.z - hv.z);
+                return AoMath.SharedVertex(oa, ob, oc, od);
+            }
             float s = 0f;
             s += OccAt(q.x + u.x * 0.5f, q.y + u.y * 0.5f, q.z + u.z * 0.5f) ? 1f : 0f;
             s += OccAt(q.x + v.x * 0.5f, q.y + v.y * 0.5f, q.z + v.z * 0.5f) ? 1f : 0f;

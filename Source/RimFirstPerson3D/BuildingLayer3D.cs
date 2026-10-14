@@ -370,6 +370,7 @@ namespace RimFirstPerson3D
                     for (int i = 0; i < v.Length; i++) c[i] = white;
                 }
                 surf.mesh.colors32 = c;
+                if (lf != null && !surf.unlit) TerrainLayer3D.FlipDiagonals(surf.mesh, c);   // F016 L2
             }
         }
 
@@ -1891,6 +1892,7 @@ namespace RimFirstPerson3D
                 foreach (var mkv in chunk.meshes)
                 {
                     Graphics.DrawMesh(mkv.Value, m, mkv.Key, 0);
+                    Bloom3D.Occluder(mkv.Value, m);   // F016 L4-B：墙挡住的灯不溢光
                     PerfCounters.BuildingMeshesDrawn++;
                     PerfCounters.BuildingQuads += mkv.Value.vertexCount / 4;
                 }
@@ -2441,7 +2443,13 @@ namespace RimFirstPerson3D
                 mesh.normals = nArr;
                 mesh.SetUVs(0, uvs);
                 mesh.colors32 = cArr;
-                mesh.SetTriangles(tris, 0);
+                if (field != null && Shaderpack3D.SmoothAo)
+                {
+                    var tArr = tris.ToArray();
+                    AoMath.FlipQuads(tArr, cArr);   // F016 L2
+                    mesh.triangles = tArr;
+                }
+                else mesh.SetTriangles(tris, 0);
                 mesh.RecalculateBounds();
                 return new Surface
                 {

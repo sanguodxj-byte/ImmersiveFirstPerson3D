@@ -377,16 +377,32 @@ namespace RimFirstPerson3D
                             grp.tints.Add((byte)tint);
 
                             var size = SizeOf(plant);
-                            bool isTreeModel = plant.def.plant != null && plant.def.plant.IsTree;
+                            bool isTreeModel = (plant.def.plant != null && plant.def.plant.IsTree) || PlantModels3D.IsTreeArch(arch);
                             if (isTreeModel)
                             {
-                                float contactR = Mathf.Clamp(size.x * 0.75f, 0.95f, 1.45f);
+                                float effScale = Mathf.Max(0.5f, scale);
+                                float contactR = Mathf.Clamp(size.x * 1.35f * effScale, 1.8f, 3.4f);
                                 contactShadowList.Add(Matrix4x4.TRS(
                                     new Vector3(dp.x + worldOffset.x, baseY + 0.015f, dp.z + worldOffset.z),
                                     Quaternion.identity,
                                     new Vector3(contactR, 1f, contactR)));
 
-                                float canopyR = Mathf.Clamp(size.x * 1.40f, 2.2f, 3.8f);
+                                float canopyR = Mathf.Clamp(size.x * 2.20f * effScale, 2.8f, 5.0f);
+                                canopyShadowList.Add(Matrix4x4.TRS(
+                                    new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
+                                    Quaternion.identity,
+                                    new Vector3(canopyR, 1f, canopyR)));
+                            }
+                            else
+                            {
+                                float effW = size.x * scale;
+                                float contactR = Mathf.Clamp(effW * 0.95f, 0.45f, 1.6f);
+                                contactShadowList.Add(Matrix4x4.TRS(
+                                    new Vector3(dp.x + worldOffset.x, baseY + 0.015f, dp.z + worldOffset.z),
+                                    Quaternion.identity,
+                                    new Vector3(contactR, 1f, contactR)));
+
+                                float canopyR = Mathf.Clamp(effW * 1.25f, 0.65f, 2.2f);
                                 canopyShadowList.Add(Matrix4x4.TRS(
                                     new Vector3(dp.x + worldOffset.x, baseY + 0.022f, dp.z + worldOffset.z),
                                     Quaternion.identity,
@@ -412,11 +428,21 @@ namespace RimFirstPerson3D
                         var pos = new Vector3(plantDp.x + worldOffset.x, baseY, plantDp.z + worldOffset.z);
                         if (isTree)
                         {
-                            float contactR = Mathf.Clamp(visualSize.x * 0.75f, 0.95f, 1.45f);
+                            float contactR = Mathf.Clamp(visualSize.x * 1.35f, 1.8f, 3.4f);
                             contactShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.015f, 0f), Quaternion.identity,
                                 new Vector3(contactR, 1f, contactR)));
 
-                            float canopyR = Mathf.Clamp(visualSize.x * 1.40f, 2.2f, 3.8f);
+                            float canopyR = Mathf.Clamp(visualSize.x * 2.20f, 2.8f, 5.0f);
+                            canopyShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
+                                new Vector3(canopyR, 1f, canopyR)));
+                        }
+                        else
+                        {
+                            float contactR = Mathf.Clamp(visualSize.x * 0.95f, 0.45f, 1.6f);
+                            contactShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.015f, 0f), Quaternion.identity,
+                                new Vector3(contactR, 1f, contactR)));
+
+                            float canopyR = Mathf.Clamp(visualSize.x * 1.25f, 0.65f, 2.2f);
                             canopyShadowList.Add(Matrix4x4.TRS(pos + new Vector3(0f, 0.022f, 0f), Quaternion.identity,
                                 new Vector3(canopyR, 1f, canopyR)));
                         }
@@ -585,7 +611,7 @@ namespace RimFirstPerson3D
                 canopyM.color = new Color(0f, 0f, 0f, 0.52f * Mathf.Clamp01(env.glow));
             if (env.glow > 0.05f && env.sunDir.y > 0.05f)
             {
-                float projDist = Mathf.Clamp(1.85f / Mathf.Max(0.22f, env.sunDir.y), 0.75f, 4.5f);
+                float projDist = Mathf.Clamp(0.70f / Mathf.Max(0.25f, env.sunDir.y), 0.35f, 1.8f);
                 canopyMatrix = Matrix4x4.Translate(new Vector3(-env.sunDir.x * projDist, 0f, -env.sunDir.z * projDist));
             }
 

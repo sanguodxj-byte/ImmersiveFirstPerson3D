@@ -313,6 +313,7 @@ namespace RimFirstPerson3D
                       + ((int)(cam.backgroundColor.g * 255)).ToString() + ","
                       + ((int)(cam.backgroundColor.b * 255)).ToString());
             }
+            sb.Append("|camYaw=").Append(Yaw.ToString("F0")).Append(",pitch=").Append(Pitch.ToString("F0"));
             cachedCensus = sb.ToString();
             return cachedCensus;
         }

@@ -2445,6 +2445,7 @@ namespace RimFirstPerson3D
                 matrix = Matrix4x4.TRS(pos + new Vector3(0f, bob, 0f), yawRot, Vector3.one);
             }
             Graphics.DrawMesh(built.body, matrix, drawMat, 0);
+            if (!lying) Shadows3D.Cast(built.body, matrix, pos, null);   // F016 L3：闭合网格
             // 受击红闪（F014）：同一份网格同一份变换，再罩一层红；描边壳不罩
             HitFx3D.DrawOverlay(built.body, matrix, drawMat, HitFx3D.Strength(pawn));
             PerfCounters.AnimalMeshes++;
@@ -2496,6 +2497,12 @@ namespace RimFirstPerson3D
             var rot = Quaternion.AngleAxis(yaw, Vector3.up);
             var matrix = Matrix4x4.TRS(pos, rot, new Vector3(w, h, 1f));
             Graphics.DrawMesh(quad, matrix, mat, 0);
+            if (Shadows3D.AnyActive)   // F016 L3：回退立牌正对太阳投影
+            {
+                float sYaw = Shadows3D.SunYaw;
+                Shadows3D.Cast(quad, Matrix4x4.TRS(pos, Quaternion.AngleAxis(sYaw, Vector3.up), new Vector3(w, h, 1f)), pos,
+                    mat.mainTexture, true, Matrix4x4.TRS(pos, Quaternion.AngleAxis(sYaw + 180f, Vector3.up), new Vector3(w, h, 1f)));
+            }
             HitFx3D.DrawOverlay(quad, matrix, mat, HitFx3D.Strength(pawn));
             PerfCounters.AnimalMeshes++;
         }

@@ -38,6 +38,10 @@ namespace RimFirstPerson3D
         public Color skyZenith;         // 天顶色
         public Color skyHorizon;        // 地平色
         public Color sunGlowHorizon;    // 晨昏霞光色
+        /// <summary>F016 L1：直射色按太阳仰角走色温曲线（false = F013 的白↔霞光二段插值）。</summary>
+        public bool kelvinSun;
+        /// <summary>F016 L7：极光期的弱环境光（默认黑 = 无），只加在露天、朝上的面上。</summary>
+        public Color auroraAmbient;
     }
 
     /// <summary>可调参数（游戏里来自 FirstPerson3DSettings，模拟台里自己给）。</summary>
@@ -60,6 +64,16 @@ namespace RimFirstPerson3D
         public float softTop;
         public float ambTint;
         public float moonStrength;
+
+        // ---- F016 L1 胶片色调（toneMap=false 时整段不生效，F013 口径原样保留）----
+        public bool toneMap;
+        public float whitePoint;
+        public float highlightDesat;
+        public float splitTone;
+        public Color shadowTint;
+        public Color highlightTint;
+        public float saturation;
+        public float nightDesat;
     }
 
     public static class LightShade
@@ -86,6 +100,7 @@ namespace RimFirstPerson3D
         /// <summary>直射光颜色：正午近白，晨昏按霞光色转暖。</summary>
         public static Color SunColor(ref LightEnv e)
         {
+            if (e.kelvinSun) return ToneMap.SunColorFor(e.sunDir);
             return Color.Lerp(Color.white, Normalize(e.sunGlowHorizon), Mathf.Clamp01(e.twilight));
         }
 
@@ -111,6 +126,13 @@ namespace RimFirstPerson3D
         }
 
         /// <summary>灯具项：原色 × 原版增益 × 强度。</summary>
+        /// <summary>夜视权重：天越黑、灯越弱越接近 1。</summary>
+        public static float NightWeight(ref LightEnv e, Color lampTerm)
+        {
+            float lamp = Mathf.Clamp01(ToneMap.Luma(lampTerm) * 2f);
+            return Mathf.Clamp01(1f - e.glow * 2f) * (1f - lamp);
+        }
+
         public static Color LampColor(Color raw, ref LightTuning t)
         {
             return new Color(raw.r, raw.g, raw.b, 1f) * (t.lampGain * t.lampStrength);
@@ -119,6 +141,22 @@ namespace RimFirstPerson3D
         /// <summary>下限与截断。下限按每通道取，保留灯具色相。</summary>
         public static Color ClampWithFloor(Color c, ref LightTuning t)
         {
+            return ClampWithFloor(c, ref t, 0f);
+        }
+
+        /// <summary>
+        /// 同上，带夜视权重（0 白天 .. 1 深夜无灯）。toneMap 开时走 F016 胶片色调链，
+        /// 下限仍最后逐通道取（保留灯具色相）。
+        /// </summary>
+        public static Color ClampWithFloor(Color c, ref LightTuning t, float nightW)
+        {
+            if (t.toneMap)
+            {
+                var o = ToneMap.Apply(c, ref t, nightW);
+                float fl = t.floor;
+                o.r = Mathf.Max(o.r, fl); o.g = Mathf.Max(o.g, fl); o.b = Mathf.Max(o.b, fl);
+                return o;
+            }
             float f = t.floor, ex = t.exposure;
             c.r = Mathf.Clamp(Mathf.Max(c.r * ex, f), 0f, 1f);
             c.g = Mathf.Clamp(Mathf.Max(c.g * ex, f), 0f, 1f);
@@ -156,8 +194,11 @@ namespace RimFirstPerson3D
                 col += MoonColor() * (mndl * t.moonStrength * (1f - e.glow) * vis * aoK);
             }
 
-            col += LampColor(f.LampAt(p.x, p.z), ref t);
-            return ClampWithFloor(col, ref t);
+            if (e.auroraAmbient.r + e.auroraAmbient.g + e.auroraAmbient.b > 0f && vis > 0f)
+                col += e.auroraAmbient * (vis * aoK * Mathf.Clamp01(0.5f + 0.5f * n.y));
+            var lampC = LampColor(f.LampAt(p.x, p.z), ref t);
+            col += lampC;
+            return ClampWithFloor(col, ref t, NightWeight(ref e, lampC));
         }
 
         /// <summary>
@@ -174,8 +215,9 @@ namespace RimFirstPerson3D
                 col += SunColor(ref e) * (e.glow * t.sunStrength * 0.62f * f.SunLitAt(p, Vector3.up));
             if (e.glow < 0.5f && e.moonDir.y > 0f && vis > 0f)
                 col += MoonColor() * (t.moonStrength * (1f - e.glow) * 0.45f * vis);
-            col += LampColor(f.LampAt(p.x, p.z), ref t);
-            return ClampWithFloor(col, ref t);
+            var lampP = LampColor(f.LampAt(p.x, p.z), ref t);
+            col += lampP;
+            return ClampWithFloor(col, ref t, NightWeight(ref e, lampP));
         }
 
         /// <summary>

@@ -97,6 +97,69 @@ namespace RimFirstPerson3D
             catch { return null; }
         }
 
+        /// <summary>F016 L4：预乘加法光环（镜头鬼影用），环心半径 ring、环宽 width（0..1 归一化）。</summary>
+        public static Texture2D AdditiveRing(int n, float ring, float width)
+        {
+            try
+            {
+                var t = new Texture2D(n, n, TextureFormat.RGBA32, false)
+                {
+                    name = "Fps3D_AdditiveRing",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear
+                };
+                var px = new Color32[n * n];
+                float c = (n - 1) * 0.5f;
+                for (int y = 0; y < n; y++)
+                    for (int x = 0; x < n; x++)
+                    {
+                        float dx = (x - c) / c, dy = (y - c) / c;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+                        float a = Mathf.Clamp01(1f - Mathf.Abs(d - ring) / Mathf.Max(0.01f, width));
+                        a = a * a * (3f - 2f * a);
+                        // 环内留一点淡淡的填充，像真实镜头的光斑盘
+                        a = Mathf.Max(a, d < ring ? 0.18f * (1f - d / ring) : 0f);
+                        byte v = (byte)Mathf.RoundToInt(255f * Mathf.Clamp01(a));
+                        px[y * n + x] = new Color32(v, v, v, v);
+                    }
+                t.SetPixels32(px);
+                t.Apply(false, false);
+                return t;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>F016 L5：竖直渐隐条（光束棱柱与放射光条用），u 方向两边淡、v 方向尾部淡。</summary>
+        public static Texture2D AdditiveBeam(int w, int h)
+        {
+            try
+            {
+                var t = new Texture2D(w, h, TextureFormat.RGBA32, false)
+                {
+                    name = "Fps3D_AdditiveBeam",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear
+                };
+                var px = new Color32[w * h];
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        float u = (x + 0.5f) / w * 2f - 1f;
+                        float v = (y + 0.5f) / h;
+                        float side = Mathf.Clamp01(1f - Mathf.Abs(u));
+                        side = side * side * (3f - 2f * side);
+                        float along = Mathf.Clamp01(v * 4f) * Mathf.Clamp01((1f - v) * 1.6f);
+                        float a = side * along;
+                        byte b = (byte)Mathf.RoundToInt(255f * Mathf.Clamp01(a));
+                        px[y * w + x] = new Color32(b, b, b, b);
+                    }
+                t.SetPixels32(px);
+                t.Apply(false, false);
+                return t;
+            }
+            catch { return null; }
+        }
+
         /// <summary>可平铺水波纹：亮度/透明度随 FBM 噪声起伏，供水面平铺滚动。</summary>
         public static Texture2D Ripple(int n)
         {
@@ -226,6 +289,10 @@ namespace RimFirstPerson3D
             public Vector3[] normals;
             public Color32[] colors;
             public bool whiteFallback;
+            // F016 L6：视角相关着色的工作缓冲与镜面叠层
+            public Color32[] viewColors;
+            public bool viewShaded;
+            public Mesh mirrorOverlay;
         }
 
         private class Chunk
@@ -563,6 +630,7 @@ namespace RimFirstPerson3D
                     for (int i = 0; i < v.Length; i++)
                         c[i] = Lighting3D.To32(lf.Shade(v[i], n[i], true));
                     ws.mesh.colors32 = c;
+                    ws.viewShaded = false;   // F016 L6：下一帧近圈按新光照重算视角色
                 }
                 else if (ws.whiteFallback)
                 {
@@ -706,6 +774,11 @@ namespace RimFirstPerson3D
         {
             var m = Matrix4x4.Translate(worldOffset);
             float t = Time.realtimeSinceStartup;
+            bool viewShade = Shaderpack3D.WaterSky && Lighting3D.Enabled;
+            viewPoll += Time.deltaTime;
+            bool viewTick = viewPoll >= 0.1f;
+            if (viewTick) viewPoll = 0f;
+            float? glintH = null;
             if (Mathf.Abs(t - scrollT) > 0.0001f)
             {
                 scrollT = t;
@@ -764,14 +837,54 @@ namespace RimFirstPerson3D
                 for (int i = 0; i < c.surf.Count; i++)
                 {
                     if (c.surf[i] == null) continue;
-                    Graphics.DrawMesh(c.surf[i], m, c.surfMat[i], 0);
+                    var mat = c.surfMat[i];
+                    // F016 L6：近处水面按视角重着色（allSurfs 前 surf.Count 项与 surf 一一对应）
+                    var ws = i < c.allSurfs.Count ? c.allSurfs[i] : null;
+                    bool near = viewShade && ws != null && c.boundsValid && WaterFx3D.NearCamera(OffsetBounds(c.bounds));
+                    if (near && mat != null)
+                    {
+                        if (ws.viewColors == null || ws.viewColors.Length != ws.colors.Length) ws.viewColors = new Color32[ws.colors.Length];
+                        if (viewTick || !ws.viewShaded)
+                        {
+                            Shaderpack3D.Begin();
+                            try { WaterFx3D.ShadeSurface(ws.mesh, ws.verts, ws.colors, ws.viewColors, worldOffset, mat.color, light); }
+                            finally { Shaderpack3D.End(); }
+                            ws.viewShaded = true;
+                        }
+                        Graphics.DrawMesh(c.surf[i], m, WaterFx3D.WhiteOf(mat), 0);
+                        if (ws.verts.Length > 0)
+                        {
+                            WaterFx3D.ReportWaterHeight(ws.verts[0].y + worldOffset.y);
+                            if (!glintH.HasValue) glintH = ws.verts[0].y + worldOffset.y;
+                        }
+                        if (Shaderpack3D.WaterMirror) WaterFx3D.DrawMirrorOverlay(ws.mesh, ws.verts, worldOffset, ref ws.mirrorOverlay);
+                    }
+                    else
+                    {
+                        if (ws != null && ws.viewShaded)
+                        {
+                            ws.viewShaded = false;
+                            ws.mesh.colors32 = ws.colors;   // 出了近圈：写回烘好的光照色
+                        }
+                        Graphics.DrawMesh(c.surf[i], m, mat, 0);
+                    }
                     PerfCounters.WaterQuads += c.surf[i].vertexCount / 4;
                 }
             }
+            if (viewShade && glintH.HasValue)
+            {
+                Shaderpack3D.Begin();
+                try { WaterFx3D.DrawGlintStreak(map, worldOffset, glintH.Value, cell => ClassOfCell(map, cell) != Cls.None); }
+                finally { Shaderpack3D.End(); }
+            }
         }
+
+        private float viewPoll;
+        private Bounds OffsetBounds(Bounds b) { b.center += worldOffset; return b; }
 
         private static void DisposeChunk(Chunk c)
         {
+            for (int i = 0; i < c.allSurfs.Count; i++) Util3D.SafeDestroy(c.allSurfs[i].mirrorOverlay);
             for (int i = 0; i < c.surf.Count; i++) Util3D.SafeDestroy(c.surf[i]);
             c.surf.Clear();
             c.surfMat.Clear();

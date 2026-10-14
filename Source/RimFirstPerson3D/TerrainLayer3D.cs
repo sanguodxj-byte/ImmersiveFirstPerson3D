@@ -36,6 +36,8 @@ namespace RimFirstPerson3D
             // 图内局部包围盒（不含 worldOffset），供视锥剔除用；无网格时 valid=false
             public Bounds bounds;
             public bool boundsValid;
+            // F016 L2：这块是按「近处 1 m」切的吗（相机走近/走远时翻转就重建）
+            public bool dense;
         }
 
         private readonly Dictionary<int, Chunk> chunks = new Dictionary<int, Chunk>();
@@ -101,6 +103,33 @@ namespace RimFirstPerson3D
                 chunk.colorDirty = true;
         }
 
+        private bool NearCamera(int key, float radius)
+        {
+            var cam = CameraRig3D.Cam;
+            if (cam == null) return false;
+            int cx = key / 10000, cz = key % 10000;
+            var c = new Vector3((cx + 0.5f) * ChunkSize, 0f, (cz + 0.5f) * ChunkSize) + worldOffset;
+            var p = cam.transform.position;
+            float dx = Mathf.Max(0f, Mathf.Abs(p.x - c.x) - ChunkSize * 0.5f);
+            float dz = Mathf.Max(0f, Mathf.Abs(p.z - c.z) - ChunkSize * 0.5f);
+            return dx * dx + dz * dz <= radius * radius;
+        }
+
+        private float densePoll;
+        private void UpdateDenseFlags()
+        {
+            densePoll += Time.deltaTime;
+            if (densePoll < 0.5f) return;
+            densePoll = 0f;
+            bool on = Shaderpack3D.NearDense && Lighting3D.Enabled;
+            foreach (var kv in chunks)
+            {
+                var ch = kv.Value;
+                bool want = on && NearCamera(kv.Key, ShaderpackDefaults.NearDenseRadius);
+                if (want != ch.dense && !ch.dirty) ch.dirty = true;
+            }
+        }
+
         // 每帧调用，按预算重建脏 chunk。返回剩余脏数。
         public int Update()
         {
@@ -117,6 +146,23 @@ namespace RimFirstPerson3D
             int colorBudget = budget * 2 + 2;
             float colorMs = Fps3DState.ChunkColorBudgetMs;
             int dirtyRemaining = 0;
+            // F016 L2：近处加密 —— 相机 NearDenseRadius 内的 chunk 切到 1 m，走远再退回；
+            // 换档的 chunk 进重建队列，仍吃同一份预算。近处的重刷先做（换档不在脚边跳）。
+            UpdateDenseFlags();
+            if (Shaderpack3D.SoftShadows)
+            {
+                foreach (var kv in chunks)
+                {
+                    var ch = kv.Value;
+                    if (ch.dirty || !ch.colorDirty || colorBudget <= 0 || colorMs <= 0f) continue;
+                    if (!NearCamera(kv.Key, 32f)) continue;
+                    var sw0 = System.Diagnostics.Stopwatch.StartNew();
+                    RecolorChunk(ch);
+                    float e0 = (float)sw0.Elapsed.TotalMilliseconds;
+                    colorMs -= e0;
+                    colorBudget--;
+                }
+            }
             // 第一轮：仅重建与重刷当前相机视锥内的地形 chunk；屏幕外的 colorDirty 留到进入视野时再刷
             foreach (var kv in chunks)
             {
@@ -184,6 +230,7 @@ namespace RimFirstPerson3D
         {
             DisposeChunkMeshes(chunk);
             int cx = key / 10000, cz = key % 10000;
+            chunk.dense = Shaderpack3D.NearDense && Lighting3D.Enabled && NearCamera(key, ShaderpackDefaults.NearDenseRadius);
 
             var rect = new CellRect(cx * ChunkSize, cz * ChunkSize, ChunkSize, ChunkSize);
             rect.ClipInsideMap(map);
@@ -245,6 +292,7 @@ namespace RimFirstPerson3D
                     // UV 走世界坐标，所以细分不改变取样位置，贴图与切之前逐像素一致。
                     int step = Lighting3D.Enabled
                         ? Mathf.Clamp(Mathf.RoundToInt(Lighting3D.QuadStep), 1, 16) : 16;
+                    if (chunk.dense) step = 1;   // F016 L2 近处加密
                     for (int sz2 = 0; sz2 < rh; sz2 += step)
                     {
                         int dh = Mathf.Min(step, rh - sz2);
@@ -331,6 +379,19 @@ namespace RimFirstPerson3D
                         c[i] = new Color32(255, 255, 255, a[i]);
                 }
                 surf.mesh.colors32 = c;
+                FlipDiagonals(surf.mesh, c);
+            }
+        }
+
+        // F016 L2：MC 式对角线翻转（AoMath.FlipQuads），只在平滑光照档、且真有块需要翻时写回三角形
+        internal static void FlipDiagonals(Mesh mesh, Color32[] cols)
+        {
+            if (!Shaderpack3D.SmoothAo || mesh == null) return;
+            int[] tris;
+            try { tris = mesh.triangles; } catch { return; }
+            if (AoMath.FlipQuads(tris, cols) > 0)
+            {
+                try { mesh.triangles = tris; } catch { }
             }
         }
 
@@ -663,7 +724,13 @@ namespace RimFirstPerson3D
                 mesh.normals = nArr;
                 mesh.SetUVs(0, uvs);
                 mesh.colors32 = cArr;
-                mesh.SetTriangles(tris, 0);
+                if (field != null && Shaderpack3D.SmoothAo)
+                {
+                    var tArr = tris.ToArray();
+                    AoMath.FlipQuads(tArr, cArr);   // F016 L2：首烘就按 MC 规则选对角线
+                    mesh.triangles = tArr;
+                }
+                else mesh.SetTriangles(tris, 0);
                 mesh.RecalculateBounds();
                 return new Surface
                 {

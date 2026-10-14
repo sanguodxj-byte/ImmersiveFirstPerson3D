@@ -70,7 +70,7 @@ namespace RimFirstPerson3D
                 {
                     name = "Fps3D_GrassShadow",
                     mainTexture = ProcTex3D.Radial(32, 0.20f, 1.45f),
-                    color = new Color(0f, 0f, 0f, 0.08f),
+                    color = new Color(0f, 0f, 0f, 0.35f),
                     renderQueue = 2914
                 };
                 return tuftShadowMat;

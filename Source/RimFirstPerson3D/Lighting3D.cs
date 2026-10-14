@@ -88,6 +88,16 @@ namespace RimFirstPerson3D
             h = h * 31 + Q(s.lightAmbTint);
             h = h * 31 + Q(s.lightQuadStep);
             h = h * 31 + (CarrierProbe ? 1 : 0);
+            // F016：色调与画质档改了同样要重烘
+            h = h * 31 + (s.lightToneMap ? 1 : 0);
+            h = h * 31 + (s.lightKelvinSun ? 1 : 0);
+            h = h * 31 + Q(s.lightExposure);
+            h = h * 31 + Q(s.lightWhitePoint);
+            h = h * 31 + Q(s.lightHighlightDesat);
+            h = h * 31 + Q(s.lightSplitTone);
+            h = h * 31 + Q(s.lightSaturation);
+            h = h * 31 + Q(s.lightNightDesat);
+            h = h * 31 + Shaderpack3D.BakeKey();
             h = h * 31 + (SkyScenery.DebugPreset != null ? SkyScenery.DebugPreset.GetHashCode() : 0);
             return h;
         }
@@ -141,6 +151,7 @@ namespace RimFirstPerson3D
                 skyZenith = current.sky,
                 skyHorizon = current.horizon,
                 sunGlowHorizon = current.sunGlowHorizon,
+                kelvinSun = KelvinSunOn,
             };
             TuneNow = new LightTuning
             {
@@ -156,7 +167,17 @@ namespace RimFirstPerson3D
                 softTop = SoftTop,
                 ambTint = AmbTint,
                 moonStrength = MoonStrength,
+                // F016 L1 胶片色调
+                toneMap = ToneMapOn,
+                whitePoint = S != null ? S.lightWhitePoint : ShaderpackDefaults.WhitePoint,
+                highlightDesat = S != null ? S.lightHighlightDesat : ShaderpackDefaults.HighlightDesat,
+                splitTone = S != null ? S.lightSplitTone : ShaderpackDefaults.SplitTone,
+                shadowTint = ShaderpackDefaults.ShadowTint,
+                highlightTint = ShaderpackDefaults.HighlightTint,
+                saturation = S != null ? S.lightSaturation : ShaderpackDefaults.Saturation,
+                nightDesat = S != null ? S.lightNightDesat : ShaderpackDefaults.NightDesat,
             };
+            Shaderpack3D.ApplyWeather(ref EnvNow, ref TuneNow, current);
         }
 
         // ---- 公式本体在 LightShade.cs（离线模拟场景台与游戏共用），这里只留调用点的薄封装 ----
@@ -194,14 +215,25 @@ namespace RimFirstPerson3D
         /// <summary>合成下限与截断。</summary>
         public static Color ClampWithFloor(Color c)
         {
-            return LightShade.ClampWithFloor(c, ref TuneNow);
+            // 山体那条通路也走这里：夜视权重按天色给（山体自己的灯具项已经加在 c 里）
+            return LightShade.ClampWithFloor(c, ref TuneNow, Mathf.Clamp01(1f - EnvNow.glow * 2f));
         }
 
         /// <summary>
         /// 合成前的总曝光：环境项 + 直射 + 灯具在正午能加到 1.5 以上，不压一档就全被截成纯白，
         /// 正午看上去和没光照一样（实机量测：terrain 朝上桶均值 248/255，9.4 万顶点是纯白）。
         /// </summary>
-        public const float Exposure = 0.62f;
+        public const float ExposureLegacy = 0.62f;
+
+        /// <summary>
+        /// F016 L1：胶片色调开时曝光默认 1.0（曲线自己留头部空间），关时回到 F013 的 0.62。
+        /// </summary>
+        public static float Exposure => ToneMapOn
+            ? (S != null ? Mathf.Clamp(S.lightExposure, 0.2f, 4f) : ShaderpackDefaults.Exposure)
+            : ExposureLegacy;
+
+        public static bool ToneMapOn => S == null || S.lightToneMap;
+        public static bool KelvinSunOn => S == null || S.lightKelvinSun;
 
         /// <summary>
         /// 原型网格的形体明暗（固定风格光方向，见 FormLightDir）。
@@ -279,11 +311,15 @@ namespace RimFirstPerson3D
         /// <summary>
         /// 按放置亮度取克隆材质。源材质的 color 与主贴图语义保持不变，光照只乘进去。
         /// 亮度量化到每通道 5 bit，控制缓存规模；超限整表清空。
+        /// 遮罩门控着色器（CutoutComplex 系：非原版服饰常用，见 GatedColorShaders）
+        /// 的 _Color 只作用于 _MaskTex 红通道标记的区域，材质色乘子压不暗 ——
+        /// 这些材质直接返回原样，由调用方追加 DrawDarken 叠加压暗。
         /// </summary>
         public static Material MatFor(Material src, Color level)
         {
             if (src == null) return null;
             if (!Enabled) return src;
+            if (!DarkensByColor(src)) return src;
             int qr = Quant(level.r), qg = Quant(level.g), qb = Quant(level.b);
             if (qr == 31 && qg == 31 && qb == 31) return src;   // 满亮，不用克隆
             long key = ((long)src.GetInstanceID() << 15) | (uint)((qr << 10) | (qg << 5) | qb);
@@ -298,6 +334,67 @@ namespace RimFirstPerson3D
             if (litMats.Count >= LitMatCacheCap) ClearLitMats();
             litMats[key] = m;
             return m;
+        }
+
+        /// <summary>
+        /// 着色器是否吃材质色乘子。CutoutComplex 系（原版「队伍色/双色」着色器，
+        /// 种族扩展与社区服饰大量使用）把 _Color 乘在 _MaskTex 红通道门控的区域里：
+        /// 遮罩为黑时材质色完全不起作用，MatFor 克隆等于空转，必须走叠加压暗回退。
+        /// 出自 CutoutComplex.frag.glsl：colMultiplier = colPower.r * (_Color * vColor) + (1 - colPower.r)。
+        /// </summary>
+        private static readonly System.Collections.Generic.HashSet<string> gatedColorShaders
+            = new System.Collections.Generic.HashSet<string>
+        {
+            "CutoutComplex", "CutoutComplexBlend", "CutoutComplexUI",
+            "CutoutSkinOverlay", "CutoutWithOverlay"
+        };
+
+        public static bool DarkensByColor(Material src)
+        {
+            if (src == null || src.shader == null) return true;
+            return !gatedColorShaders.Contains(src.shader.name);
+        }
+
+        /// <summary>
+        /// 遮罩门控材质的受光回退：同一网格、同一贴图、黑色、alpha = 1 - 亮度，
+        /// 朝黑做 alpha 混合 = 均匀压暗，不改色相、按贴图 alpha 自动贴住轮廓。
+        /// 与 HitFx3D 叠加同一套机制（TransparentPostLight + 高 renderQueue 后画）。
+        /// 全亮或吃材质色乘子的材质直接跳过。
+        /// </summary>
+        private static readonly Dictionary<long, Material> darkenMats = new Dictionary<long, Material>();
+        private const int DarkenBucketN = 16;
+
+        public static void DrawDarken(Mesh mesh, Matrix4x4 matrix, Material src, Color level)
+        {
+            if (!Enabled || mesh == null || src == null) return;
+            if (DarkensByColor(src)) return;   // 已被材质色乘子压暗，无需叠加
+            float g = (level.r + level.g + level.b) / 3f;
+            int q = Mathf.Clamp(Mathf.RoundToInt((1f - Mathf.Clamp01(g)) * DarkenBucketN), 0, DarkenBucketN);
+            if (q <= 0) return;
+            var tex = src.mainTexture;
+            if (tex == null) return;   // 无贴图就没有轮廓可压
+            long key = ((long)tex.GetInstanceID() << 5) | (uint)q;
+            if (!darkenMats.TryGetValue(key, out var m) || m == null)
+            {
+                if (darkenMats.Count >= LitMatCacheCap) ClearDarkenMats();
+                m = new Material(ShaderDatabase.TransparentPostLight ?? ShaderDatabase.Transparent)
+                {
+                    name = "Fps3D_Darken",
+                    renderQueue = 2917
+                };
+                m.mainTexture = tex;
+                darkenMats[key] = m;
+            }
+            m.color = new Color(0f, 0f, 0f, q / (float)DarkenBucketN);
+            Graphics.DrawMesh(mesh, matrix, m, 0);
+            PerfCounters.PawnDarkenQuads++;
+        }
+
+        public static void ClearDarkenMats()
+        {
+            foreach (var kv in darkenMats)
+                if (kv.Value != null) UnityEngine.Object.Destroy(kv.Value);
+            darkenMats.Clear();
         }
 
         private static int Quant(float v)
@@ -315,6 +412,7 @@ namespace RimFirstPerson3D
             foreach (var kv in litMats)
                 if (kv.Value != null) Object.Destroy(kv.Value);
             litMats.Clear();
+            ClearDarkenMats();
         }
 
         // ---- 采样探针与导出（scripts/light_check.py 的输入）----
@@ -466,6 +564,8 @@ namespace RimFirstPerson3D
             HitFx3D.Snapshot(sb);      // F014：受击反馈的当帧读数，跟着同一份 dump 出来
             sb.Append(',');
             ShotFx3D.Snapshot(sb);     // F015：射击效果的当帧读数
+            sb.Append(',');
+            Shaderpack3D.Snapshot(sb); // F016：画质档、预算与引擎能力
             sb.Append(",\"maps\":[");
             bool any = false;
             foreach (var sc in SceneRegistry.All)

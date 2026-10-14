@@ -24,6 +24,16 @@
        所以这里通过才有资格进游戏实测。 -->
   <ItemGroup>
     <Compile Include="..\..\Source\RimFirstPerson3D\LightShade.cs" Link="LightShade.cs" />
+    <!-- F016 光影包级画面的纯函数层 -->
+    <Compile Include="..\..\Source\RimFirstPerson3D\ToneMap.cs" Link="ToneMap.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\ShaderpackDefaults.cs" Link="ShaderpackDefaults.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\ShadowMath.cs" Link="ShadowMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\FlareMath.cs" Link="FlareMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\FogMath.cs" Link="FogMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\AoMath.cs" Link="AoMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\WaterMath.cs" Link="WaterMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\WeatherMath.cs" Link="WeatherMath.cs" />
+    <Compile Include="..\..\Source\RimFirstPerson3D\ScreenFxMath.cs" Link="ScreenFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\HitFxMath.cs" Link="HitFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\ShotFxMath.cs" Link="ShotFxMath.cs" />
     <Compile Include="..\..\Source\RimFirstPerson3D\Metrics3D.cs" Link="Metrics3D.cs" />

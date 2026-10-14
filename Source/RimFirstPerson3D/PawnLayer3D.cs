@@ -121,6 +121,11 @@ namespace RimFirstPerson3D
                     tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
                 }
                 catch { }
+                // FA 时序修补：NLFacialAnimationMasterNode 构造时若 CheckUpdateableInitial() 因
+                // 瞬时状态（Settings 尚未加载 / pawn 归属未就绪）失败，controller 被永久置 null，
+                // 此后 PreDraw 里的 UpdateAnimation 全程空跑 —— 表情永远停在最后一帧。
+                // 树就绪后重跑一次该检查，通过则把 comp 写回（一次修补，之后走 FA 自身推进链）。
+                FaPatchMasterController(pawn, tree);
             }
 
             // 放置亮度按 pawn 脚下格中心取（图内局部坐标，与光照场同一系），
@@ -187,6 +192,17 @@ namespace RimFirstPerson3D
                         float sx = W / 1.15f;
                         var rot = Quaternion.AngleAxis(yaw + 180f, Vector3.up) * Quaternion.Euler(-90f, 0f, 0f);
                         var basis = Matrix4x4.TRS(pos + new Vector3(0f, 0.75f * sy, 0f), rot, new Vector3(sx, 1f, sy));
+                        // F016 L3：影子用正对太阳的那张立牌（形状不随相机转），朝下时换背面
+                        bool castShadow = Shadows3D.AnyActive && !pawnLying(pawn);
+                        Matrix4x4 sunBasis = basis, sunBasisFlip = basis;
+                        if (castShadow)
+                        {
+                            float sYaw = Shadows3D.SunYaw;
+                            var sRot = Quaternion.AngleAxis(sYaw + 180f, Vector3.up) * Quaternion.Euler(-90f, 0f, 0f);
+                            var sRotF = Quaternion.AngleAxis(sYaw, Vector3.up) * Quaternion.Euler(-90f, 0f, 0f);
+                            sunBasis = Matrix4x4.TRS(pos + new Vector3(0f, 0.75f * sy, 0f), sRot, new Vector3(sx, 1f, sy));
+                            sunBasisFlip = Matrix4x4.TRS(pos + new Vector3(0f, 0.75f * sy, 0f), sRotF, new Vector3(sx, 1f, sy));
+                        }
 
                         for (int j = 0; j < cachedDrawRequests.Count; j++)
                         {
@@ -226,6 +242,12 @@ namespace RimFirstPerson3D
 
                             Material mat = Lighting3D.MatFor(baseMat, lit);
                             Graphics.DrawMesh(m, finalMat, mat, 0);
+                            // 遮罩门控着色器（CutoutComplex 系，非原版服饰常用）的材质色乘子压不暗，
+                            // 追加同网格同贴图的黑色 alpha 叠加补上这层受光。
+                            Lighting3D.DrawDarken(m, finalMat, baseMat, lit);
+                            // 只投身体与头：衣服、发型和身体剪影重合，叠着投会把影子压成死黑
+                            if (castShadow && (req.node is PawnRenderNode_Body || req.node is PawnRenderNode_Head))
+                                Shadows3D.Cast(m, sunBasis * localMat, pos, baseMat.mainTexture, true, sunBasisFlip * localMat);
                             if (hurt > 0f)
                                 HitFx3D.DrawOverlay(m, finalMat, baseMat, hurt);
                             PerfCounters.PawnQuads++;
@@ -267,6 +289,7 @@ namespace RimFirstPerson3D
                 float aH = Mathf.Clamp(ds.y, 0.3f, 6.0f);
                 float aW = Mathf.Clamp(ds.x, 0.3f, 6.0f);
                 DrawQuad(pos, yaw, aW, aH, mat, quad, 0f, lit, hurt);
+                PerfCounters.EntityQuads++;
             }
         }
 
@@ -435,6 +458,63 @@ namespace RimFirstPerson3D
             return false;
         }
 
+        // 已修补过的 pawn（按 thingIDNumber，避免每帧反射）：-1=无 FA，1=已处理
+        private static readonly Dictionary<int, int> faPatched = new Dictionary<int, int>();
+
+        // FA 构造时序修补，见 FaPatchMasterController 注释。全部反射、缺失安全降级。
+        private static void FaPatchMasterController(Pawn pawn, PawnRenderTree tree)
+        {
+            if (pawn == null || tree == null || tree.rootNode == null) return;
+            int id = pawn.thingIDNumber;
+            if (faPatched.TryGetValue(id, out int st) && st != 0) return;
+            PawnRenderNode master = null;
+            FindMasterNode(tree.rootNode, ref master, 0);
+            if (master == null || master.GetType().Name != "NLFacialAnimationMasterNode")
+            {
+                faPatched[id] = -1;   // 树里没 FA master（未装 FA / 该 pawn 无表情）：不再处理
+                return;
+            }
+            try
+            {
+                var fCtrl = master.GetType().GetField("controller",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public);
+                if (fCtrl == null) { faPatched[id] = -1; return; }
+                if (fCtrl.GetValue(master) != null)
+                {
+                    faPatched[id] = 1;   // 推进链本来就通：不碰，只标记
+                    return;
+                }
+                ThingComp comp = null;
+                foreach (var c in pawn.AllComps)
+                {
+                    if (c.GetType().FullName == "FacialAnimation.FacialAnimationControllerComp")
+                    {
+                        comp = c;
+                        break;
+                    }
+                }
+                if (comp == null) return;   // 暂无 comp（重载中）：下帧再试
+                var mCheck = comp.GetType().GetMethod("CheckUpdateableInitial",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic);
+                if (mCheck == null) return;
+                if (!(bool)mCheck.Invoke(comp, null)) return;  // FA 条件尚未就绪或被设置关闭：下帧再试
+                fCtrl.SetValue(master, comp);   // readonly 字段，反射可写；写不进也不会再炸
+                faPatched[id] = 1;   // 写回成功，之后每帧走 FA 自身的 PreDraw -> UpdateAnimation
+            }
+            catch { }
+        }
+
+        private static void FindMasterNode(PawnRenderNode node, ref PawnRenderNode master, int guard)
+        {
+            if (node == null || master != null || guard > 12) return;
+            if (node.GetType().Name == "NLFacialAnimationMasterNode") { master = node; return; }
+            var kids = node.children;
+            if (kids == null) return;
+            for (int i = 0; i < kids.Length; i++) FindMasterNode(kids[i], ref master, guard + 1);
+        }
+
         private static PawnDrawParms BuildParms(Pawn pawn, Vector3 pos, Rot4 viewRot)
         {
             var p = PawnDrawParms.DefaultFor(pawn);
@@ -448,6 +528,86 @@ namespace RimFirstPerson3D
             return p;
         }
 
+        // 诊断（dump pawn render 用，不动绘制路径）：以与 DrawPawn 相同的方式收集一次请求，
+        // 暴露 AppendRequests 抛出的异常类型（绘制循环里它被 try/catch 静态吞掉）。
+        // 按四向各跑一遍：DrawPawn 的 viewRot 是相机相对的，与本诊断用的 pawn.Rotation 不同，
+        // 某些朝向下节点 worker 才会抛异常 —— 分向复现才能定位。
+        public static string DiagnoseRequests(Pawn pawn, Rot4 viewRot)
+        {
+            if (pawn == null || pawn.Drawer == null || pawn.Drawer.renderer == null
+                || pawn.Drawer.renderer.renderTree == null)
+                return "noTree";
+            var tree = pawn.Drawer.renderer.renderTree;
+            var sb = new System.Text.StringBuilder();
+            Rot4[] rots = { Rot4.South, Rot4.East, Rot4.North, Rot4.West };
+            for (int r = 0; r < 4; r++)
+            {
+                try
+                {
+                    tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                    var list = new List<PawnGraphicDrawRequest>();
+                    var parms = BuildParms(pawn, Vector3.zero, rots[r]);
+                    tree.rootNode.AppendRequests(parms, list);
+                    int fa = 0, head = 0, har = 0, matFail = 0;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var n = list[i].node;
+                        if (n == null) continue;
+                        var name = n.GetType().Name;
+                        if (name.StartsWith("NLFacialAnimation", StringComparison.Ordinal)) fa++;
+                        else if (name == "PawnRenderNode_Head") head++;
+                        else if (name == "AlienPawnRenderNode_BodyAddon") har++;
+                        if (list[i].material == null) matFail++;
+                    }
+                    sb.Append(" [").Append(rots[r].ToString()[0]).Append("]req=").Append(list.Count)
+                        .Append(" fa=").Append(fa).Append(" head=").Append(head).Append(" har=").Append(har)
+                        .Append(" matNull=").Append(matFail);
+                }
+                catch (System.Exception e)
+                {
+                    sb.Append(" [").Append(rots[r].ToString()[0]).Append("]ERR ").Append(e.GetType().Name).Append(':').Append(e.Message);
+                }
+            }
+            return sb.ToString();
+        }
+
+        // 诊断第二步：与绘制循环同法解析材质并逐请求调 PreDraw，返回首个异常（无异常返回 null）。
+        // 用来定位「FA 控制器不推进」到底卡在请求收集之后的哪一步。
+        public static string DiagnosePreDraw(Pawn pawn)
+        {
+            if (pawn == null || pawn.Drawer == null || pawn.Drawer.renderer == null
+                || pawn.Drawer.renderer.renderTree == null)
+                return "noTree";
+            var tree = pawn.Drawer.renderer.renderTree;
+            try
+            {
+                tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                var list = new List<PawnGraphicDrawRequest>();
+                var parms = BuildParms(pawn, Vector3.zero, pawn.Rotation);
+                tree.rootNode.AppendRequests(parms, list);
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var node = list[i].node;
+                    if (node == null) continue;
+                    Material baseMat = list[i].material;
+                    if (node.CheckMaterialEveryDrawRequest || baseMat == null)
+                        baseMat = node.Worker.GetFinalizedMaterial(node, parms);
+                    if (baseMat != null)
+                        node.Worker.PreDraw(node, baseMat, parms);
+                }
+                return null;
+            }
+            catch (System.Exception e)
+            {
+                return e.GetType().Name + ": " + e.Message;
+            }
+        }
+
+        private static bool pawnLying(Pawn p)
+        {
+            try { return p.GetPosture() != PawnPosture.Standing || p.Downed; } catch { return false; }
+        }
+
         private void DrawQuad(Vector3 pos, float yaw, float w, float h, Material mat, Mesh quad,
             float depthOffset, Color lit, float hurt)
         {
@@ -455,6 +615,16 @@ namespace RimFirstPerson3D
             var fwd = rot * Vector3.forward;
             var matrix = Matrix4x4.TRS(pos + fwd * depthOffset, rot, new Vector3(w, h, 1f));
             Graphics.DrawMesh(quad, matrix, Lighting3D.MatFor(mat, lit), 0);
+            // 同主路径：遮罩门控材质（CutoutComplex 系）补叠加压暗（mat 为源材质）
+            Lighting3D.DrawDarken(quad, matrix, mat, lit);
+            // F016 L3：分层立牌只让最底那层（depthOffset == 0）投影，其余层与它剪影重合
+            if (depthOffset <= 0.0001f && Shadows3D.AnyActive && mat != null)
+            {
+                float sYaw = Shadows3D.SunYaw;
+                var sm = Matrix4x4.TRS(pos, Quaternion.AngleAxis(sYaw, Vector3.up), new Vector3(w, h, 1f));
+                var smf = Matrix4x4.TRS(pos, Quaternion.AngleAxis(sYaw + 180f, Vector3.up), new Vector3(w, h, 1f));
+                Shadows3D.Cast(quad, sm, pos, mat.mainTexture, true, smf);
+            }
             HitFx3D.DrawOverlay(quad, matrix, mat, hurt);
             PerfCounters.PawnQuads++;
         }

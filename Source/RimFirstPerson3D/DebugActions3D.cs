@@ -57,6 +57,25 @@ namespace RimFirstPerson3D
             Log.Message(ModEntry.LogPrefix + "LIGHTDUMP " + j);
         }
 
+        // F016 P0：引擎能力探针（结果写进 settings.renderCaps 并持久化 caps* 门控字段）
+        [DebugAction("FirstPerson3D", "probe: render caps")]
+        public static void ProbeRenderCaps()
+        {
+            RenderProbe3D.Run();
+        }
+
+        [DebugAction("FirstPerson3D", "shader quality: cycle")]
+        private static void CycleShaderQuality()
+        {
+            var s = FirstPerson3DMod.settings;
+            if (s == null) return;
+            string[] order = { "off", "low", "medium", "high", "ultra" };
+            int i = System.Array.IndexOf(order, (s.shaderQuality ?? "medium").ToLowerInvariant());
+            s.shaderQuality = order[(i + 1 + order.Length) % order.Length];
+            Shaderpack3D.ResetSession();
+            Log.Message(ModEntry.LogPrefix + "shaderQuality -> " + s.shaderQuality);
+        }
+
         [DebugAction("FirstPerson3D", "lighting: toggle")]
         private static void ToggleLighting()
         {
@@ -721,7 +740,17 @@ namespace RimFirstPerson3D
                 sb.Append(" nodes=").Append(total).Append(" fa=").Append(fa).Append(" har=").Append(har);
                 sb.Append(" head=").Append(head).Append(" fpSelf=").Append(fpSelf ? 1 : 0);
                 sb.Append(" faTick=").Append(FaLastTick(pawn));
+                sb.Append(" masterCtrl=").Append(MasterControllerState(pawn));
+                sb.Append(" faCheck=").Append(FaCheckNow(pawn));
+                sb.Append(" isColonist=").Append(pawn.IsColonist);
                 sb.Append(" job=").Append(pawn.CurJobDef != null ? pawn.CurJobDef.defName : "-");
+                try { sb.Append(' ').Append(PawnLayer3D.DiagnoseRequests(pawn, pawn.Rotation)); }
+                catch (System.Exception e) { sb.Append(" diagErr ").Append(e.GetType().Name); }
+                // PreDraw 实操：与绘制循环同法逐请求调一次，看是否抛异常、lastTick 是否被推进
+                int tickBefore = FaLastTick(pawn);
+                string preErr = PawnLayer3D.DiagnosePreDraw(pawn);
+                sb.Append(" preDraw ").Append("before=").Append(tickBefore).Append(" after=").Append(FaLastTick(pawn))
+                    .Append(" err=").Append(preErr ?? "none");
                 sb.Append('}');
             }
             Log.Message(ModEntry.LogPrefix + sb);
@@ -739,6 +768,137 @@ namespace RimFirstPerson3D
             if (kids == null) return;
             for (int i = 0; i < kids.Length; i++)
                 DumpWalk(kids[i], ref fa, ref har, ref head, ref total, guard + 1);
+        }
+
+        // 着色器/材质采样（定位「非原版服饰不吃光」）：列出每个可见人形 pawn 各请求的
+        // 节点类型 + 着色器名 + 主贴图 + 材质色，看吃不吃 _Color 乘子、是不是 MatPropBlock 系。
+        [DebugAction("FirstPerson3D", "dump pawn shaders")]
+        public static void DumpPawnShaders()
+        {
+            var map = Find.CurrentMap;
+            if (map == null) { Log.Message(ModEntry.LogPrefix + "PAWNSHADER nomap"); return; }
+            var sb = new System.Text.StringBuilder();
+            sb.Append("PAWNSHADER mode=").Append(Fps3DState.Mode);
+            int n = 0;
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+            {
+                if (pawn == null || !pawn.RaceProps.Humanlike) continue;
+                if (n++ >= 12) break;
+                var tree = pawn.Drawer?.renderer?.renderTree;
+                if (tree?.rootNode == null) continue;
+                sb.Append(" [").Append(pawn.def.defName).Append(':').Append(pawn.thingIDNumber).Append(']');
+                try
+                {
+                    tree.EnsureInitialized(PawnRenderFlags.Clothes | PawnRenderFlags.Headgear);
+                    var list = new System.Collections.Generic.List<PawnGraphicDrawRequest>();
+                    var parms = BuildParmsLocal(pawn);
+                    tree.rootNode.AppendRequests(parms, list);
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var node = list[i].node;
+                        var mat = node != null && node.CheckMaterialEveryDrawRequest
+                            ? node.Worker.GetFinalizedMaterial(node, parms) : list[i].material;
+                        if (node == null) continue;
+                        var tname = node.GetType().Name;
+                        if (tname.StartsWith("NLFacialAnimation", System.StringComparison.Ordinal)) continue;  // 表情层另论
+                        var sh = mat != null && mat.shader != null ? mat.shader.name : "nullMat";
+                        var tex = mat != null && mat.mainTexture != null ? mat.mainTexture.name : "-";
+                        var col = mat != null ? mat.color : Color.clear;
+                        sb.Append(" (").Append(tname).Append('|').Append(sh).Append('|').Append(tex)
+                            .Append('|').Append(col.r.ToString("0.00")).Append(',').Append(col.g.ToString("0.00")).Append(',').Append(col.b.ToString("0.00")).Append(')');
+                    }
+                }
+                catch (System.Exception e) { sb.Append(" ERR ").Append(e.GetType().Name).Append(':').Append(e.Message); }
+            }
+            Log.Message(ModEntry.LogPrefix + sb);
+        }
+
+        private static PawnDrawParms BuildParmsLocal(Pawn pawn)
+        {
+            var p = PawnDrawParms.DefaultFor(pawn);
+            p.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, Vector3.one);
+            p.facing = pawn.Rotation;
+            try { p.rotDrawMode = pawn.Drawer.renderer.CurRotDrawMode; } catch { }
+            p.flags = PawnRenderFlags.Clothes | PawnRenderFlags.Headgear;
+            p.tint = Color.white;
+            return p;
+        }
+
+        // 反射读 NLFacialAnimationMasterNode.controller：构造时 CheckUpdateableInitial() 失败会被置 null，
+        // 之后 PreDraw 里的 UpdateAnimation 就是空跑 —— 这是「表情冻结」的直接原因，必须能看见。
+        private static string MasterControllerState(Pawn pawn)
+        {
+            try
+            {
+                var tree = pawn.Drawer?.renderer?.renderTree;
+                if (tree?.rootNode == null) return "noTree";
+                PawnRenderNode master = null;
+                FindMaster(tree.rootNode, ref master, 0);
+                if (master == null) return "noMasterNode";
+                var f = master.GetType().GetField("controller",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public);
+                if (f == null) return "noField";
+                object c = f.GetValue(master);
+                if (c == null) return "null";
+                // controller 非空时的 CheckUpdateableInitial 各条件复述（便于定位为何 null）
+                var fa = f.FieldType;
+                return fa.Name;
+            }
+            catch (System.Exception e) { return "EXC:" + e.GetType().Name; }
+        }
+
+        // 现场复跑 CheckUpdateableInitial 并读 FA 设置当前值：若现在返回 true 而构造时为 false，
+        // 说明是构造时机的瞬时状态（如 Settings 尚未加载 / pawn 状态未就绪）害死了 controller。
+        private static string FaCheckNow(Pawn pawn)
+        {
+            try
+            {
+                ThingComp comp = null;
+                foreach (var c in pawn.AllComps)
+                {
+                    if (c.GetType().FullName == "FacialAnimation.FacialAnimationControllerComp") { comp = c; break; }
+                }
+                if (comp == null) return "noComp";
+                var t = comp.GetType();
+                var mCheck = t.GetMethod("CheckUpdateableInitial",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic);
+                string now = mCheck != null ? (mCheck.Invoke(comp, null) as bool?).ToString() : "noMethod";
+                // FacialAnimationMod.Settings 两个关键开关
+                string settings = "?";
+                try
+                {
+                    var faMod = System.Type.GetType("FacialAnimation.FacialAnimationMod, FacialAnimation");
+                    if (faMod != null)
+                    {
+                        var sProp = faMod.GetProperty("Settings", System.Reflection.BindingFlags.Static
+                            | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                        object s = sProp?.GetValue(null);
+                        if (s != null)
+                        {
+                            var all = s.GetType().GetField("EnableAnimationsForAllPawns");
+                            var non = s.GetType().GetField("EnableAnimationsForNonOfTheAbove");
+                            settings = "all=" + all?.GetValue(s) + " non=" + non?.GetValue(s);
+                        }
+                        else settings = "Settings=null";
+                    }
+                }
+                catch (System.Exception e) { settings = "EXC:" + e.Message; }
+                string rot = "?";
+                try { rot = pawn.Drawer.renderer.CurRotDrawMode.ToString(); } catch { }
+                return "checkNow=" + now + " " + settings + " rot=" + rot;
+            }
+            catch (System.Exception e) { return "EXC:" + e.GetType().Name; }
+        }
+
+        private static void FindMaster(PawnRenderNode node, ref PawnRenderNode master, int guard)
+        {
+            if (node == null || master != null || guard > 12) return;
+            if (node.GetType().Name == "NLFacialAnimationMasterNode") { master = node; return; }
+            var kids = node.children;
+            if (kids == null) return;
+            for (int i = 0; i < kids.Length; i++) FindMaster(kids[i], ref master, guard + 1);
         }
 
         // 反射读 FacialAnimation.FacialAnimationControllerComp 的 lastTick：
@@ -769,6 +929,86 @@ namespace RimFirstPerson3D
                 return v is int i ? i : -2;
             }
             catch { return -2; }
+        }
+        // ---- 异像实体贴图链路诊断（dump entity render）----
+        // 复跑 PawnLayer3D 对非人形 pawn 的完整判定，逐级输出实体为何可见/不可见：
+        //   AnimHandles / Humanlike / Frustum / Fogged / ResolveGraphic 五级 / drawSize / mat
+        // 输出形如：ENTITYDUMP def=Nociosphere anim=0 hum=0 vis=1 fog=0 g1=- g2=- g3=- g4=- g5=+ ds=3.6,3.6 mat=ok
+        [DebugAction("FirstPerson3D", "dump entity render")]
+        public static void DumpEntityRender()
+        {
+            var map = Find.CurrentMap;
+            if (map == null) { Log.Message(ModEntry.LogPrefix + "ENTITYDUMP nomap"); return; }
+            var sb = new System.Text.StringBuilder();
+            sb.Append("ENTITYDUMP mode=").Append(Fps3DState.Mode);
+            int n = 0;
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+            {
+                if (pawn == null || pawn.RaceProps == null || pawn.RaceProps.Humanlike) continue;
+                string dd = pawn.def != null ? pawn.def.defName : "?";
+                // 只看非动物图集接管件（即 PawnLayer3D 的 else 分支对象）
+                if (Animal3D.HandlesPawn(pawn)) continue;
+                if (n++ >= 8) break;
+                sb.Append(" {def=").Append(dd);
+                sb.Append(" pos=").Append(pawn.Position);
+                sb.Append(" kind=").Append(pawn.kindDef != null ? pawn.kindDef.defName : "null");
+                sb.Append(" anim=").Append(Animal3D.HandlesPawn(pawn) ? 1 : 0);
+                sb.Append(" carried=").Append(pawn.CarriedBy != null ? 1 : 0);
+                var dp = pawn.DrawPos;
+                sb.Append(" drawPos=").Append(dp);
+                sb.Append(" fogged=").Append(pawn.Position.Fogged(map) ? 1 : 0);
+                // 五级回退逐级结果
+                string g1 = "-", g2 = "-", g3 = "-", g4 = "-", g5 = "-";
+                try
+                {
+                    var tree = pawn.Drawer != null && pawn.Drawer.renderer != null ? pawn.Drawer.renderer.renderTree : null;
+                    var bg = tree != null ? tree.BodyGraphic : null;
+                    g1 = bg != null ? "+" : "null";
+                    if (bg != null) g1 += "/" + (bg.MatSingle != null ? "mat" : "nomat");
+                }
+                catch (System.Exception e) { g1 = "EXC:" + e.GetType().Name; }
+                try
+                {
+                    var ck = pawn.ageTracker != null ? pawn.ageTracker.CurKindLifeStage : null;
+                    g2 = ck == null ? "nullStage" : (ck.bodyGraphicData != null ? "+" : "nullGd");
+                }
+                catch (System.Exception e) { g2 = "EXC:" + e.GetType().Name; }
+                try
+                {
+                    g3 = pawn.kindDef != null ? (pawn.kindDef.lifeStages != null && pawn.kindDef.lifeStages.Count > 0 ? "+" : "noStages") : "noKind";
+                }
+                catch (System.Exception e) { g3 = "EXC:" + e.GetType().Name; }
+                try
+                {
+                    g4 = pawn.def != null ? ((pawn.def.graphic != null ? "+" : (pawn.def.graphicData != null ? "gd" : "null"))) : "noDef";
+                }
+                catch (System.Exception e) { g4 = "EXC:" + e.GetType().Name; }
+                try
+                {
+                    var root = pawn.Drawer?.renderer?.renderTree?.rootNode;
+                    g5 = root != null ? (root.PrimaryGraphic != null ? "+" : "null") : "noTree";
+                }
+                catch (System.Exception e) { g5 = "EXC:" + e.GetType().Name; }
+                sb.Append(" g1=").Append(g1).Append(" g2=").Append(g2).Append(" g3=").Append(g3)
+                  .Append(" g4=").Append(g4).Append(" g5=").Append(g5);
+                // 最终 ResolveGraphic 结果
+                try
+                {
+                    var g = PawnLayer3D.ResolveGraphic(pawn, Rot4.South);
+                    if (g == null) sb.Append(" resolve=null");
+                    else
+                    {
+                        var m = g.MatAt(Rot4.South, pawn) ?? g.MatSingle;
+                        sb.Append(" resolve=+ path=").Append(g.path ?? "?")
+                          .Append(" mat=").Append(m != null && !m.NullOrBad() ? "ok" : "bad")
+                          .Append(" ds=").Append(g.drawSize);
+                    }
+                }
+                catch (System.Exception e) { sb.Append(" resolve=EXC:").Append(e.GetType().Name); }
+                sb.Append('}');
+            }
+            if (n == 0) sb.Append(" {noEntityFound}");
+            Log.Message(ModEntry.LogPrefix + sb);
         }
     }
 }

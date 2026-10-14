@@ -145,8 +145,12 @@ namespace RimFirstPerson3D
         // ---- 玩家暗角 ----
 
         /// <summary>全屏红雾：受击脉冲与低血压常驻取大，画在准星与 HUD 之前。</summary>
+        /// <summary>F016 L9：上一帧受击暗角的浓度（常驻暗角与它取大不相加）。</summary>
+        public static float LastVignette;
+
         public static void DrawVignette()
         {
+            LastVignette = 0f;
             if (!On) return;
             var me = CameraRig3D.Possessed;
             if (me == null) return;
@@ -160,6 +164,7 @@ namespace RimFirstPerson3D
             }
             catch { }
             float a = Mathf.Clamp01(HitFxMath.Combine(flash, low) * Scale());
+            LastVignette = a * HitFxMath.VignetteMax;
             if (a <= 0.004f) return;
             EnsureVignette();
             if (vignette == null) return;
